@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         gpt-craber 对话导出
+// @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
 // @version      0.2.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配文本/代码/图片/联网引用等多种消息类型。
