@@ -690,6 +690,19 @@
   const _enc = new TextEncoder();
 
   async function exportBatch(selectedTurns, onProgress) {
+    // 只选了一轮：直接导出单个 md（图片 base64 内嵌），不打包成 zip。
+    if (selectedTurns.length === 1) {
+      const turn = selectedTurns[0];
+      const sink = makeDataUriSink(); // 单文件无处放 images/ 目录，图片以 data URI 内嵌
+      const { title, md } = await renderTurn(turn, onProgress, sink);
+      if (onProgress) onProgress(1, 1);
+      const seq = (state.turns ? state.turns.indexOf(turn) : -1) + 1;
+      const pad1 = String((state.turns && state.turns.length) || 1).length;
+      const prefix = seq > 0 ? String(seq).padStart(pad1, '0') + '_' : '';
+      const blob = new Blob([_enc.encode(prefix + sanitizeFilename(title) + '\n' && md) || md], { type: 'text/markdown' });
+      triggerDownload(new Blob([md], { type: 'text/markdown' }), prefix + sanitizeFilename(title) + '.md');
+      return;
+    }
     const zip = createZip(); // 内联 STORE 打包器，零依赖零 eval，不触发 CSP
     const sink = makeZipImageSink(zip); // 图片以原始二进制写入 images/，md 用相对路径引用
     const used = {};
