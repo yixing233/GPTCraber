@@ -24,10 +24,10 @@ DOM 负责定位消息，官方接口负责取干净内容，最终产出结构�
 ## 安装
 
 1. 安装浏览器扩展 [Tampermonkey](https://www.tampermonkey.net/) 或 Violentmonkey。
-2. 新建脚本，把 [`chatgpt-md-exporter.user.js`](chatgpt-md-exporter.user.js) 的全文粘贴进去保存。
+2. 点击 **[安装脚本](https://raw.githubusercontent.com/yixing233/GPTCraber/main/chatgpt-md-exporter.user.js)** —— 油猴会识别 `.user.js` 并弹出安装页面，确认即可。
 3. 打开 [chatgpt.com](https://chatgpt.com/)，右下角会出现「会话列表 / 导出当前」按钮，回复操作栏里会出现 🦀 图标。
 
-> 更新脚本后需要在油猴编辑器里重新粘贴保存并刷新页面，编辑本地文件不会自动同步到已安装的副本。
+脚本头部已配置 `@updateURL`，油猴会定期检查更新，有新版本时自动提示升级。
 
 ## 使用
 

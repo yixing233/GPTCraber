@@ -4,6 +4,10 @@
 // @version      0.2.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
+// @homepageURL  https://github.com/yixing233/GPTCraber
+// @supportURL   https://github.com/yixing233/GPTCraber/issues
+// @downloadURL  https://raw.githubusercontent.com/yixing233/GPTCraber/main/chatgpt-md-exporter.user.js
+// @updateURL    https://raw.githubusercontent.com/yixing233/GPTCraber/main/chatgpt-md-exporter.user.js
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_xmlhttpRequest
