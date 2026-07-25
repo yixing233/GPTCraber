@@ -10,6 +10,7 @@
 // @updateURL    https://raw.githubusercontent.com/yixing233/GPTCraber/main/doubao-md-exporter.user.js
 // @match        https://www.doubao.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      doubao.com
 // @connect      byteimg.com
 // @connect      bytedance.com
@@ -1441,5 +1442,63 @@
   mountFab();
   // 豆包是 SPA，body 可能被整体替换，定时确保悬浮按钮存在
   setInterval(mountFab, 2000);
-  console.log('[doubao-craber] 豆包导出脚本已加载');
+
+  /* ============================================================
+   * 诊断：在控制台运行 __craberDiag() 打印当前对话的真实结构
+   *   用脚本自己的接口代码拉数据，输出每条消息的 user_type、
+   *   每个 block 的 block_type 与字段名，用于核对分组/渲染假设。
+   * ========================================================== */
+  // 挂到页面 window（unsafeWindow）上，以便在控制台 top 上下文直接调用。
+  // 油猴脚本运行在隔离沙箱，普通 window 与页面 window 不通。
+  const _pageWin = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+  _pageWin.__craberDiag = async function () {
+    const convId = getConvId();
+    if (!convId) { console.log('[diag] 请先打开一个具体对话（URL 含 /chat/...）'); return; }
+    console.log('[diag] convId =', convId);
+    let messages;
+    try {
+      messages = await fetchAllMessages(convId);
+    } catch (e) {
+      console.log('[diag] 拉取消息失败：', e);
+      return;
+    }
+    console.log('[diag] 共拉到 ' + messages.length + ' 条消息');
+
+    // 逐条概览：index / user_type / content_type / 各 block_type / brief 片段
+    const rows = messages.map(function (m) {
+      const blocks = (m.content_block || []).map(function (b) {
+        return {
+          block_type: b.block_type,
+          content_keys: b.content ? Object.keys(b.content) : [],
+          content_type_of_content: b.content && b.content.content_type
+        };
+      });
+      return {
+        index_in_conv: m.index_in_conv,
+        user_type: m.user_type,
+        content_type: m.content_type,
+        has_content_block: !!(m.content_block && m.content_block.length),
+        block_count: (m.content_block || []).length,
+        blocks: blocks,
+        thinking: !!(m.thinking_content && m.thinking_content.trim()),
+        brief: (m.brief || '').slice(0, 40)
+      };
+    });
+    console.log('[diag] 消息概览（表格）：');
+    console.table(rows.map(function (r) {
+      return {
+        idx: r.index_in_conv, user_type: r.user_type, content_type: r.content_type,
+        blocks: r.block_count, block_types: r.blocks.map(function (b) { return b.block_type; }).join(','),
+        brief: r.brief
+      };
+    }));
+
+    // 完整原始数据（展开看字段）
+    console.log('[diag] 完整消息数组（展开查看真实字段）：', messages);
+    // 也把概览挂到全局，方便复制
+    _pageWin.__craberDiagData = { convId: convId, messages: messages, rows: rows };
+    console.log('[diag] 已存到 window.__craberDiagData，可复制 rows 贴给开发者');
+    return rows;
+  };
+  console.log('[doubao-craber] 豆包导出脚本已加载（诊断：控制台运行 __craberDiag()）');
 })();
