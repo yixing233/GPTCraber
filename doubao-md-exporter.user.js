@@ -344,16 +344,29 @@
     return all;
   }
 
-  // 把消息数组按回合分组：user_type=1 开启一个回合，随后的 user_type=2 是回答。
+  // 把消息数组按回合分组。
+  // 豆包一次用户输入可能拆成多条 user_type=1 消息（文本、图片附件、引用各一条），
+  // 因此“连续的 user 消息”合并为同一回合的提问；出现 bot 回复后再见到 user 才算新回合。
+  // turn = { question: 首条user消息, questionMsgs: [全部user消息], answers: [bot消息] }
   function groupTurns(messages) {
     const turns = [];
     let cur = null;
+    let lastWasBot = true; // 让首条 user 消息能开启回合
     for (const m of messages) {
       if (m.user_type === USER_TYPE_USER) {
-        cur = { question: m, answers: [] };
-        turns.push(cur);
-      } else if (m.user_type === USER_TYPE_BOT && cur) {
+        if (lastWasBot || !cur) {
+          cur = { question: m, questionMsgs: [m], answers: [] };
+          turns.push(cur);
+        } else {
+          // 与上一条 user 消息同属一次输入，并入当前回合
+          cur.questionMsgs.push(m);
+          if (!cur.question) cur.question = m;
+        }
+        lastWasBot = false;
+      } else if (m.user_type === USER_TYPE_BOT) {
+        if (!cur) { cur = { question: null, questionMsgs: [], answers: [] }; turns.push(cur); }
         cur.answers.push(m);
+        lastWasBot = true;
       }
     }
     return turns;
@@ -391,7 +404,7 @@
   function collectTurnImageUrls(turn, includeQuestion) {
     const urls = [];
     const push = (msg) => { for (const it of collectImageUrls(msg)) urls.push(it.url); };
-    if (includeQuestion && turn.question) push(turn.question);
+    if (includeQuestion) (turn.questionMsgs || []).forEach(push);
     turn.answers.forEach(push);
     // 去重
     return urls.filter((u, i) => urls.indexOf(u) === i);
@@ -544,7 +557,7 @@
     return out;
   }
 
-  // 取一条消息的纯文本（用于回合标题）
+  // 取一条消息的纯文本
   function messageText(msg) {
     if (!msg) return '';
     for (const blk of (msg.content_block || [])) {
@@ -556,17 +569,34 @@
     return (msg.brief || '').trim();
   }
 
+  // 取一个回合的标题：扫描全部提问消息，取第一条有文本的；都没有则退回 brief。
+  function turnTitle(turn) {
+    const msgs = (turn && turn.questionMsgs) || (turn && turn.question ? [turn.question] : []);
+    for (const m of msgs) {
+      const t = messageText(m);
+      if (t) return t;
+    }
+    // 没有文本提问（如纯图片输入）：退回首条消息的 brief
+    for (const m of msgs) {
+      if (m && m.brief && m.brief.trim()) return m.brief.trim();
+    }
+    return '';
+  }
+
   // 渲染一个回合为 markdown，返回 { title, md }
   async function renderTurn(turn, onProgress, sink) {
     const includeQuestion = settings.mode === 'qa';
     const cache = await resolveTurnImages(turn, includeQuestion, sink || makeDataUriSink(), onProgress);
 
-    const title = messageText(turn.question);
+    const title = turnTitle(turn);
     let md = '';
 
     if (settings.mode === 'qa') {
       md += '## 🧑 问题\n\n';
-      md += renderBlocks(turn.question, cache).trim() + '\n\n' || '(空)\n\n';
+      const qMsgs = turn.questionMsgs || (turn.question ? [turn.question] : []);
+      let qOut = '';
+      for (const qm of qMsgs) qOut += renderBlocks(qm, cache);
+      md += (qOut.trim() || '(无文字提问)') + '\n\n';
       md += '## 🤖 回答\n\n';
     }
 
@@ -609,8 +639,10 @@
     const turns = groupTurns(messages);
     const msgIndex = {};
     turns.forEach((t) => {
-      if (t.question) msgIndex[t.question.message_id] = t;
-      t.answers.forEach((a) => { msgIndex[a.message_id] = t; });
+      (t.questionMsgs || (t.question ? [t.question] : [])).forEach((q) => {
+        if (q && q.message_id) msgIndex[q.message_id] = t;
+      });
+      t.answers.forEach((a) => { if (a && a.message_id) msgIndex[a.message_id] = t; });
     });
     state = { convId, name: null, turns, msgIndex };
     return state;
