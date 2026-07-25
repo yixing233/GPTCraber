@@ -34,10 +34,16 @@
   const USER_TYPE_USER = 1;
   const USER_TYPE_BOT = 2;
 
-  // content_block 的 block_type
+  // content_block 的 block_type（已确认的）
   const BLOCK_TEXT = 10000;       // text_block：正文，本身就是 Markdown
   const BLOCK_ATTACHMENT = 10052; // attachment_block：图片等附件
   const BLOCK_REFERENCE = 10056;  // reference_block：引用（如翻译原文）
+
+  // 调试：设为 true 时，未适配的 block_type 会打印完整结构到控制台，
+  // 便于识别 PPT/图片生成/视频/音乐 等特殊类型的编号与字段。
+  const DEBUG_BLOCKS = true;
+  // 已记录过的未知 block_type，避免同一类型刷屏
+  const _seenUnknownBlocks = {};
 
   function loadSettings() {
     try {
@@ -357,21 +363,27 @@
    * 渲染
    * ========================================================== */
 
-  // 从一条消息的 content_block[] 里取出图片附件的 URL 列表
+  // 从一条消息的 content_block[] 里取出所有图片 URL（含未适配类型里的图片）。
+  // 深度扫描每个 block，凡是含 image_ori/image_thumb 等的对象都视为图片，
+  // 这样 PPT/生成图/视频封面等未适配块里的图片也能被本地化。
   function collectImageUrls(msg) {
     const urls = [];
-    for (const blk of (msg.content_block || [])) {
-      if (blk.block_type !== BLOCK_ATTACHMENT) continue;
-      const atts = (blk.content && blk.content.attachment_block && blk.content.attachment_block.attachments) || [];
-      for (const a of atts) {
-        const img = a && a.image;
-        if (!img) continue;
-        const u = (img.image_ori && img.image_ori.url) ||
-          (img.image_preview && img.image_preview.url) ||
-          (img.image_thumb && img.image_thumb.url);
-        if (u) urls.push({ url: u, name: (img.name || '') });
+    const seen = {};
+    const walk = (o, depth) => {
+      if (!o || depth > 6) return;
+      if (Array.isArray(o)) { for (const it of o) walk(it, depth + 1); return; }
+      if (typeof o !== 'object') return;
+      const iu = pickImageFromObj(o);
+      if (iu && (o.image_ori || o.image_thumb || o.image_preview || o.image_720) && !seen[iu]) {
+        seen[iu] = 1;
+        urls.push({ url: iu, name: (o.name || '') });
       }
-    }
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (v && typeof v === 'object') walk(v, depth + 1);
+      }
+    };
+    for (const blk of (msg.content_block || [])) walk(blk.content || blk, 0);
     return urls;
   }
 
@@ -435,6 +447,67 @@
     return cache;
   }
 
+  // 从任意 block 内容里挑一个图片 URL（兼容 image / image_ori 等多种嵌套）
+  function pickImageFromObj(img) {
+    if (!img) return null;
+    return (img.image_ori && img.image_ori.url) ||
+      (img.image_preview && img.image_preview.url) ||
+      (img.image_720 && img.image_720.url) ||
+      (img.image_thumb && img.image_thumb.url) ||
+      (typeof img.url === 'string' ? img.url : null);
+  }
+
+  // 深度扫描一个未知 block，尽量抢救出可读内容：文本、图片、链接、标题。
+  // 不认识的类型也不丢弃——把能认出的字段渲染出来，实在没有再给占位。
+  function salvageBlock(blk, cache) {
+    let out = '';
+    const seenText = {};
+    const imgs = [];
+    const links = [];
+    const walk = (o, depth) => {
+      if (!o || depth > 6) return;
+      if (Array.isArray(o)) { for (const it of o) walk(it, depth + 1); return; }
+      if (typeof o !== 'object') return;
+      // 图片对象：含 image_ori/image_thumb/url 等
+      const iu = pickImageFromObj(o);
+      if (iu && (o.image_ori || o.image_thumb || o.image_preview || o.image_720)) {
+        imgs.push({ url: iu, name: o.name || '' });
+      }
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (typeof v === 'string') {
+          const s = v.trim();
+          if (!s) continue;
+          // 文本类字段：text / content / title / desc / summary / caption
+          if (/^(text|content|title|desc|description|summary|caption|name|label)$/i.test(k) &&
+              s.length > 1 && !/^https?:\/\//.test(s) && !seenText[s]) {
+            seenText[s] = 1;
+            // 名字类字段短，作强调；长文本作正文
+            if (/^(title|name|label)$/i.test(k) && s.length < 40) out += '**' + s + '**\n\n';
+            else out += s + '\n\n';
+          }
+          // 链接字段
+          if (/^(url|link|jump_url|schema|href)$/i.test(k) && /^https?:\/\//.test(s)) {
+            links.push(s);
+          }
+        } else if (v && typeof v === 'object') {
+          walk(v, depth + 1);
+        }
+      }
+    };
+    walk(blk.content || blk, 0);
+
+    for (const im of imgs) {
+      const src = (cache && cache[im.url]) || im.url;
+      const alt = (im.name || 'image').replace(/[\[\]]/g, '');
+      out += '![' + alt + '](' + src + ')\n\n';
+    }
+    for (const u of links.filter((x, i) => links.indexOf(x) === i)) {
+      out += '[链接](' + u + ')\n\n';
+    }
+    return out;
+  }
+
   // 渲染一条消息的 content_block[] 为 Markdown
   function renderBlocks(msg, cache) {
     let out = '';
@@ -451,14 +524,21 @@
         for (const a of atts) {
           const img = a && a.image;
           if (!img) continue;
-          const u = (img.image_ori && img.image_ori.url) ||
-            (img.image_preview && img.image_preview.url) ||
-            (img.image_thumb && img.image_thumb.url);
+          const u = pickImageFromObj(img);
           if (!u) continue;
           const src = (cache && cache[u]) || u;
           const alt = (img.name || 'image').replace(/[\[\]]/g, '');
           out += '![' + alt + '](' + src + ')\n\n';
         }
+      } else {
+        // 未适配的 block_type：不丢弃，尽量抢救内容，并（调试时）打印结构
+        if (DEBUG_BLOCKS && !_seenUnknownBlocks[blk.block_type]) {
+          _seenUnknownBlocks[blk.block_type] = 1;
+          console.log('[doubao-craber] 未适配的 block_type=' + blk.block_type + '，完整结构：', blk);
+        }
+        const salvaged = salvageBlock(blk, cache);
+        if (salvaged.trim()) out += salvaged;
+        else out += '<!-- 未适配的内容块 block_type=' + blk.block_type + ' -->\n\n';
       }
     }
     return out;
