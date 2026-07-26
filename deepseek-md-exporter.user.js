@@ -605,11 +605,13 @@
     .craber-search::placeholder{color:var(--craber-sub)}
 
     .craber-filter-row{display:flex;flex-direction:column;gap:8px}
-    .craber-date-custom{display:flex;align-items:center;gap:8px}
-    .craber-date-input{padding:6px 10px;font-size:12px;border:1px solid var(--craber-line);
+    .craber-date-custom{display:flex;align-items:center;gap:8px;margin-top:2px}
+    .craber-date-custom[hidden]{display:none}
+    .craber-date-input{padding:7px 10px;font-size:12px;border:1px solid var(--craber-line);
       border-radius:8px;background:var(--craber-bg);color:var(--craber-fg);outline:none;
-      color-scheme:light dark;transition:border-color .15s}
-    .craber-date-input:focus{border-color:var(--craber-accent)}
+      color-scheme:light dark;font-family:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+    .craber-date-input:hover{border-color:var(--craber-accent)}
+    .craber-date-input:focus{border-color:var(--craber-accent);box-shadow:0 0 0 3px rgba(75,91,214,.12)}
     .craber-date-sep{color:var(--craber-sub);font-size:12px}
 
     .craber-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;
