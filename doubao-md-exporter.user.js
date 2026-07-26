@@ -751,15 +751,26 @@
     return (msg.brief || '').trim();
   }
 
-  // 取一个回合的标题：扫描全部提问消息，取第一条有文本的；都没有则退回 brief。
+  // 取一个回合的标题：扫描全部提问消息，取第一条有文本的；
+  // 没有文本时（纯图片/纯文件提问），退回文件名 / [图片] / brief。
   function turnTitle(turn) {
     const msgs = (turn && turn.questionMsgs) || (turn && turn.question ? [turn.question] : []);
     for (const m of msgs) {
       const t = messageText(m);
       if (t) return t;
     }
-    // 没有文本提问（如纯图片输入）：退回首条消息的 brief
+    // 没有文本提问：尝试用文件名或图片占位
     for (const m of msgs) {
+      const lc = legacyContent(m);
+      if (lc.files && lc.files.length) return lc.files[0].name || '[文件]';
+      if (lc.images && lc.images.length) return '[图片]';
+    }
+    // 再退回首条提问消息的 brief
+    for (const m of msgs) {
+      if (m && m.brief && m.brief.trim()) return m.brief.trim();
+    }
+    // 最后退回回合内首条回复的 brief（提问完全无文本时）
+    for (const m of (turn.answers || [])) {
       if (m && m.brief && m.brief.trim()) return m.brief.trim();
     }
     return '';
@@ -1392,9 +1403,9 @@
       codes.push('<code>' + c + '</code>');
       return 'CBMDCODE' + (codes.length - 1) + 'ENDCODE';
     });
-    t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (m, alt, src) =>
+    t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, src) =>
       '<img src="' + src + '" alt="' + alt + '" loading="lazy">');
-    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (m, txt, url) =>
+    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) =>
       '<a href="' + url + '" target="_blank" rel="noopener">' + txt + '</a>');
     t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
@@ -1621,8 +1632,17 @@
   }, 1000);
 
   mountFab();
-  // 豆包是 SPA，body 可能被整体替换，定时确保悬浮按钮存在
-  setInterval(mountFab, 2000);
+  // 豆包是 SPA，body 可能被整体替换导致按钮丢失。用 MutationObserver + debounce
+  // 只在 DOM 变更停止后检查一次，避免定时重建与页面重绘打架造成闪屏。
+  let _fabScheduled = false;
+  const _fabObserver = new MutationObserver(() => {
+    if (_fabScheduled) return;
+    // 按钮还在就不动，省去无谓的 DOM 操作
+    if (document.querySelector('.craber-fab-wrap')) return;
+    _fabScheduled = true;
+    setTimeout(() => { _fabScheduled = false; mountFab(); }, 300);
+  });
+  _fabObserver.observe(document.body, { childList: true, subtree: false });
 
   /* ============================================================
    * 诊断：在控制台运行 __craberDiag() 打印当前对话的真实结构
