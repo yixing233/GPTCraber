@@ -36,10 +36,10 @@
   const USER_TYPE_BOT = 2;
 
   // content_block 的 block_type（已确认的）
-  const BLOCK_TEXT = 10000;       // text_block：正文，本身就是 Markdown
-  const BLOCK_ATTACHMENT = 10052; // attachment_block：图片等附件
-  const BLOCK_REFERENCE = 10056;  // reference_block：引用（如翻译原文）
-  const BLOCK_CREATION = 2074;    // creation_block：AI 生成的图片/视频（creations[]）
+  // 内容块渲染按 content 下的字段名识别（见 renderBlockByField），不依赖 block_type 编号。
+  // 已知编号仅供参考：10000 text_block / 10052 attachment_block / 10056 reference_block /
+  // 2074 creation_block（生成图/视频）/ 10025 search_query_result_block（联网搜索）。
+  const BLOCK_TEXT = 10000;       // messageText 取标题时用
 
   // 调试：设为 true 时，未适配的 block_type 会打印完整结构到控制台，
   // 便于识别 PPT/图片生成/视频/音乐 等特殊类型的编号与字段。
@@ -620,6 +620,87 @@
     return out;
   }
 
+  // 渲染联网搜索结果块（block_type 10025，search_query_result_block）：
+  // 把搜索关键词与参考网页渲染成"参考来源"列表。
+  function renderSearchResultBlock(sb) {
+    if (!sb) return '';
+    let out = '';
+    if (sb.summary && sb.summary.trim()) out += '> 🔍 ' + sb.summary.trim() + '\n\n';
+    const results = sb.results || [];
+    if (!results.length) return out;
+    out += '**参考来源：**\n\n';
+    let i = 0;
+    for (const r of results) {
+      const card = r.text_card || r.video_card || r.image_card;
+      if (!card) continue;
+      i++;
+      const title = (card.title || card.summary || '来源').replace(/\n/g, ' ').replace(/[\[\]]/g, '').slice(0, 80);
+      const url = card.url || '';
+      const site = card.sitename || '';
+      const meta = site ? ' — ' + site : '';
+      out += i + '. ' + (url ? '[' + title + '](' + url + ')' : title) + meta + '\n';
+    }
+    return out + '\n';
+  }
+
+  // 内容块的字段渲染器：按 content 下的字段名识别，不依赖 block_type 编号。
+  // 这样即使编号没见过，只要对应字段有值就能正确渲染。返回渲染字符串或 null（表示未处理）。
+  function renderBlockByField(content, cache) {
+    if (!content) return null;
+
+    // 正文文本
+    if (content.text_block && content.text_block.text && content.text_block.text.trim()) {
+      return content.text_block.text.trim() + '\n\n';
+    }
+    // 引用
+    if (content.reference_block) {
+      const t = content.reference_block.text && content.reference_block.text.text;
+      if (t && t.trim()) return '> ' + t.trim().replace(/\n/g, '\n> ') + '\n\n';
+    }
+    // 附件图片
+    if (content.attachment_block) {
+      const atts = content.attachment_block.attachments || [];
+      let out = '';
+      for (const a of atts) {
+        const u = pickImageFromObj((a && a.image) || {});
+        if (!u) continue;
+        const src = (cache && cache[u]) || u;
+        const alt = ((a.image && a.image.name) || 'image').replace(/[\[\]]/g, '');
+        out += '![' + alt + '](' + src + ')\n\n';
+      }
+      if (out) return out;
+    }
+    // AI 生成图片/视频
+    if (content.creation_block) {
+      return renderCreationBlock({ content: content }, cache);
+    }
+    // 联网搜索结果
+    if (content.search_query_result_block) {
+      return renderSearchResultBlock(content.search_query_result_block);
+    }
+    // 代码块
+    if (content.code_block) {
+      const cb = content.code_block;
+      const code = cb.code || cb.text || '';
+      const lang = cb.language || cb.lang || '';
+      if (code.trim()) return '```' + lang + '\n' + code + '\n```\n\n';
+    }
+    // 文件块（生成的文档/PPT 等）
+    if (content.file_block) {
+      const fb = content.file_block;
+      const name = fb.file_name || fb.name || '文件';
+      const u = fb.url || fb.download_url || '';
+      return '📎 ' + (u ? '[' + name + '](' + u + ')' : name) + '\n\n';
+    }
+    // 大纲块（PPT/文档大纲）
+    if (content.outline_block) {
+      const ob = content.outline_block;
+      const title = ob.title || ob.name;
+      if (title) return '**' + title + '**\n\n';
+    }
+    return null;
+  }
+
   function renderBlocks(msg, cache) {
     let out = '';
     // 没有 content_block：老式消息，从 content/tts_content 抽正文与图片
@@ -637,37 +718,18 @@
       return out;
     }
     for (const blk of (msg.content_block || [])) {
-      if (blk.block_type === BLOCK_TEXT) {
-        const t = (blk.content && blk.content.text_block && blk.content.text_block.text) || '';
-        if (t.trim()) out += t.trim() + '\n\n';
-      } else if (blk.block_type === BLOCK_REFERENCE) {
-        const rb = blk.content && blk.content.reference_block;
-        const t = rb && rb.text && rb.text.text;
-        if (t && t.trim()) out += '> ' + t.trim().replace(/\n/g, '\n> ') + '\n\n';
-      } else if (blk.block_type === BLOCK_ATTACHMENT) {
-        const atts = (blk.content && blk.content.attachment_block && blk.content.attachment_block.attachments) || [];
-        for (const a of atts) {
-          const img = a && a.image;
-          if (!img) continue;
-          const u = pickImageFromObj(img);
-          if (!u) continue;
-          const src = (cache && cache[u]) || u;
-          const alt = (img.name || 'image').replace(/[\[\]]/g, '');
-          out += '![' + alt + '](' + src + ')\n\n';
-        }
-      } else if (blk.block_type === BLOCK_CREATION) {
-        // 生成内容块：AI 生成的图片/视频
-        out += renderCreationBlock(blk, cache);
-      } else {
-        // 未适配的 block_type：不丢弃，尽量抢救内容，并（调试时）打印结构
-        if (DEBUG_BLOCKS && !_seenUnknownBlocks[blk.block_type]) {
-          _seenUnknownBlocks[blk.block_type] = 1;
-          console.log('[doubao-craber] 未适配的 block_type=' + blk.block_type + '，完整结构：', blk);
-        }
-        const salvaged = salvageBlock(blk, cache);
-        if (salvaged.trim()) out += salvaged;
-        else out += '<!-- 未适配的内容块 block_type=' + blk.block_type + ' -->\n\n';
+      // 优先按字段名分发（content 是扁平对象，只有匹配当前类型的子字段非 null，
+      // 因此按字段名识别比按 block_type 编号更稳健：编号没见过也能认出内容）。
+      const byField = renderBlockByField(blk.content, cache);
+      if (byField != null) { out += byField; continue; }
+      // 字段名也认不出：抢救 + 调试打印
+      if (DEBUG_BLOCKS && !_seenUnknownBlocks[blk.block_type]) {
+        _seenUnknownBlocks[blk.block_type] = 1;
+        console.log('[doubao-craber] 未适配的 block_type=' + blk.block_type + '，完整结构：', blk);
       }
+      const salvaged = salvageBlock(blk, cache);
+      if (salvaged.trim()) out += salvaged;
+      else out += '<!-- 未适配的内容块 block_type=' + blk.block_type + ' -->\n\n';
     }
     return out;
   }
