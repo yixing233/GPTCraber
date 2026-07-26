@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（豆包导出）
 // @namespace    doubao-craber
-// @version      0.3.0
+// @version      0.4.0
 // @description  craber：导出豆包对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配文本/代码/图片/引用等多种消息类型。
 // @author       craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -1108,7 +1108,9 @@
     .craber-preview-body a{color:var(--craber-accent);text-decoration:none}
     .craber-preview-body a:hover{text-decoration:underline}
   `;
-  document.head.appendChild(style);
+  // 挂到 documentElement 而非 head：豆包 React 重渲染可能清掉 head 下的陌生
+  // <style>，导致面板样式时有时无、看起来像“闪没又出现”。挂到 html 下更稳。
+  document.documentElement.appendChild(style);
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1151,7 +1153,9 @@
           <button class="craber-btn primary" data-act="export">导出选中</button>
         </div>
       </div>`;
-    document.body.appendChild(mask);
+    // 挂到 html 而非 body：豆包 React 重渲染会清掉 body 下的陌生节点，
+    // 反复拉扯导致闪屏（与悬浮按钮同因）。挂到 documentElement 可避免。
+    document.documentElement.appendChild(mask);
 
     const close = () => mask.remove();
     mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
@@ -1267,7 +1271,9 @@
           <button class="craber-btn primary" data-act="export">导出选中</button>
         </div>
       </div>`;
-    document.body.appendChild(mask);
+    // 挂到 html 而非 body：豆包 React 重渲染会清掉 body 下的陌生节点，
+    // 反复拉扯导致闪屏（与悬浮按钮同因）。挂到 documentElement 可避免。
+    document.documentElement.appendChild(mask);
 
     const close = () => mask.remove();
     mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
@@ -1555,7 +1561,8 @@
           <div class="craber-empty"><span class="craber-spin"></span> 渲染中…</div>
         </div>
       </div>`;
-    document.body.appendChild(pm);
+    // 挂到 html 而非 body，避免豆包重渲染拉扯导致闪屏
+    document.documentElement.appendChild(pm);
 
     const closeP = () => pm.remove();
     pm.addEventListener('click', (e) => { if (e.target === pm) closeP(); });
@@ -1584,7 +1591,8 @@
           <div class="craber-empty"><span class="craber-spin"></span> 加载并渲染中…</div>
         </div>
       </div>`;
-    document.body.appendChild(pm);
+    // 挂到 html 而非 body，避免豆包重渲染拉扯导致闪屏
+    document.documentElement.appendChild(pm);
 
     const closeP = () => pm.remove();
     pm.addEventListener('click', (e) => { if (e.target === pm) closeP(); });
@@ -1725,5 +1733,5 @@
     }
     return rows;
   };
-  console.log('[doubao-craber] v0.3.0 已加载（诊断：控制台运行 __craberDiag()）');
+  console.log('[doubao-craber] v0.4.0 已加载（诊断：控制台运行 __craberDiag()）');
 })();
