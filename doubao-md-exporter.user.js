@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（豆包导出）
 // @namespace    doubao-craber
-// @version      0.2.0
+// @version      0.3.0
 // @description  craber：导出豆包对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配文本/代码/图片/引用等多种消息类型。
 // @author       craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -1619,7 +1619,12 @@
 
     wrap.appendChild(btnConv);
     wrap.appendChild(btn);
-    document.body.appendChild(wrap);
+    // 关键：挂到 <html>（documentElement）而非 body。
+    // 豆包是 React SPA，会在重渲染时清掉 body 下它不认识的节点，
+    // 导致“注入按钮→被删→重建→再被删”的拉扯，表现为整页闪屏。
+    // <html> 的直接子节点只有 head/body，React 的根在 body 内，
+    // 不会动我们加到 html 下的节点，因此按钮常驻、无需 observer 反复重建。
+    document.documentElement.appendChild(wrap);
   }
 
   // SPA 切换对话时失效缓存
@@ -1632,17 +1637,6 @@
   }, 1000);
 
   mountFab();
-  // 豆包是 SPA，body 可能被整体替换导致按钮丢失。用 MutationObserver + debounce
-  // 只在 DOM 变更停止后检查一次，避免定时重建与页面重绘打架造成闪屏。
-  let _fabScheduled = false;
-  const _fabObserver = new MutationObserver(() => {
-    if (_fabScheduled) return;
-    // 按钮还在就不动，省去无谓的 DOM 操作
-    if (document.querySelector('.craber-fab-wrap')) return;
-    _fabScheduled = true;
-    setTimeout(() => { _fabScheduled = false; mountFab(); }, 300);
-  });
-  _fabObserver.observe(document.body, { childList: true, subtree: false });
 
   /* ============================================================
    * 诊断：在控制台运行 __craberDiag() 打印当前对话的真实结构
@@ -1723,5 +1717,5 @@
     }
     return rows;
   };
-  console.log('[doubao-craber] v0.2.0 已加载（诊断：控制台运行 __craberDiag()）');
+  console.log('[doubao-craber] v0.3.0 已加载（诊断：控制台运行 __craberDiag()）');
 })();
