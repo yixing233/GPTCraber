@@ -39,6 +39,7 @@
   const BLOCK_TEXT = 10000;       // text_block：正文，本身就是 Markdown
   const BLOCK_ATTACHMENT = 10052; // attachment_block：图片等附件
   const BLOCK_REFERENCE = 10056;  // reference_block：引用（如翻译原文）
+  const BLOCK_CREATION = 2074;    // creation_block：AI 生成的图片/视频（creations[]）
 
   // 调试：设为 true 时，未适配的 block_type 会打印完整结构到控制台，
   // 便于识别 PPT/图片生成/视频/音乐 等特殊类型的编号与字段。
@@ -584,6 +585,41 @@
     return result;
   }
 
+  // 渲染生成内容块（block_type 2074，creation_block）：豆包 AI 生成的图片/视频。
+  // creations[] 每项：type=1 图片（image.image_ori），另有 video 字段；gen_params.prompt 是提示词。
+  function renderCreationBlock(blk, cache) {
+    const cb = blk.content && blk.content.creation_block;
+    const creations = (cb && cb.creations) || [];
+    let out = '';
+    for (const c of creations) {
+      // 图片生成
+      const u = pickImageFromObj((c && c.image) || {});
+      if (u) {
+        const src = (cache && cache[u]) || u;
+        out += '![生成图片](' + src + ')\n\n';
+      }
+      // 视频生成：豆包视频对象里通常有封面图与播放地址
+      const v = c && c.video;
+      if (v) {
+        const cover = pickImageFromObj(v.cover || v.cover_image || {});
+        if (cover) {
+          const src = (cache && cache[cover]) || cover;
+          out += '![视频封面](' + src + ')\n\n';
+        }
+        const vurl = v.play_url || v.url || (v.video_info && v.video_info.url);
+        if (vurl) out += '🎬 [视频链接](' + vurl + ')\n\n';
+      }
+      // 生成提示词
+      const prompt = c && c.gen_detail && c.gen_detail.prompt ||
+        (c && c.image && c.image.gen_params && c.image.gen_params.prompt) ||
+        (c && c.gen_params && c.gen_params.prompt);
+      if (prompt && prompt.trim()) {
+        out += '> 提示词：' + prompt.trim().replace(/\n/g, ' ') + '\n\n';
+      }
+    }
+    return out;
+  }
+
   function renderBlocks(msg, cache) {
     let out = '';
     // 没有 content_block：老式消息，从 content/tts_content 抽正文与图片
@@ -619,6 +655,9 @@
           const alt = (img.name || 'image').replace(/[\[\]]/g, '');
           out += '![' + alt + '](' + src + ')\n\n';
         }
+      } else if (blk.block_type === BLOCK_CREATION) {
+        // 生成内容块：AI 生成的图片/视频
+        out += renderCreationBlock(blk, cache);
       } else {
         // 未适配的 block_type：不丢弃，尽量抢救内容，并（调试时）打印结构
         if (DEBUG_BLOCKS && !_seenUnknownBlocks[blk.block_type]) {
@@ -1578,6 +1617,28 @@
     // 也把概览挂到全局，方便复制
     _pageWin.__craberDiagData = { convId: convId, messages: messages, rows: rows };
     console.log('[diag] 已存到 window.__craberDiagData，可复制 rows 贴给开发者');
+
+    // 收集所有未适配的 block_type，每种取一条完整结构，打印 + 存全局。
+    // 已适配：10000(text)/10052(attachment)/10056(reference)
+    const known = { 10000: 1, 10052: 1, 10056: 1 };
+    const unknown = {};
+    for (const m of messages) {
+      for (const b of (m.content_block || [])) {
+        if (!known[b.block_type] && !unknown[b.block_type]) {
+          unknown[b.block_type] = b;
+        }
+      }
+    }
+    const unknownList = Object.keys(unknown).map(function (k) { return unknown[k]; });
+    _pageWin.__craberUnknown = unknownList;
+    if (unknownList.length) {
+      console.log('[diag] 未适配的 block_type：' + Object.keys(unknown).join(', ') +
+        '（完整结构已存到 window.__craberUnknown）');
+      console.log('[diag] 复制下面这行的输出贴给开发者：');
+      console.log(JSON.stringify(unknownList, null, 2));
+    } else {
+      console.log('[diag] 没有未适配的 block_type');
+    }
     return rows;
   };
   console.log('[doubao-craber] 豆包导出脚本已加载（诊断：控制台运行 __craberDiag()）');
