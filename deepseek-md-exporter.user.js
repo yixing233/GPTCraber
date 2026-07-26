@@ -1,20 +1,15 @@
 // ==UserScript==
-// @name         craber（豆包导出）
-// @namespace    doubao-craber
-// @version      0.6.0
-// @description  craber：导出豆包对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配文本/代码/图片/引用等多种消息类型。
+// @name         craber（DeepSeek 导出）
+// @namespace    deepseek-craber
+// @version      0.1.0
+// @description  craber：导出 DeepSeek 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配正文/代码/深度思考等。
 // @author       craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
 // @supportURL   https://github.com/yixing233/GPTCraber/issues
-// @downloadURL  https://raw.githubusercontent.com/yixing233/GPTCraber/main/doubao-md-exporter.user.js
-// @updateURL    https://raw.githubusercontent.com/yixing233/GPTCraber/main/doubao-md-exporter.user.js
-// @match        https://www.doubao.com/*
-// @grant        GM_xmlhttpRequest
+// @downloadURL  https://raw.githubusercontent.com/yixing233/GPTCraber/main/deepseek-md-exporter.user.js
+// @updateURL    https://raw.githubusercontent.com/yixing233/GPTCraber/main/deepseek-md-exporter.user.js
+// @match        https://chat.deepseek.com/*
 // @grant        unsafeWindow
-// @connect      doubao.com
-// @connect      byteimg.com
-// @connect      bytedance.com
-// @connect      *
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -25,27 +20,11 @@
    * 常量与工具
    * ========================================================== */
 
-  const SETTINGS_KEY = 'doubao_craber_settings';
+  const SETTINGS_KEY = 'deepseek_craber_settings';
   const DEFAULT_SETTINGS = {
     mode: 'qa',            // 'qa' = 问答对；'ai' = 仅 AI 回复
-    includeThinking: false // 是否导出思考过程（thinking_content）
+    includeThinking: false // 是否导出深度思考过程（thinking_content）
   };
-
-  // 豆包的发送方类型：1 = 用户，2 = 豆包
-  const USER_TYPE_USER = 1;
-  const USER_TYPE_BOT = 2;
-
-  // content_block 的 block_type（已确认的）
-  // 内容块渲染按 content 下的字段名识别（见 renderBlockByField），不依赖 block_type 编号。
-  // 已知编号仅供参考：10000 text_block / 10052 attachment_block / 10056 reference_block /
-  // 2074 creation_block（生成图/视频）/ 10025 search_query_result_block（联网搜索）。
-  const BLOCK_TEXT = 10000;       // messageText 取标题时用
-
-  // 调试：设为 true 时，未适配的 block_type 会打印完整结构到控制台，
-  // 便于识别 PPT/图片生成/视频/音乐 等特殊类型的编号与字段。
-  const DEBUG_BLOCKS = true;
-  // 已记录过的未知 block_type，避免同一类型刷屏
-  const _seenUnknownBlocks = {};
 
   function loadSettings() {
     try {
@@ -61,9 +40,9 @@
 
   let settings = loadSettings();
 
-  // 豆包对话页 URL：/chat/{conversationId}
+  // DeepSeek 对话页 URL：/a/chat/s/{sessionId} 或 /chat/{sessionId}
   function getConvId() {
-    const m = location.pathname.match(/\/chat\/([^/?#]+)/);
+    const m = location.pathname.match(/\/(?:a\/chat\/s|chat\/s|chat)\/([0-9a-f-]{16,})/i);
     return m ? m[1] : null;
   }
 
@@ -98,78 +77,54 @@
    *   /im/chain/single      (cmd 3100) 单会话消息链
    * ========================================================== */
 
-  // 豆包接口的公共 query 串（从抓包里取，device_id/web_id 等每个账号不同，
-  // 但接口对缺失字段容忍度较高；这里用页面已有的即可。实测仅带核心字段也能通）。
-  function apiQuery() {
-    return '?version_code=20800&language=zh&device_platform=web&doubao_device_platform=web' +
-      '&aid=497858&real_aid=497858&pkg_type=release_version&samantha_web=1' +
-      '&web_platform=browser&use-olympus-account=1&region=CN&sys_region=CN';
+  // DeepSeek 用 Bearer token 鉴权，token 存在 localStorage.userToken 的 .value 字段。
+  function getToken() {
+    try {
+      const raw = localStorage.getItem('userToken');
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      return obj && obj.value ? obj.value : null;
+    } catch (e) {
+      return null;
+    }
   }
 
-  async function imPost(path, cmd, uplinkBody) {
-    const body = {
-      cmd: cmd,
-      sequence_id: uuid(),
-      channel: 2,
-      uplink_body: uplinkBody,
-      version: '1'
-    };
-    const r = await fetch(path + apiQuery(), {
-      method: 'POST',
+  // 统一 GET 请求：带 Bearer token，返回 biz_data。
+  async function dsGet(path) {
+    const token = getToken();
+    if (!token) throw new Error('未登录或找不到 token（localStorage.userToken）');
+    const r = await fetch(path, {
+      method: 'GET',
       credentials: 'include',
-      headers: {
-        'content-type': 'application/json; encoding=utf-8',
-        'agw-js-conv': 'str' // 关键：让服务端把 int64 id 序列化成字符串
-      },
-      body: JSON.stringify(body)
+      headers: { authorization: 'Bearer ' + token }
     });
     if (!r.ok) throw new Error('接口请求失败 ' + path + ': ' + r.status);
-    return r.json();
+    const j = await r.json();
+    if (j.code !== 0) throw new Error('接口返回错误 code=' + j.code + ' ' + (j.msg || ''));
+    return (j.data && j.data.biz_data) || {};
   }
 
   const API = {
-    // 拉一页会话列表。convVersion=0 取最新页，之后用返回的 next_conv_version 翻页。
-    async getConversationsPage(convVersion) {
-      const j = await imPost('/im/chain/recent_conv', 3200, {
-        pull_recent_conv_chain_uplink_body: {
-          limit: 50,
-          message_count_per_conv: 0,
-          api_version: 1,
-          conv_version: convVersion || 0,
-          direction: 3,
-          option: {
-            not_need_message: true,
-            need_complete_conversation: true,
-            need_coco_conversation: true,
-            need_coco_bot: true,
-            need_pc_pin_chain: true,
-            pc_pin_query_type: 0
-          }
-        }
-      });
-      const b = (j.downlink_body && j.downlink_body.pull_recent_conv_chain_downlink_body) || {};
+    // 拉一页会话列表。用游标 lte_cursor 翻页（返回 has_more）。
+    // 首页不带 cursor；后续用上一页最后一个会话的 updated_at 作为游标。
+    async getConversationsPage(cursor) {
+      let path = '/api/v0/chat_session/fetch_page?count=100';
+      if (cursor) path += '&lte_cursor.updated_at=' + encodeURIComponent(cursor) +
+        '&lte_cursor.pinned=false';
+      const b = await dsGet(path);
+      const sessions = b.chat_sessions || [];
       return {
-        cells: b.cells || [],
+        sessions: sessions,
         hasMore: !!b.has_more,
-        nextConvVersion: b.next_conv_version
+        nextCursor: sessions.length ? sessions[sessions.length - 1].updated_at : null
       };
     },
 
-    // 拉单会话的一页消息。anchorIndex 从最大值开始，direction:1 往旧翻。
-    async getMessagesPage(convId, anchorIndex) {
-      const j = await imPost('/im/chain/single', 3100, {
-        pull_singe_chain_uplink_body: {
-          conversation_id: String(convId),
-          conversation_type: 3,
-          anchor_index: anchorIndex,
-          direction: 1,
-          limit: 50,
-          ext: {},
-          filter: { index_list: [] }
-        }
-      });
-      const b = (j.downlink_body && j.downlink_body.pull_singe_chain_downlink_body) || {};
-      return { messages: b.messages || [], hasMore: !!b.has_more };
+    // 拉单会话的全部消息（DeepSeek 一次返回整段消息链，无需翻页）。
+    async getMessages(sessionId) {
+      const b = await dsGet('/api/v0/chat/history_messages?chat_session_id=' +
+        encodeURIComponent(sessionId));
+      return { messages: b.chat_messages || [] };
     }
   };
 
@@ -310,62 +265,40 @@
 
   const _enc = new TextEncoder();
 
+
   /* ============================================================
-   * 消息链重建 + 回合分组
-   *   豆包接口按 index_in_conv 倒序返回，direction:1 从大到小翻页。
-   *   拉全部后按 index_in_conv 升序排列，再按“用户提问 → 后续豆包回复”分组。
+   * 消息拉取 + 回合分组
+   *   DeepSeek 的 history_messages 一次返回整个消息链（chat_messages[]），
+   *   每条含 role(USER/ASSISTANT)、content、thinking_content、files 等，
+   *   靠 message_id 顺序即可，无需翻页。
    * ========================================================== */
 
-  const MAX_INDEX = 9007199254740991; // Number.MAX_SAFE_INTEGER，作为首页 anchor
-
-  // 拉取单会话全部消息，按 index_in_conv 升序返回
+  // 拉取单会话全部消息，按 message_id 升序返回
   async function fetchAllMessages(convId, onProgress) {
-    const all = [];
-    const seen = {};
-    let anchor = MAX_INDEX;
-    let guard = 0;
-    while (guard++ < 200) { // 兜底：最多 200 页
-      const page = await API.getMessagesPage(convId, anchor);
-      const msgs = page.messages || [];
-      if (!msgs.length) break;
-      let minIndex = anchor;
-      for (const m of msgs) {
-        const id = m.message_id;
-        if (id && seen[id]) continue;
-        if (id) seen[id] = true;
-        all.push(m);
-        const idx = Number(m.index_in_conv);
-        if (isFinite(idx) && idx < minIndex) minIndex = idx;
-      }
-      if (onProgress) onProgress(all.length);
-      if (!page.hasMore) break;
-      if (minIndex >= anchor) break; // 没有更旧的了，防死循环
-      anchor = minIndex; // 下一页从当前最小 index 继续往旧翻
-    }
-    all.sort((a, b) => Number(a.index_in_conv) - Number(b.index_in_conv));
+    const { messages } = await API.getMessages(convId);
+    const all = (messages || []).slice();
+    all.sort((a, b) => Number(a.message_id) - Number(b.message_id));
+    if (onProgress) onProgress(all.length);
     return all;
   }
 
-  // 把消息数组按回合分组。
-  // 豆包一次用户输入可能拆成多条 user_type=1 消息（文本、图片附件、引用各一条），
-  // 因此“连续的 user 消息”合并为同一回合的提问；出现 bot 回复后再见到 user 才算新回合。
-  // turn = { question: 首条user消息, questionMsgs: [全部user消息], answers: [bot消息] }
+  // 按回合分组：一条 USER 提问 + 其后紧跟的 ASSISTANT 回复为一个回合。
+  // turn = { question: 首条user消息, questionMsgs: [全部user消息], answers: [assistant消息] }
   function groupTurns(messages) {
     const turns = [];
     let cur = null;
     let lastWasBot = true; // 让首条 user 消息能开启回合
     for (const m of messages) {
-      if (m.user_type === USER_TYPE_USER) {
+      if (m.role === 'USER') {
         if (lastWasBot || !cur) {
           cur = { question: m, questionMsgs: [m], answers: [] };
           turns.push(cur);
         } else {
-          // 与上一条 user 消息同属一次输入，并入当前回合
           cur.questionMsgs.push(m);
           if (!cur.question) cur.question = m;
         }
         lastWasBot = false;
-      } else if (m.user_type === USER_TYPE_BOT) {
+      } else if (m.role === 'ASSISTANT') {
         if (!cur) { cur = { question: null, questionMsgs: [], answers: [] }; turns.push(cur); }
         cur.answers.push(m);
         lastWasBot = true;
@@ -378,409 +311,59 @@
    * 渲染
    * ========================================================== */
 
-  // 从一条消息的 content_block[] 里取出所有图片 URL（含未适配类型里的图片）。
-  // 深度扫描每个 block，凡是含 image_ori/image_thumb 等的对象都视为图片，
-  // 这样 PPT/生成图/视频封面等未适配块里的图片也能被本地化。
-  function collectImageUrls(msg) {
-    const urls = [];
-    const seen = {};
-    const visited = new WeakSet();
-    const walk = (o, depth) => {
-      if (!o || depth > 8) return;
-      if (typeof o === 'object') {
-        if (visited.has(o)) return; // 防循环引用导致栈溢出
-        visited.add(o);
-      }
-      if (Array.isArray(o)) { for (const it of o) walk(it, depth + 1); return; }
-      if (typeof o !== 'object') return;
-      const iu = pickImageFromObj(o);
-      if (iu && (o.image_ori || o.image_thumb || o.image_preview || o.image_720) && !seen[iu]) {
-        seen[iu] = 1;
-        urls.push({ url: iu, name: (o.name || '') });
-      }
-      for (const k of Object.keys(o)) {
-        const v = o[k];
-        if (v && typeof v === 'object') walk(v, depth + 1);
-      }
-    };
-    if (msg.content_block && msg.content_block.length) {
-      for (const blk of msg.content_block) walk(blk.content || blk, 0);
-    } else {
-      // 老式消息：图片在 content/tts_content 的 JSON entities 里
-      const lc = legacyContent(msg);
-      for (const im of lc.images) {
-        if (im.url && !seen[im.url]) { seen[im.url] = 1; urls.push({ url: im.url, name: im.name || '' }); }
-      }
-    }
-    return urls;
+  // 清洗正文：删掉联网引用标记 [reference:0] / [!reference:3]（接口不返回引用源，
+  // 保留标记只会污染正文），并压掉因此产生的多余空格。
+  function cleanContent(text) {
+    if (!text) return '';
+    return String(text)
+      .replace(/\[!?reference:\d+\]/g, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
   }
 
-  // 收集一个回合内所有图片 URL（问题 + 回答）
-  function collectTurnImageUrls(turn, includeQuestion) {
-    const urls = [];
-    const push = (msg) => { for (const it of collectImageUrls(msg)) urls.push(it.url); };
-    if (includeQuestion) (turn.questionMsgs || []).forEach(push);
-    turn.answers.forEach(push);
-    // 去重
-    return urls.filter((u, i) => urls.indexOf(u) === i);
-  }
-
-  // 图片 sink：base64 内嵌 / 写入 zip 的 images/
-  function makeDataUriSink() {
-    const seen = {};
-    return {
-      async add(key, blob) {
-        if (seen[key]) return seen[key];
-        const uri = await blobToDataURI(blob);
-        seen[key] = uri;
-        return uri;
-      }
-    };
-  }
-  function makeZipImageSink(zip, prefix) {
-    const seen = {};
-    let n = 0;
-    const pre = prefix || '';
-    return {
-      async add(key, blob, mime) {
-        if (seen[key]) return seen[key];
-        const ext = extFromMime(mime) || extFromUrl(key) || 'png';
-        const rel = 'images/img_' + (++n) + '.' + ext;
-        const buf = new Uint8Array(await blob.arrayBuffer());
-        zip.add(pre + rel, buf);
-        seen[key] = rel;
-        return rel;
-      }
-    };
-  }
-
-  // 拉取一个回合的所有图片，解析成 URL -> src 字符串（供渲染用）
-  async function resolveTurnImages(turn, includeQuestion, sink, onProgress) {
-    const cache = {};
-    if (!sink) return cache;
-    const urls = collectTurnImageUrls(turn, includeQuestion);
-    let done = 0;
-    const tasks = urls.map((url) => (async () => {
-      try {
-        const blob = await gmFetchBlob(url);
-        cache[url] = await sink.add(url, blob, blob.type);
-      } catch (e) {
-        console.warn('[doubao-craber] 图片下载失败', url, e);
-      } finally {
-        done++;
-        if (onProgress) onProgress(done, urls.length);
-      }
-    })());
-    await Promise.all(tasks);
-    return cache;
-  }
-
-  // 从任意 block 内容里挑一个图片 URL（兼容 image / image_ori 等多种嵌套）
-  function pickImageFromObj(img) {
-    if (!img) return null;
-    return (img.image_ori && img.image_ori.url) ||
-      (img.image_preview && img.image_preview.url) ||
-      (img.image_720 && img.image_720.url) ||
-      (img.image_thumb && img.image_thumb.url) ||
-      (typeof img.url === 'string' ? img.url : null);
-  }
-
-  // 深度扫描一个未知 block，尽量抢救出可读内容：文本、图片、链接、标题。
-  // 不认识的类型也不丢弃——把能认出的字段渲染出来，实在没有再给占位。
-  function salvageBlock(blk, cache) {
+  // 渲染一条消息的正文 + 附件。DeepSeek 的 content 本身就是 Markdown。
+  // files[] 只有文件名（无下载 URL），按文件名标注。
+  function renderMessage(msg) {
     let out = '';
-    const seenText = {};
-    const imgs = [];
-    const links = [];
-    const visited = new WeakSet(); // 防循环引用导致的栈溢出
-    const walk = (o, depth) => {
-      if (!o || depth > 6) return;
-      if (Array.isArray(o)) { for (const it of o) walk(it, depth + 1); return; }
-      if (typeof o !== 'object') return;
-      if (visited.has(o)) return;
-      visited.add(o);
-      // 图片对象：含 image_ori/image_thumb/url 等
-      const iu = pickImageFromObj(o);
-      if (iu && (o.image_ori || o.image_thumb || o.image_preview || o.image_720)) {
-        imgs.push({ url: iu, name: o.name || '' });
-      }
-      for (const k of Object.keys(o)) {
-        const v = o[k];
-        if (typeof v === 'string') {
-          const s = v.trim();
-          if (!s) continue;
-          // 文本类字段：text / content / title / desc / summary / caption
-          if (/^(text|content|title|desc|description|summary|caption|name|label)$/i.test(k) &&
-              s.length > 1 && !/^https?:\/\//.test(s) && !seenText[s]) {
-            seenText[s] = 1;
-            // 名字类字段短，作强调；长文本作正文
-            if (/^(title|name|label)$/i.test(k) && s.length < 40) out += '**' + s + '**\n\n';
-            else out += s + '\n\n';
-          }
-          // 链接字段
-          if (/^(url|link|jump_url|schema|href)$/i.test(k) && /^https?:\/\//.test(s)) {
-            links.push(s);
-          }
-        } else if (v && typeof v === 'object') {
-          walk(v, depth + 1);
-        }
-      }
-    };
-    walk(blk.content || blk, 0);
-
-    for (const im of imgs) {
-      const src = (cache && cache[im.url]) || im.url;
-      const alt = (im.name || 'image').replace(/[\[\]]/g, '');
-      out += '![' + alt + '](' + src + ')\n\n';
+    const files = (msg && msg.files) || [];
+    for (const f of files) {
+      const name = (f && (f.file_name || f.name)) || '附件';
+      out += '📎 ' + name + '\n\n';
     }
-    for (const u of links.filter((x, i) => links.indexOf(x) === i)) {
-      out += '[链接](' + u + ')\n\n';
-    }
+    const body = cleanContent(msg && msg.content);
+    if (body) out += body + '\n\n';
     return out;
   }
 
-  // 渲染一条消息的 content_block[] 为 Markdown
-  // 老式消息（content_type 1/200 等）没有 content_block，正文在 content / tts_content 字段。
-  // 这两个字段可能是纯文本，也可能是 JSON（形如 {"text":"...","entities":[{image:...}]}）。
-  // 返回 { text, images:[{url,name}] }。
-  function legacyContent(msg) {
-    const result = { text: '', images: [], files: [] };
-    const raw = (msg && (msg.content || msg.tts_content)) || '';
-    if (!raw || typeof raw !== 'string') return result;
-    const s = raw.trim();
-    if (!s) return result;
-    // 尝试解析 JSON（entities 结构）
-    if (s.charAt(0) === '{' || s.charAt(0) === '[') {
-      try {
-        const obj = JSON.parse(s);
-        if (typeof obj.text === 'string') result.text = obj.text;
-        const ents = obj.entities || obj.entity_list || [];
-        const texts = [];
-        for (const e of (Array.isArray(ents) ? ents : [])) {
-          const ec = e.entity_content || e;
-          // 图片实体
-          const img = ec.image || e.image;
-          const u = pickImageFromObj(img || {});
-          if (u) { result.images.push({ url: u, name: (img && img.name) || '' }); continue; }
-          // 文件实体（PDF/文档等）：取文件名
-          const file = ec.file || e.file;
-          if (file && (file.file_name || file.name)) {
-            result.files.push({ name: file.file_name || file.name });
-            continue;
-          }
-          // 文本实体
-          if (typeof ec.text === 'string' && ec.text.trim()) texts.push(ec.text.trim());
-        }
-        if (!result.text && texts.length) result.text = texts.join('\n');
-        // 仍然啥都没抽到：给一个占位而非吐原始 JSON
-        if (!result.text && !result.images.length && !result.files.length) {
-          result.text = (msg.brief || '').trim();
-        }
-        return result;
-      } catch (e) {
-        // 解析失败当纯文本
-      }
-    }
-    result.text = s;
-    return result;
-  }
-
-  // 渲染生成内容块（block_type 2074，creation_block）：豆包 AI 生成的图片/视频。
-  // creations[] 每项：type=1 图片（image.image_ori），另有 video 字段；gen_params.prompt 是提示词。
-  function renderCreationBlock(blk, cache) {
-    const cb = blk.content && blk.content.creation_block;
-    const creations = (cb && cb.creations) || [];
-    let out = '';
-    for (const c of creations) {
-      // 图片生成
-      const u = pickImageFromObj((c && c.image) || {});
-      if (u) {
-        const src = (cache && cache[u]) || u;
-        out += '![生成图片](' + src + ')\n\n';
-      }
-      // 视频生成：豆包视频对象里通常有封面图与播放地址
-      const v = c && c.video;
-      if (v) {
-        const cover = pickImageFromObj(v.cover || v.cover_image || {});
-        if (cover) {
-          const src = (cache && cache[cover]) || cover;
-          out += '![视频封面](' + src + ')\n\n';
-        }
-        const vurl = v.play_url || v.url || (v.video_info && v.video_info.url);
-        if (vurl) out += '🎬 [视频链接](' + vurl + ')\n\n';
-      }
-      // 生成提示词
-      const prompt = c && c.gen_detail && c.gen_detail.prompt ||
-        (c && c.image && c.image.gen_params && c.image.gen_params.prompt) ||
-        (c && c.gen_params && c.gen_params.prompt);
-      if (prompt && prompt.trim()) {
-        out += '> 提示词：' + prompt.trim().replace(/\n/g, ' ') + '\n\n';
-      }
-    }
-    return out;
-  }
-
-  // 渲染联网搜索结果块（block_type 10025，search_query_result_block）：
-  // 把搜索关键词与参考网页渲染成"参考来源"列表。
-  function renderSearchResultBlock(sb) {
-    if (!sb) return '';
-    let out = '';
-    if (sb.summary && sb.summary.trim()) out += '> 🔍 ' + sb.summary.trim() + '\n\n';
-    const results = sb.results || [];
-    if (!results.length) return out;
-    out += '**参考来源：**\n\n';
-    let i = 0;
-    for (const r of results) {
-      const card = r.text_card || r.video_card || r.image_card;
-      if (!card) continue;
-      i++;
-      const title = (card.title || card.summary || '来源').replace(/\n/g, ' ').replace(/[\[\]]/g, '').slice(0, 80);
-      const url = card.url || '';
-      const site = card.sitename || '';
-      const meta = site ? ' — ' + site : '';
-      out += i + '. ' + (url ? '[' + title + '](' + url + ')' : title) + meta + '\n';
-    }
-    return out + '\n';
-  }
-
-  // 内容块的字段渲染器：按 content 下的字段名识别，不依赖 block_type 编号。
-  // 这样即使编号没见过，只要对应字段有值就能正确渲染。返回渲染字符串或 null（表示未处理）。
-  function renderBlockByField(content, cache) {
-    if (!content) return null;
-
-    // 正文文本
-    if (content.text_block && content.text_block.text && content.text_block.text.trim()) {
-      return content.text_block.text.trim() + '\n\n';
-    }
-    // 引用
-    if (content.reference_block) {
-      const t = content.reference_block.text && content.reference_block.text.text;
-      if (t && t.trim()) return '> ' + t.trim().replace(/\n/g, '\n> ') + '\n\n';
-    }
-    // 附件图片
-    if (content.attachment_block) {
-      const atts = content.attachment_block.attachments || [];
-      let out = '';
-      for (const a of atts) {
-        const u = pickImageFromObj((a && a.image) || {});
-        if (!u) continue;
-        const src = (cache && cache[u]) || u;
-        const alt = ((a.image && a.image.name) || 'image').replace(/[\[\]]/g, '');
-        out += '![' + alt + '](' + src + ')\n\n';
-      }
-      if (out) return out;
-    }
-    // AI 生成图片/视频
-    if (content.creation_block) {
-      return renderCreationBlock({ content: content }, cache);
-    }
-    // 联网搜索结果
-    if (content.search_query_result_block) {
-      return renderSearchResultBlock(content.search_query_result_block);
-    }
-    // 代码块
-    if (content.code_block) {
-      const cb = content.code_block;
-      const code = cb.code || cb.text || '';
-      const lang = cb.language || cb.lang || '';
-      if (code.trim()) return '```' + lang + '\n' + code + '\n```\n\n';
-    }
-    // 文件块（生成的文档/PPT 等）
-    if (content.file_block) {
-      const fb = content.file_block;
-      const name = fb.file_name || fb.name || '文件';
-      const u = fb.url || fb.download_url || '';
-      return '📎 ' + (u ? '[' + name + '](' + u + ')' : name) + '\n\n';
-    }
-    // 大纲块（PPT/文档大纲）
-    if (content.outline_block) {
-      const ob = content.outline_block;
-      const title = ob.title || ob.name;
-      if (title) return '**' + title + '**\n\n';
-    }
-    return null;
-  }
-
-  function renderBlocks(msg, cache) {
-    let out = '';
-    // 没有 content_block：老式消息，从 content/tts_content 抽正文与图片
-    if (!msg.content_block || !msg.content_block.length) {
-      const lc = legacyContent(msg);
-      if (lc.text && lc.text.trim()) out += lc.text.trim() + '\n\n';
-      for (const im of lc.images) {
-        const src = (cache && cache[im.url]) || im.url;
-        const alt = (im.name || 'image').replace(/[\[\]]/g, '');
-        out += '![' + alt + '](' + src + ')\n\n';
-      }
-      for (const f of lc.files) {
-        out += '📎 ' + (f.name || '附件') + '\n\n';
-      }
-      return out;
-    }
-    for (const blk of (msg.content_block || [])) {
-      // 优先按字段名分发（content 是扁平对象，只有匹配当前类型的子字段非 null，
-      // 因此按字段名识别比按 block_type 编号更稳健：编号没见过也能认出内容）。
-      const byField = renderBlockByField(blk.content, cache);
-      if (byField != null) { out += byField; continue; }
-      // 字段名也认不出：抢救 + 调试打印
-      if (DEBUG_BLOCKS && !_seenUnknownBlocks[blk.block_type]) {
-        _seenUnknownBlocks[blk.block_type] = 1;
-        console.log('[doubao-craber] 未适配的 block_type=' + blk.block_type + '，完整结构：', blk);
-      }
-      const salvaged = salvageBlock(blk, cache);
-      if (salvaged.trim()) out += salvaged;
-      else out += '<!-- 未适配的内容块 block_type=' + blk.block_type + ' -->\n\n';
-    }
-    return out;
-  }
-
-  // 取一条消息的纯文本
+  // 取一条消息的纯文本（用于标题）
   function messageText(msg) {
-    if (!msg) return '';
-    for (const blk of (msg.content_block || [])) {
-      if (blk.block_type === BLOCK_TEXT) {
-        const t = (blk.content && blk.content.text_block && blk.content.text_block.text) || '';
-        if (t.trim()) return t.trim();
-      }
-    }
-    // 没有 content_block（老式用户消息）：从 content/tts_content 抽文本
-    if (!msg.content_block || !msg.content_block.length) {
-      const lc = legacyContent(msg);
-      if (lc.text && lc.text.trim()) return lc.text.trim();
-    }
-    return (msg.brief || '').trim();
+    return cleanContent(msg && msg.content);
   }
 
-  // 取一个回合的标题：扫描全部提问消息，取第一条有文本的；
-  // 没有文本时（纯图片/纯文件提问），退回文件名 / [图片] / brief。
+  // 取一个回合的标题：首条有文本的提问；没有则用附件名，再退回回复首行。
   function turnTitle(turn) {
     const msgs = (turn && turn.questionMsgs) || (turn && turn.question ? [turn.question] : []);
     for (const m of msgs) {
       const t = messageText(m);
-      if (t) return t;
+      if (t) return t.split('\n')[0];
     }
-    // 没有文本提问：尝试用文件名或图片占位
     for (const m of msgs) {
-      const lc = legacyContent(m);
-      if (lc.files && lc.files.length) return lc.files[0].name || '[文件]';
-      if (lc.images && lc.images.length) return '[图片]';
+      const files = (m && m.files) || [];
+      if (files.length) return files[0].file_name || files[0].name || '[附件]';
     }
-    // 再退回首条提问消息的 brief
-    for (const m of msgs) {
-      if (m && m.brief && m.brief.trim()) return m.brief.trim();
-    }
-    // 最后退回回合内首条回复的 brief（提问完全无文本时）
     for (const m of (turn.answers || [])) {
-      if (m && m.brief && m.brief.trim()) return m.brief.trim();
+      const t = messageText(m);
+      if (t) return t.split('\n')[0];
     }
     return '';
   }
 
-  // 渲染一个回合为 markdown，返回 { title, md }
-  async function renderTurn(turn, onProgress, sink) {
-    const includeQuestion = settings.mode === 'qa';
-    const cache = await resolveTurnImages(turn, includeQuestion, sink || makeDataUriSink(), onProgress);
+  // 图片 sink 空实现：DeepSeek 无图片 URL，无需下载/打包，仅为兼容导出流程的调用签名。
+  function makeDataUriSink() { return null; }
+  function makeZipImageSink() { return null; }
 
+  // 渲染一个回合为 markdown，返回 { title, md }
+  async function renderTurn(turn) {
     const title = turnTitle(turn);
     let md = '';
 
@@ -788,16 +371,19 @@
       md += '## 🧑 问题\n\n';
       const qMsgs = turn.questionMsgs || (turn.question ? [turn.question] : []);
       let qOut = '';
-      for (const qm of qMsgs) qOut += renderBlocks(qm, cache);
+      for (const qm of qMsgs) qOut += renderMessage(qm);
       md += (qOut.trim() || '(无文字提问)') + '\n\n';
       md += '## 🤖 回答\n\n';
     }
 
     for (const node of turn.answers) {
       if (settings.includeThinking && node.thinking_content && node.thinking_content.trim()) {
-        md += '> 💭 思考过程\n>\n> ' + node.thinking_content.trim().replace(/\n/g, '\n> ') + '\n\n';
+        const secs = node.thinking_elapsed_secs
+          ? '（' + Math.round(node.thinking_elapsed_secs) + ' 秒）' : '';
+        md += '> 💭 思考过程' + secs + '\n>\n> ' +
+          cleanContent(node.thinking_content).replace(/\n/g, '\n> ') + '\n\n';
       }
-      md += renderBlocks(node, cache);
+      md += renderMessage(node);
     }
 
     return { title, md: md.trim() + '\n' };
@@ -892,33 +478,37 @@
    * 多会话：列表获取与批量导出
    * ========================================================== */
 
-  // 从一个 recent_conv 的 cell 里提取会话元数据
-  function cellToMeta(cell) {
-    const c = (cell && cell.conversation) || {};
+  // 从 DeepSeek 的 chat_session 提取会话元数据
+  function cellToMeta(s) {
     return {
-      id: c.conversation_id,
-      title: c.name || '未命名会话',
-      createTime: Number(c.create_time) || 0,
-      updateTime: Number(c.update_time) || 0,
-      badge: Number(c.badge_count) || 0
+      id: s.id,
+      title: s.title || '未命名会话',
+      createTime: Number(s.inserted_at) || 0,
+      updateTime: Number(s.updated_at) || 0,
+      badge: 0
     };
   }
 
   async function fetchAllConversations(onProgress) {
     const all = [];
-    let convVersion = 0;
+    const seen = {};
+    let cursor = null;
     let guard = 0;
     while (guard++ < 200) {
-      const page = await API.getConversationsPage(convVersion);
-      const cells = page.cells || [];
-      for (const cell of cells) {
-        const meta = cellToMeta(cell);
-        if (meta.id) all.push(meta);
+      const page = await API.getConversationsPage(cursor);
+      const sessions = page.sessions || [];
+      let added = 0;
+      for (const s of sessions) {
+        if (!s.id || seen[s.id]) continue; // 去重：服务端游标偶尔返回重复
+        seen[s.id] = 1;
+        all.push(cellToMeta(s));
+        added++;
       }
       if (onProgress) onProgress(all.length);
-      if (!page.hasMore || !cells.length) break;
-      if (!page.nextConvVersion || page.nextConvVersion === convVersion) break;
-      convVersion = page.nextConvVersion;
+      // 没有新增（游标未推进/服务端忽略游标）或没有更多，停止，防死循环
+      if (!page.hasMore || !sessions.length || added === 0) break;
+      if (!page.nextCursor || page.nextCursor === cursor) break;
+      cursor = page.nextCursor;
     }
     return all;
   }

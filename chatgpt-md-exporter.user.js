@@ -1134,7 +1134,7 @@
     mask.innerHTML = `
       <div class="craber-panel" role="dialog" aria-label="多会话导出">
         <div class="craber-hd">
-          <h3>多会话导出为 Markdown</h3>
+          <h3>多会话导出</h3>
           <button class="craber-x" title="关闭" aria-label="关闭">×</button>
         </div>
         <div class="craber-opts">
