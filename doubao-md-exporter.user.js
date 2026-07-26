@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（豆包导出）
 // @namespace    doubao-craber
-// @version      0.5.0
+// @version      0.6.0
 // @description  craber：导出豆包对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配文本/代码/图片/引用等多种消息类型。
 // @author       craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -988,7 +988,7 @@
       box-shadow:0 4px 14px rgba(0,0,0,.18)}
     .craber-fab-ghost:hover{background:var(--craber-hover)}
 
-    .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.5);backdrop-filter:blur(2px);
+    .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
       z-index:99999;display:flex;align-items:center;justify-content:center;
       font-family:system-ui,sans-serif;animation:craber-fade-in .18s ease}
     .craber-panel{background:var(--craber-bg);color:var(--craber-fg);width:580px;max-width:92vw;max-height:84vh;
@@ -1088,7 +1088,7 @@
     .craber-item:hover .craber-preview-btn{opacity:1;transform:none;pointer-events:auto}
     .craber-preview-btn:hover{background:var(--craber-accent);color:#fff;border-color:var(--craber-accent)}
 
-    .craber-preview-mask{position:fixed;inset:0;background:rgba(15,18,20,.5);backdrop-filter:blur(2px);
+    .craber-preview-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
       z-index:100000;display:flex;align-items:center;justify-content:center;
       font-family:system-ui,sans-serif;animation:craber-fade-in .15s ease}
     .craber-preview-panel{background:var(--craber-bg);color:var(--craber-fg);
@@ -1746,5 +1746,5 @@
     }
     return rows;
   };
-  console.log('[doubao-craber] v0.5.0 已加载（Shadow DOM 隔离；诊断：控制台运行 __craberDiag()）');
+  console.log('[doubao-craber] v0.6.0 已加载（Shadow DOM 隔离；诊断：控制台运行 __craberDiag()）');
 })();
