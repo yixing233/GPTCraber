@@ -383,8 +383,13 @@
   function collectImageUrls(msg) {
     const urls = [];
     const seen = {};
+    const visited = new WeakSet();
     const walk = (o, depth) => {
-      if (!o || depth > 6) return;
+      if (!o || depth > 8) return;
+      if (typeof o === 'object') {
+        if (visited.has(o)) return; // 防循环引用导致栈溢出
+        visited.add(o);
+      }
       if (Array.isArray(o)) { for (const it of o) walk(it, depth + 1); return; }
       if (typeof o !== 'object') return;
       const iu = pickImageFromObj(o);
@@ -397,7 +402,15 @@
         if (v && typeof v === 'object') walk(v, depth + 1);
       }
     };
-    for (const blk of (msg.content_block || [])) walk(blk.content || blk, 0);
+    if (msg.content_block && msg.content_block.length) {
+      for (const blk of msg.content_block) walk(blk.content || blk, 0);
+    } else {
+      // 老式消息：图片在 content/tts_content 的 JSON entities 里
+      const lc = legacyContent(msg);
+      for (const im of lc.images) {
+        if (im.url && !seen[im.url]) { seen[im.url] = 1; urls.push({ url: im.url, name: im.name || '' }); }
+      }
+    }
     return urls;
   }
 
@@ -478,10 +491,13 @@
     const seenText = {};
     const imgs = [];
     const links = [];
+    const visited = new WeakSet(); // 防循环引用导致的栈溢出
     const walk = (o, depth) => {
       if (!o || depth > 6) return;
       if (Array.isArray(o)) { for (const it of o) walk(it, depth + 1); return; }
       if (typeof o !== 'object') return;
+      if (visited.has(o)) return;
+      visited.add(o);
       // 图片对象：含 image_ori/image_thumb/url 等
       const iu = pickImageFromObj(o);
       if (iu && (o.image_ori || o.image_thumb || o.image_preview || o.image_720)) {
@@ -523,8 +539,67 @@
   }
 
   // 渲染一条消息的 content_block[] 为 Markdown
+  // 老式消息（content_type 1/200 等）没有 content_block，正文在 content / tts_content 字段。
+  // 这两个字段可能是纯文本，也可能是 JSON（形如 {"text":"...","entities":[{image:...}]}）。
+  // 返回 { text, images:[{url,name}] }。
+  function legacyContent(msg) {
+    const result = { text: '', images: [], files: [] };
+    const raw = (msg && (msg.content || msg.tts_content)) || '';
+    if (!raw || typeof raw !== 'string') return result;
+    const s = raw.trim();
+    if (!s) return result;
+    // 尝试解析 JSON（entities 结构）
+    if (s.charAt(0) === '{' || s.charAt(0) === '[') {
+      try {
+        const obj = JSON.parse(s);
+        if (typeof obj.text === 'string') result.text = obj.text;
+        const ents = obj.entities || obj.entity_list || [];
+        const texts = [];
+        for (const e of (Array.isArray(ents) ? ents : [])) {
+          const ec = e.entity_content || e;
+          // 图片实体
+          const img = ec.image || e.image;
+          const u = pickImageFromObj(img || {});
+          if (u) { result.images.push({ url: u, name: (img && img.name) || '' }); continue; }
+          // 文件实体（PDF/文档等）：取文件名
+          const file = ec.file || e.file;
+          if (file && (file.file_name || file.name)) {
+            result.files.push({ name: file.file_name || file.name });
+            continue;
+          }
+          // 文本实体
+          if (typeof ec.text === 'string' && ec.text.trim()) texts.push(ec.text.trim());
+        }
+        if (!result.text && texts.length) result.text = texts.join('\n');
+        // 仍然啥都没抽到：给一个占位而非吐原始 JSON
+        if (!result.text && !result.images.length && !result.files.length) {
+          result.text = (msg.brief || '').trim();
+        }
+        return result;
+      } catch (e) {
+        // 解析失败当纯文本
+      }
+    }
+    result.text = s;
+    return result;
+  }
+
   function renderBlocks(msg, cache) {
     let out = '';
+    // 没有 content_block：老式消息，从 content/tts_content 抽正文与图片
+    if (!msg.content_block || !msg.content_block.length) {
+      const lc = legacyContent(msg);
+      if (lc.text && lc.text.trim()) out += lc.text.trim() + '\n\n';
+      for (const im of lc.images) {
+        const src = (cache && cache[im.url]) || im.url;
+        const alt = (im.name || 'image').replace(/[\[\]]/g, '');
+        out += '![' + alt + '](' + src + ')\n\n';
+      }
+      for (const f of lc.files) {
+        out += '📎 ' + (f.name || '附件') + '\n\n';
+      }
+      return out;
+    }
     for (const blk of (msg.content_block || [])) {
       if (blk.block_type === BLOCK_TEXT) {
         const t = (blk.content && blk.content.text_block && blk.content.text_block.text) || '';
@@ -566,6 +641,11 @@
         const t = (blk.content && blk.content.text_block && blk.content.text_block.text) || '';
         if (t.trim()) return t.trim();
       }
+    }
+    // 没有 content_block（老式用户消息）：从 content/tts_content 抽文本
+    if (!msg.content_block || !msg.content_block.length) {
+      const lc = legacyContent(msg);
+      if (lc.text && lc.text.trim()) return lc.text.trim();
     }
     return (msg.brief || '').trim();
   }
