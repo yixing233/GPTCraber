@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（豆包导出）
 // @namespace    doubao-craber
-// @version      0.1.0
+// @version      0.2.0
 // @description  craber：导出豆包对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配文本/代码/图片/引用等多种消息类型。
 // @author       craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -1185,7 +1185,7 @@
       }
       listEl.innerHTML = '';
       st.turns.forEach((turn, idx) => {
-        const q = messageText(turn.question) || '(无文字提问)';
+        const q = turnTitle(turn) || '(无文字提问)';
         const answerCount = turn.answers.length;
         const row = document.createElement('label');
         row.className = 'craber-item';
@@ -1723,5 +1723,5 @@
     }
     return rows;
   };
-  console.log('[doubao-craber] 豆包导出脚本已加载（诊断：控制台运行 __craberDiag()）');
+  console.log('[doubao-craber] v0.2.0 已加载（诊断：控制台运行 __craberDiag()）');
 })();
