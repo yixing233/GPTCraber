@@ -1398,19 +1398,27 @@
    * ========================================================== */
 
   function inlineMd(text) {
-    const codes = [];
-    let t = text.replace(/`([^`]+)`/g, (m, c) => {
-      codes.push('<code>' + c + '</code>');
-      return 'CBMDCODE' + (codes.length - 1) + 'ENDCODE';
-    });
-    t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, src) =>
-      '<img src="' + src + '" alt="' + alt + '" loading="lazy">');
-    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) =>
-      '<a href="' + url + '" target="_blank" rel="noopener">' + txt + '</a>');
-    t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-    t = t.replace(/CBMDCODE(\d+)ENDCODE/g, (m, i) => codes[+i]);
-    return t;
+    // 超长行跳过内联格式化：V8 正则回溯用调用栈，超长输入可能栈溢出。
+    // 这类行（多为搜索结果 summary、长公式）直接原样返回，保证预览不崩。
+    if (text.length > 2000) return text;
+    try {
+      const codes = [];
+      let t = text.replace(/`([^`]+)`/g, (m, c) => {
+        codes.push('<code>' + c + '</code>');
+        return 'CBMDCODE' + (codes.length - 1) + 'ENDCODE';
+      });
+      t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, src) =>
+        '<img src="' + src + '" alt="' + alt + '" loading="lazy">');
+      t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) =>
+        '<a href="' + url + '" target="_blank" rel="noopener">' + txt + '</a>');
+      t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+      t = t.replace(/CBMDCODE(\d+)ENDCODE/g, (m, i) => codes[+i]);
+      return t;
+    } catch (e) {
+      // 任何正则异常（含栈溢出）都退回原文，预览永不崩溃
+      return text;
+    }
   }
 
   function miniMarkdownToHtml(md) {
