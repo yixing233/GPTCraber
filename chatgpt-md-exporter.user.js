@@ -871,12 +871,22 @@
 
     /* 日期筛选行 */
     .craber-filter-row{display:flex;flex-direction:column;gap:8px}
-    .craber-date-custom{display:flex;align-items:center;gap:8px}
-    .craber-date-input{padding:6px 10px;font-size:12px;border:1px solid var(--craber-line);
+    .craber-date-custom{display:flex;align-items:center;gap:8px;margin-top:2px}
+    .craber-date-custom[hidden]{display:none}
+    .craber-date-input{padding:7px 10px;font-size:12px;border:1px solid var(--craber-line);
       border-radius:8px;background:var(--craber-bg);color:var(--craber-fg);outline:none;
-      color-scheme:light dark;transition:border-color .15s}
-    .craber-date-input:focus{border-color:var(--craber-accent)}
+      color-scheme:light dark;font-family:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+    .craber-date-input:hover{border-color:var(--craber-accent)}
+    .craber-date-input:focus{border-color:var(--craber-accent);box-shadow:0 0 0 3px rgba(75,91,214,.12)}
     .craber-date-sep{color:var(--craber-sub);font-size:12px}
+    .craber-proj-row{display:flex;align-items:center;gap:8px}
+    .craber-proj-row[hidden]{display:none}
+    .craber-proj-label{color:var(--craber-sub);font-size:12px;flex:none}
+    .craber-select{flex:1;padding:7px 10px;font-size:12px;border:1px solid var(--craber-line);
+      border-radius:8px;background:var(--craber-bg);color:var(--craber-fg);outline:none;
+      font-family:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+    .craber-select:hover{border-color:var(--craber-accent)}
+    .craber-select:focus{border-color:var(--craber-accent);box-shadow:0 0 0 3px rgba(75,91,214,.12)}
 
     /* 选项做成 chip：整块可点，选中高亮 */
     .craber-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;
@@ -912,6 +922,8 @@
     .craber-item input{position:absolute;opacity:0;width:0;height:0}
     .craber-item .q{flex:1;line-height:1.5;color:var(--craber-fg);word-break:break-word}
     .craber-item .meta{color:var(--craber-sub);font-size:11px;margin-top:3px}
+    .craber-proj{display:inline-block;margin-right:6px;padding:1px 7px;border-radius:10px;
+      background:var(--craber-ghost);color:var(--craber-fg);font-size:10px}
 
     /* 骨架屏 */
     .craber-sk{padding:11px 10px;display:flex;gap:11px;align-items:flex-start}
@@ -1153,6 +1165,12 @@
               <input class="craber-date-input" type="date" data-role="date-to">
             </div>
           </div>
+          <div class="craber-proj-row" data-role="project-row" hidden>
+            <span class="craber-group-label">项目</span>
+            <select class="craber-select" data-role="project-filter">
+              <option value="">全部项目</option>
+            </select>
+          </div>
         </div>
         <div class="craber-list"></div>
         <div class="craber-ft">
@@ -1185,6 +1203,10 @@
 
     // 日期筛选：range 为快捷天数（0 = 全部），或 'custom' 用 from/to
     let dateRange = 0;
+    // 项目筛选：'' = 全部项目；具体 gizmo_id = 只看该项目
+    let projFilter = '';
+    const projRow = mask.querySelector('[data-role="project-row"]');
+    const projSel = mask.querySelector('[data-role="project-filter"]');
 
     // 判断某会话的更新时间是否落在当前筛选区间内
     const inDateRange = (m) => {
@@ -1211,8 +1233,17 @@
 
     const renderList = () => {
       const kw = (searchEl.value || '').trim().toLowerCase();
-      const shown = metas.filter((m) =>
-        (!kw || (m.title || '').toLowerCase().indexOf(kw) >= 0) && inDateRange(m));
+      const shown = metas.filter((m) => {
+        if (kw && (m.title || '').toLowerCase().indexOf(kw) < 0) return false;
+        if (!inDateRange(m)) return false;
+        // 项目筛选：''/all=全部，none=无项目，其余=指定 gizmo_id
+        if (projFilter && projFilter !== 'all') {
+          const pgid = getProjectGizmoId(m);
+          if (projFilter === 'none') { if (pgid) return false; }
+          else if (pgid !== projFilter) return false;
+        }
+        return true;
+      });
       if (!shown.length) {
         listEl.innerHTML = '<div class="craber-empty">无匹配会话</div>';
         return;
@@ -1223,11 +1254,16 @@
         row.className = 'craber-item';
         row.style.animationDelay = Math.min(i * 24, 360) + 'ms';
         const t = m.update_time ? new Date(m.update_time).toLocaleString() : '';
+        // 项目会话：显示所属项目名（从缓存同步读，加载后已预取）
+        const pgid = getProjectGizmoId(m);
+        const projName = pgid ? API._gizmoCache[pgid] : null;
+        const projTag = projName
+          ? '<span class="craber-proj">📁 ' + escapeHtml(projName) + '</span>' : '';
         row.innerHTML =
           '<input type="checkbox" data-id="' + m.id + '"' + (checked[m.id] ? ' checked' : '') + '>' +
           '<span class="craber-box"></span>' +
           '<span class="q">' + escapeHtml(m.title || '未命名会话') +
-          '<div class="meta">' + escapeHtml(t) + '</div></span>' +
+          '<div class="meta">' + projTag + escapeHtml(t) + '</div></span>' +
           '<button class="craber-preview-btn" type="button" title="预览整个会话内容">预览</button>';
         row.querySelector('input').addEventListener('change', (e) => {
           checked[m.id] = e.target.checked;
@@ -1243,6 +1279,7 @@
     };
 
     searchEl.addEventListener('input', renderList);
+    projSel.addEventListener('change', () => { projFilter = projSel.value; renderList(); });
 
     // 快捷日期筛选：切换 dateRange，仅 custom 时显示日期输入
     const customEl = mask.querySelector('[data-role="date-custom"]');
@@ -1259,9 +1296,29 @@
 
     fetchAllConversations((n, total) => {
       statusEl.textContent = '加载会话 ' + n + '/' + (isFinite(total) ? total : '…');
-    }).then((all) => {
+    }).then(async (all) => {
       metas = all;
       all.forEach((m) => { checked[m.id] = true; }); // 默认全选
+      // 先把项目名预取完再首次渲染：避免“先渲染无标签、取到后重绘一次”造成的闪烁。
+      const gids = [];
+      const seenGid = {};
+      for (const m of all) {
+        const gid = getProjectGizmoId(m);
+        if (gid && !seenGid[gid]) { seenGid[gid] = 1; gids.push(gid); }
+      }
+      if (gids.length) {
+        statusEl.textContent = '加载项目信息…';
+        await Promise.all(gids.map((gid) => API.getGizmoName(gid).catch(() => null)));
+        // 填充项目筛选下拉：按项目名排序，值为 gizmo_id
+        const opts = gids
+          .map((gid) => ({ gid, name: API._gizmoCache[gid] || gid }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+        projSel.innerHTML = '<option value="all">全部项目</option>' +
+          '<option value="none">无项目</option>' +
+          opts.map((o) => '<option value="' + escapeHtml(o.gid) + '">📁 ' +
+            escapeHtml(o.name) + '</option>').join('');
+        projRow.hidden = false;
+      }
       statusEl.textContent = '共 ' + all.length + ' 个会话';
       renderList();
     }).catch((err) => {
