@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（豆包导出）
 // @namespace    doubao-craber
-// @version      0.4.0
+// @version      0.5.0
 // @description  craber：导出豆包对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出，适配文本/代码/图片/引用等多种消息类型。
 // @author       craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -958,14 +958,15 @@
 
   const style = document.createElement('style');
   style.textContent = `
-    :root{
+    :host{
       --craber-accent:#4b5bd6; --craber-accent-2:#3d4bc0;
       --craber-bg:#ffffff; --craber-fg:#1f2328; --craber-sub:#8a9099;
       --craber-line:#ececf0; --craber-hover:#f5f6f8; --craber-ghost:#f1f2f4;
       --craber-skeleton:#eceef1; --craber-skeleton-hi:#f6f7f9;
+      all:initial;
     }
     @media (prefers-color-scheme:dark){
-      :root{
+      :host{
         --craber-bg:#26282c; --craber-fg:#e8eaed; --craber-sub:#9aa0a8;
         --craber-line:#3a3d43; --craber-hover:#2f3237; --craber-ghost:#34373d;
         --craber-skeleton:#33363b; --craber-skeleton-hi:#3c4046;
@@ -1108,9 +1109,26 @@
     .craber-preview-body a{color:var(--craber-accent);text-decoration:none}
     .craber-preview-body a:hover{text-decoration:underline}
   `;
-  // 挂到 documentElement 而非 head：豆包 React 重渲染可能清掉 head 下的陌生
-  // <style>，导致面板样式时有时无、看起来像“闪没又出现”。挂到 html 下更稳。
-  document.documentElement.appendChild(style);
+  // Shadow DOM 隔离：豆包是 React SPA，会在重渲染时清掉它 diff 不到的 DOM 节点，
+  // 无论挂到 body 还是 html 下的普通节点都会被反复删除，表现为面板“闪没又出现”。
+  // 解法：建一个 host 挂到 html 下，在其 shadow root 内放样式与所有 UI。
+  // shadow root 的内容对 React 的 diff 完全不可见，永远不会被清理。
+  // craberRoot() 返回该 shadow root，所有面板/按钮都 append 到它里面。
+  let _craberShadow = null;
+  function craberRoot() {
+    if (_craberShadow && _craberShadow.host && _craberShadow.host.isConnected) {
+      return _craberShadow;
+    }
+    const host = document.createElement('div');
+    host.id = 'craber-host';
+    // host 本身不占布局，真正的定位由内部 .craber-mask/.craber-fab-wrap 的 fixed 完成
+    host.style.cssText = 'all:initial';
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.appendChild(style);
+    document.documentElement.appendChild(host);
+    _craberShadow = shadow;
+    return shadow;
+  }
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1153,9 +1171,8 @@
           <button class="craber-btn primary" data-act="export">导出选中</button>
         </div>
       </div>`;
-    // 挂到 html 而非 body：豆包 React 重渲染会清掉 body 下的陌生节点，
-    // 反复拉扯导致闪屏（与悬浮按钮同因）。挂到 documentElement 可避免。
-    document.documentElement.appendChild(mask);
+    // 放进 Shadow DOM，避免被豆包 React 清掉（详见 craberRoot）
+    craberRoot().appendChild(mask);
 
     const close = () => mask.remove();
     mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
@@ -1271,9 +1288,8 @@
           <button class="craber-btn primary" data-act="export">导出选中</button>
         </div>
       </div>`;
-    // 挂到 html 而非 body：豆包 React 重渲染会清掉 body 下的陌生节点，
-    // 反复拉扯导致闪屏（与悬浮按钮同因）。挂到 documentElement 可避免。
-    document.documentElement.appendChild(mask);
+    // 放进 Shadow DOM，避免被豆包 React 清掉（详见 craberRoot）
+    craberRoot().appendChild(mask);
 
     const close = () => mask.remove();
     mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
@@ -1561,8 +1577,8 @@
           <div class="craber-empty"><span class="craber-spin"></span> 渲染中…</div>
         </div>
       </div>`;
-    // 挂到 html 而非 body，避免豆包重渲染拉扯导致闪屏
-    document.documentElement.appendChild(pm);
+    // 放进 Shadow DOM，隔离于豆包 React 的 DOM 树
+    craberRoot().appendChild(pm);
 
     const closeP = () => pm.remove();
     pm.addEventListener('click', (e) => { if (e.target === pm) closeP(); });
@@ -1591,8 +1607,8 @@
           <div class="craber-empty"><span class="craber-spin"></span> 加载并渲染中…</div>
         </div>
       </div>`;
-    // 挂到 html 而非 body，避免豆包重渲染拉扯导致闪屏
-    document.documentElement.appendChild(pm);
+    // 放进 Shadow DOM，隔离于豆包 React 的 DOM 树
+    craberRoot().appendChild(pm);
 
     const closeP = () => pm.remove();
     pm.addEventListener('click', (e) => { if (e.target === pm) closeP(); });
@@ -1617,7 +1633,8 @@
    * ========================================================== */
 
   function mountFab() {
-    if (document.querySelector('.craber-fab-wrap')) return;
+    const root = craberRoot();
+    if (root.querySelector('.craber-fab-wrap')) return;
     const wrap = document.createElement('div');
     wrap.className = 'craber-fab-wrap';
 
@@ -1635,12 +1652,8 @@
 
     wrap.appendChild(btnConv);
     wrap.appendChild(btn);
-    // 关键：挂到 <html>（documentElement）而非 body。
-    // 豆包是 React SPA，会在重渲染时清掉 body 下它不认识的节点，
-    // 导致“注入按钮→被删→重建→再被删”的拉扯，表现为整页闪屏。
-    // <html> 的直接子节点只有 head/body，React 的根在 body 内，
-    // 不会动我们加到 html 下的节点，因此按钮常驻、无需 observer 反复重建。
-    document.documentElement.appendChild(wrap);
+    // 放进 Shadow DOM：React 的 diff 看不到 shadow 内部，按钮常驻不被清。
+    root.appendChild(wrap);
   }
 
   // SPA 切换对话时失效缓存
@@ -1733,5 +1746,5 @@
     }
     return rows;
   };
-  console.log('[doubao-craber] v0.4.0 已加载（诊断：控制台运行 __craberDiag()）');
+  console.log('[doubao-craber] v0.5.0 已加载（Shadow DOM 隔离；诊断：控制台运行 __craberDiag()）');
 })();
