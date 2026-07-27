@@ -932,6 +932,20 @@
     .craber-chip input:focus-visible+.craber-box{outline:2px solid var(--craber-accent);outline-offset:2px}
 
     .craber-list{overflow-y:auto;padding:6px 12px;flex:1;min-height:120px}
+    /* 细滚动条：作用于列表、下拉菜单、预览正文。Firefox 用 scrollbar-*，WebKit 用伪元素 */
+    .craber-list,.craber-dd-menu,.craber-preview-body{
+      scrollbar-width:thin;scrollbar-color:var(--craber-line) transparent}
+    .craber-list::-webkit-scrollbar,.craber-dd-menu::-webkit-scrollbar,
+    .craber-preview-body::-webkit-scrollbar{width:8px;height:8px}
+    .craber-list::-webkit-scrollbar-track,.craber-dd-menu::-webkit-scrollbar-track,
+    .craber-preview-body::-webkit-scrollbar-track{background:transparent}
+    .craber-list::-webkit-scrollbar-thumb,.craber-dd-menu::-webkit-scrollbar-thumb,
+    .craber-preview-body::-webkit-scrollbar-thumb{
+      background:var(--craber-line);border-radius:8px;border:2px solid transparent;
+      background-clip:content-box}
+    .craber-list:hover::-webkit-scrollbar-thumb,.craber-dd-menu:hover::-webkit-scrollbar-thumb,
+    .craber-preview-body:hover::-webkit-scrollbar-thumb{background:var(--craber-sub);
+      background-clip:content-box}
     .craber-item{display:flex;align-items:flex-start;gap:11px;padding:11px 10px;border-radius:10px;
       font-size:13px;cursor:pointer;transition:background .12s;animation:craber-row-in .28s ease both}
     .craber-item:hover{background:var(--craber-hover)}
