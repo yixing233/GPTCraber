@@ -67,26 +67,6 @@ ChatGPT 版额外支持：原生操作栏注入 🦀 单条导出按钮、联网
 | 右下「会话列表」 | 拉取历史会话，按日期 / 项目筛选后批量导出 |
 | 回复栏的 🦀（仅 ChatGPT） | 导出这一条回复 |
 
-## 工作原理
-
-**ChatGPT** 通过 accessToken 调 `/backend-api/*`，从 `current_node` 沿 `parent` 回溯重建消息树，引用位置用私有区字符（U+E000–U+F8FF）标记后按 `start_idx`/`end_idx` 还原。
-
-**豆包** 走字节自家的 IM 协议（cookie 鉴权，无签名头）：
-
-- `/im/chain/recent_conv`（cmd 3200）— 会话列表，`conv_version` 翻页
-- `/im/chain/single`（cmd 3100）— 单会话消息链，`anchor_index` + `direction:1` 往旧翻页
-
-豆包消息按 `index_in_conv` 排序，`user_type` 区分你(1)/豆包(2)，正文在 `content_block[]`（text_block 本身就是 Markdown，attachment_block 是图片，reference_block 是引用）。
-
-**DeepSeek** 用 Bearer token 鉴权（读 `localStorage.userToken` 的 `.value`）调 `/api/v0/*`：
-
-- `/api/v0/chat_session/fetch_page` — 会话列表，游标翻页
-- `/api/v0/chat/history_messages` — 单会话消息，一次返回扁平的 `chat_messages[]`
-
-DeepSeek 消息按 `role`（`USER` / `ASSISTANT`）分组，正文在 `content`（本身是 Markdown），思考链在 `thinking_content`。读取历史无需 PoW 工作量证明。
-
-三个脚本的 zip 打包都用内置的 STORE 模式打包器（不做压缩），因为页面 CSP 同时禁止外部 `@require` 脚本和 `eval`，无法引入 JSZip。豆包 / DeepSeek 的面板 UI 挂在 Shadow DOM 里，避免被页面 React 重渲染清除。
-
 ## 说明
 
 - 脚本只读取你自己账号下的会话数据，全部处理在本地浏览器完成，不上传到任何第三方。
