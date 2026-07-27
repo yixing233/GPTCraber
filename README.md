@@ -74,4 +74,4 @@ ChatGPT 版额外支持：原生操作栏注入 🦀 单条导出按钮、联网
 
 ## License
 
-MIT
+[MIT](LICENSE)
