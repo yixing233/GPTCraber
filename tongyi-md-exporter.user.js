@@ -12,6 +12,11 @@
 // @match        https://www.tongyi.com/*
 // @match        https://tongyi.aliyun.com/*
 // @grant        unsafeWindow
+// @grant        GM_xmlhttpRequest
+// @connect      qianwen.com
+// @connect      quark.cn
+// @connect      aliyuncs.com
+// @connect      alicdn.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -393,9 +398,9 @@
    * 渲染
    * ========================================================== */
 
-  // 清洗正文：通义正文里有 [(image_waterfall_3)] / [(multimodal_chat_think_1)] /
-  // [(image_inline_1)] 这类占位符，指向富媒体块（图片/思考链），导出纯文本时清掉，
-  // 避免污染正文；同时去掉联网引用标记并压掉多余空行。
+  // 清洗正文：去掉联网引用标记，压掉多余空行，并删除任何未被解析的
+  // [(xxx)] 占位符（正常图片/思考占位符会先在 resolvePlaceholders 里被替换成
+  // 真实内容，这里的删除只作用于没有对应富媒体块的残留占位符，作最后兜底）。
   function cleanContent(text) {
     if (!text) return '';
     return String(text)
@@ -404,6 +409,92 @@
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+  }
+
+  // 把一个 image 富媒体项渲染成 markdown（可能含多张图）。
+  // 通义图片项结构：{ type:'image_inline'|'image_waterfall', content:{ list:[{img_url,img_thumbnail,title,web_url}] } }
+  function renderImageItem(item) {
+    const list = (item && item.content && item.content.list) || [];
+    const parts = [];
+    for (const im of list) {
+      const url = im && (im.img_url || im.img_thumbnail);
+      if (!url) continue;
+      const alt = (im && im.title) ? String(im.title).replace(/[\[\]]/g, ' ').trim() : '图片';
+      parts.push('![' + alt + '](' + url + ')');
+    }
+    return parts.join('\n');
+  }
+
+  // 渲染 AI 生成图块（type==='ai_generate_image_list'）。这类图不由正文占位符引用，
+  // 是独立整块，需单独渲染。图片在 content.resource_infos[]（refer_id -> url），
+  // layout_list[].image[] 指明每组里“真正的生成图”的 refer_id（区别于水印图/缩略图）。
+  // 有 sink 时下载并本地化（这类图 URL 带 auth_key 会过期，值得下载）；无 sink 时保留链接。
+  async function renderAiGenImages(item, sink) {
+    const content = (item && item.content) || {};
+    const infos = content.resource_infos || [];
+    const layouts = content.layout_list || [];
+    const byRefer = {};
+    for (const info of infos) {
+      if (info && info.refer_id) byRefer[info.refer_id] = info;
+    }
+    // 优先按 layout_list 取“真正的生成图”；没有 layout 时退回全部 resource_infos
+    let chosen = [];
+    if (layouts.length) {
+      for (const lo of layouts) {
+        for (const rid of (lo.image || [])) {
+          if (byRefer[rid]) chosen.push(byRefer[rid]);
+        }
+      }
+    }
+    if (!chosen.length) chosen = infos;
+
+    const parts = [];
+    let idx = 0;
+    for (const info of chosen) {
+      const url = info && info.url;
+      if (!url) continue;
+      idx++;
+      let path = url;
+      if (sink) {
+        try { path = await sink(url, 'gen_' + idx); } catch (e) { path = url; }
+      }
+      parts.push('![生成图片](' + path + ')');
+    }
+    return parts.join('\n\n');
+  }
+
+  // 渲染一个 response block 里的独立 AI 生成图块（若有）。
+  async function renderGenImagesInBlock(block, sink) {
+    const ml = (block && block.meta_data && block.meta_data.multi_load) || [];
+    const out = [];
+    for (const item of ml) {
+      if (item && item.type === 'ai_generate_image_list') {
+        const m = await renderAiGenImages(item, sink);
+        if (m) out.push(m);
+      }
+    }
+    return out.join('\n\n');
+  }
+
+  // 解析正文里的富媒体占位符 [(source_seq)]：用本块 meta_data.multi_load[] 里
+  // source_seq 匹配的项替换。图片项 → 图片 markdown；思考项 → 删占位符（思考链单独收集）。
+  // 未匹配到的占位符（如指向别处的）保持删除，避免污染正文。
+  function resolvePlaceholders(text, block) {
+    if (!text) return text || '';
+    const ml = (block && block.meta_data && block.meta_data.multi_load) || [];
+    const bySeq = {};
+    for (const item of ml) {
+      if (item && item.source_seq) bySeq[item.source_seq] = item;
+    }
+    return String(text).replace(/\[\(([a-z0-9_]+)\)\]/gi, function (whole, seq) {
+      const item = bySeq[seq];
+      if (!item) return '';
+      if (item.type === 'image_inline' || item.type === 'image_waterfall') {
+        const imgMd = renderImageItem(item);
+        return imgMd ? '\n\n' + imgMd + '\n\n' : '';
+      }
+      return ''; // multimodal_chat_think 等：占位符删除，内容由 collectThinking 处理
+    });
   }
 
   // 取一个回合的提问文本：request_messages[] 里首个有文本的 content，
@@ -421,8 +512,10 @@
 
   // 取一个 response block 的可见正文：只有带 content 字符串的块才是正文
   // （signal/post、bar/progress、bar/iframe 等只有 meta_data，无正文）。
+  // 先把正文里指向本块富媒体的 [(xxx)] 占位符替换成真实图片，再清洗。
   function answerBlockText(block) {
-    return cleanContent(block && block.content);
+    const resolved = resolvePlaceholders(block && block.content, block);
+    return cleanContent(resolved);
   }
 
   // 收集一个回合的思考链：response_messages[] 里某些块的
@@ -455,13 +548,33 @@
     return '';
   }
 
-  // 图片 sink 空实现：通义正文里的图片是占位符指向的富媒体块，不做下载/打包，
-  // 仅为兼容导出流程的调用签名。
-  function makeDataUriSink() { return null; }
-  function makeZipImageSink() { return null; }
+  // 图片 sink：把图片 URL 下载并本地化，返回 md 里应引用的路径。
+  //   makeDataUriSink：单文件导出时用，返回 data:URI（base64 内嵌进 md）。
+  //   makeZipImageSink：打包导出时用，下载存进 zip 的 images/ 目录，返回相对路径。
+  // 只对 AI 生成图（workspace-zb-cdn.qianwen.com 等自家图床）走本地化；
+  // 联网搜索图仍保留原链接（不经过 sink）。下载失败时上层回退为原始 URL。
+  function makeDataUriSink() {
+    return async function (url) {
+      const blob = await gmFetchBlob(url);
+      return await blobToDataURI(blob);
+    };
+  }
+  function makeZipImageSink(zip, prefix) {
+    let n = 0;
+    return async function (url, hint) {
+      const blob = await gmFetchBlob(url);
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      n++;
+      const ext = extFromMime(blob.type) || extFromUrl(url);
+      const name = (prefix || '') + 'images/' + (hint || 'img') + '_' + n + '.' + ext;
+      zip.add(name, buf);
+      return name;
+    };
+  }
 
-  // 渲染一个回合为 markdown，返回 { title, md }
-  async function renderTurn(turn) {
+  // 渲染一个回合为 markdown，返回 { title, md }。
+  // sink 非空时对 AI 生成图做本地化（下载存 zip / 内嵌 base64）；为空时保留链接。
+  async function renderTurn(turn, onProgress, sink) {
     const title = turnTitle(turn);
     let md = '';
 
@@ -480,6 +593,9 @@
     for (const b of ((turn && turn.response_messages) || [])) {
       const t = answerBlockText(b);
       if (t) md += t + '\n\n';
+      // AI 生成图是独立整块（不由正文占位符引用），单独追加
+      const gen = await renderGenImagesInBlock(b, sink);
+      if (gen) md += gen + '\n\n';
     }
 
     return { title, md: md.trim() + '\n' };
@@ -490,7 +606,7 @@
     const turns = await fetchAllTurns(convId);
     let md = '# ' + (convName || '未命名会话') + '\n\n';
     for (let i = 0; i < turns.length; i++) {
-      const r = await renderTurn(turns[i]);
+      const r = await renderTurn(turns[i], null, sink);
       md += r.md.trim() + '\n\n---\n\n';
       if (onProgress) onProgress(i + 1, turns.length);
     }
@@ -898,7 +1014,9 @@
       listEl.innerHTML = '';
       st.turns.forEach((turn, idx) => {
         const q = turnTitle(turn) || '(无文字提问)';
-        const answerCount = turn.answers.length;
+        // 通义一个回合的回复块在 response_messages[]，只统计有正文的块
+        const answerCount = ((turn && turn.response_messages) || [])
+          .filter((b) => answerBlockText(b)).length;
         const row = document.createElement('label');
         row.className = 'craber-item';
         row.style.animationDelay = Math.min(idx * 30, 400) + 'ms';
