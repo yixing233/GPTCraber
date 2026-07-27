@@ -843,7 +843,7 @@
       box-shadow:0 4px 14px rgba(0,0,0,.18)}
     .craber-fab-ghost:hover{background:var(--craber-hover)}
 
-    .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.5);backdrop-filter:blur(2px);
+    .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
       z-index:99999;display:flex;align-items:center;justify-content:center;
       font-family:system-ui,sans-serif;animation:craber-fade-in .18s ease}
     .craber-panel{background:var(--craber-bg);color:var(--craber-fg);width:580px;max-width:92vw;max-height:84vh;
@@ -881,12 +881,29 @@
     .craber-date-sep{color:var(--craber-sub);font-size:12px}
     .craber-proj-row{display:flex;align-items:center;gap:8px}
     .craber-proj-row[hidden]{display:none}
-    .craber-proj-label{color:var(--craber-sub);font-size:12px;flex:none}
-    .craber-select{flex:1;padding:7px 10px;font-size:12px;border:1px solid var(--craber-line);
-      border-radius:8px;background:var(--craber-bg);color:var(--craber-fg);outline:none;
-      font-family:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s}
-    .craber-select:hover{border-color:var(--craber-accent)}
-    .craber-select:focus{border-color:var(--craber-accent);box-shadow:0 0 0 3px rgba(75,91,214,.12)}
+    /* 自定义下拉：原生 <select> 弹层由系统绘制，无法美化，改用自绘菜单 */
+    .craber-dd{position:relative;flex:1}
+    .craber-dd-trigger{width:100%;box-sizing:border-box;display:flex;align-items:center;
+      justify-content:space-between;gap:8px;padding:7px 10px;font-size:12px;text-align:left;
+      border:1px solid var(--craber-line);border-radius:8px;background:var(--craber-bg);
+      color:var(--craber-fg);cursor:pointer;font-family:inherit;
+      transition:border-color .15s,box-shadow .15s}
+    .craber-dd-trigger:hover{border-color:var(--craber-accent)}
+    .craber-dd.open .craber-dd-trigger{border-color:var(--craber-accent);
+      box-shadow:0 0 0 3px rgba(75,91,214,.12)}
+    .craber-dd-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-dd-caret{flex:none;color:var(--craber-sub);font-size:10px;transition:transform .15s}
+    .craber-dd.open .craber-dd-caret{transform:rotate(180deg)}
+    .craber-dd-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:10;
+      max-height:240px;overflow-y:auto;padding:4px;background:var(--craber-bg);
+      border:1px solid var(--craber-line);border-radius:10px;
+      box-shadow:0 12px 32px rgba(0,0,0,.16);animation:craber-fade-in .12s ease}
+    .craber-dd-menu[hidden]{display:none}
+    .craber-dd-opt{display:flex;align-items:center;gap:6px;padding:8px 10px;font-size:12px;
+      border-radius:7px;cursor:pointer;color:var(--craber-fg);white-space:nowrap;
+      overflow:hidden;text-overflow:ellipsis;transition:background .12s}
+    .craber-dd-opt:hover{background:var(--craber-hover)}
+    .craber-dd-opt.sel{background:var(--craber-accent);color:#fff}
 
     /* 选项做成 chip：整块可点，选中高亮 */
     .craber-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;
@@ -1166,10 +1183,13 @@
             </div>
           </div>
           <div class="craber-proj-row" data-role="project-row" hidden>
-            <span class="craber-group-label">项目</span>
-            <select class="craber-select" data-role="project-filter">
-              <option value="">全部项目</option>
-            </select>
+            <div class="craber-dd" data-role="project-dd">
+              <button class="craber-dd-trigger" type="button">
+                <span class="craber-dd-label">全部项目</span>
+                <span class="craber-dd-caret">▼</span>
+              </button>
+              <div class="craber-dd-menu" hidden></div>
+            </div>
           </div>
         </div>
         <div class="craber-list"></div>
@@ -1203,10 +1223,42 @@
 
     // 日期筛选：range 为快捷天数（0 = 全部），或 'custom' 用 from/to
     let dateRange = 0;
-    // 项目筛选：'' = 全部项目；具体 gizmo_id = 只看该项目
-    let projFilter = '';
+    // 项目筛选：'all' = 全部项目；'none' = 无项目；具体 gizmo_id = 只看该项目
+    let projFilter = 'all';
     const projRow = mask.querySelector('[data-role="project-row"]');
-    const projSel = mask.querySelector('[data-role="project-filter"]');
+    const projDD = mask.querySelector('[data-role="project-dd"]');
+    const projTrigger = projDD.querySelector('.craber-dd-trigger');
+    const projLabelEl = projDD.querySelector('.craber-dd-label');
+    const projMenu = projDD.querySelector('.craber-dd-menu');
+
+    // 自绘下拉：opts = [{value, label}]。选中后回填触发器文字并 renderList。
+    const setupProjectDD = (opts) => {
+      projMenu.innerHTML = opts.map((o) =>
+        '<div class="craber-dd-opt' + (o.value === projFilter ? ' sel' : '') +
+        '" data-value="' + escapeHtml(o.value) + '">' +
+        escapeHtml(o.label) + '</div>').join('');
+      const closeMenu = () => { projDD.classList.remove('open'); projMenu.hidden = true; };
+      const openMenu = () => { projDD.classList.add('open'); projMenu.hidden = false; };
+      projTrigger.onclick = (e) => {
+        e.stopPropagation();
+        if (projMenu.hidden) openMenu(); else closeMenu();
+      };
+      projMenu.querySelectorAll('.craber-dd-opt').forEach((el) => {
+        el.onclick = () => {
+          projFilter = el.getAttribute('data-value');
+          projLabelEl.textContent = el.textContent;
+          projMenu.querySelectorAll('.craber-dd-opt').forEach((o) => {
+            o.classList.toggle('sel', o === el);
+          });
+          closeMenu();
+          renderList();
+        };
+      });
+      // 点击面板内其它区域关闭菜单（遮罩点击已在外层处理关闭面板）
+      mask.addEventListener('click', (e) => {
+        if (!projDD.contains(e.target)) closeMenu();
+      });
+    };
 
     // 判断某会话的更新时间是否落在当前筛选区间内
     const inDateRange = (m) => {
@@ -1279,7 +1331,6 @@
     };
 
     searchEl.addEventListener('input', renderList);
-    projSel.addEventListener('change', () => { projFilter = projSel.value; renderList(); });
 
     // 快捷日期筛选：切换 dateRange，仅 custom 时显示日期输入
     const customEl = mask.querySelector('[data-role="date-custom"]');
@@ -1313,10 +1364,11 @@
         const opts = gids
           .map((gid) => ({ gid, name: API._gizmoCache[gid] || gid }))
           .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
-        projSel.innerHTML = '<option value="all">全部项目</option>' +
-          '<option value="none">无项目</option>' +
-          opts.map((o) => '<option value="' + escapeHtml(o.gid) + '">📁 ' +
-            escapeHtml(o.name) + '</option>').join('');
+        setupProjectDD([
+          { value: 'all', label: '全部项目' },
+          { value: 'none', label: '无项目' },
+          ...opts.map((o) => ({ value: o.gid, label: '📁 ' + o.name })),
+        ]);
         projRow.hidden = false;
       }
       statusEl.textContent = '共 ' + all.length + ' 个会话';
