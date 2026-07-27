@@ -222,6 +222,15 @@
         }
       });
       return { list: d.list || [], hasMore: !!d.have_next_page };
+    },
+
+    // 取单会话的元信息（主要用标题）。POST，body { session_id }，返回 data.title 等。
+    async getSessionInfo(sessionId) {
+      const d = await tyRequest('/api/v1/session/get', {
+        method: 'POST',
+        body: { session_id: sessionId }
+      });
+      return d || {};
     }
   };
 
@@ -656,7 +665,9 @@
     const turns = await fetchAllTurns(convId);
     const msgIndex = {};
     turns.forEach((t) => { if (t && t.req_id) msgIndex[t.req_id] = t; });
-    state = { convId, name: null, turns, msgIndex };
+    let name = null;
+    try { name = await API.getSessionTitle(convId); } catch (e) { /* 标题取不到不影响导出 */ }
+    state = { convId, name, turns, msgIndex };
     return state;
   }
 
