@@ -510,6 +510,32 @@
     return '';
   }
 
+  // 渲染回合里“你上传的图”：request_messages[] 中 mime_type==='image/url' 的消息，
+  // 图片在 meta_data.resource_infos[]（url 字段，域名 workspace-zb-cdn.qianwen.com）。
+  // 有 sink 时下载本地化（URL 带 auth_key 会过期），无 sink 时保留链接。
+  async function renderUploadImages(turn, sink) {
+    const reqs = (turn && turn.request_messages) || [];
+    const parts = [];
+    let idx = 0;
+    for (const m of reqs) {
+      if (!m || m.mime_type !== 'image/url') continue;
+      const infos = (m.meta_data && m.meta_data.resource_infos) || [];
+      for (const info of infos) {
+        const url = info && info.url;
+        if (!url) continue;
+        idx++;
+        const alt = (info && info.file_name)
+          ? decodeURIComponent(String(info.file_name)).replace(/[\[\]]/g, ' ').trim() : '上传图片';
+        let path = url;
+        if (sink) {
+          try { path = await sink(url, 'upload_' + idx); } catch (e) { path = url; }
+        }
+        parts.push('![' + alt + '](' + path + ')');
+      }
+    }
+    return parts.join('\n\n');
+  }
+
   // 取一个 response block 的可见正文：只有带 content 字符串的块才是正文
   // （signal/post、bar/progress、bar/iframe 等只有 meta_data，无正文）。
   // 先把正文里指向本块富媒体的 [(xxx)] 占位符替换成真实图片，再清洗。
@@ -580,7 +606,9 @@
 
     if (settings.mode === 'qa') {
       md += '## 🧑 问题\n\n';
-      md += (questionText(turn) || '(无文字提问)') + '\n\n';
+      const upImgs = await renderUploadImages(turn, sink);
+      if (upImgs) md += upImgs + '\n\n';
+      md += (questionText(turn) || (upImgs ? '' : '(无文字提问)')) + '\n\n';
       md += '## 🤖 回答\n\n';
     }
 
