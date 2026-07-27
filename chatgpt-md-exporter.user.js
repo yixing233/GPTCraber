@@ -827,6 +827,16 @@
         --craber-skeleton:#33363b; --craber-skeleton-hi:#3c4046;
       }
     }
+    /* 平台页面全局滚动条美化：作用于站点本身（非本插件面板，面板选择器更具体不受影响）。
+       中性半透明配色，明暗主题下都协调；hover 加深。 */
+    html{scrollbar-width:thin;scrollbar-color:rgba(140,145,155,.5) transparent}
+    ::-webkit-scrollbar{width:10px;height:10px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:rgba(140,145,155,.4);border-radius:8px;
+      border:2px solid transparent;background-clip:content-box}
+    ::-webkit-scrollbar-thumb:hover{background:rgba(140,145,155,.65);background-clip:content-box}
+    ::-webkit-scrollbar-corner{background:transparent}
+
     @keyframes craber-fade-in{from{opacity:0}to{opacity:1}}
     @keyframes craber-pop-in{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
     @keyframes craber-shimmer{0%{background-position:-360px 0}100%{background-position:360px 0}}

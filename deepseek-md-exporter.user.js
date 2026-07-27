@@ -1267,6 +1267,24 @@
     }
   }, 1000);
 
+  // 平台页面全局滚动条美化：面板样式在 Shadow DOM 内影响不到主页面，
+  // 故单独往 document.head 注一段。中性半透明配色，明暗主题下都协调，hover 加深。
+  function mountPageScrollbarStyle() {
+    if (document.getElementById('craber-page-scrollbar')) return;
+    const s = document.createElement('style');
+    s.id = 'craber-page-scrollbar';
+    s.textContent =
+      'html{scrollbar-width:thin;scrollbar-color:rgba(140,145,155,.5) transparent}' +
+      '::-webkit-scrollbar{width:10px;height:10px}' +
+      '::-webkit-scrollbar-track{background:transparent}' +
+      '::-webkit-scrollbar-thumb{background:rgba(140,145,155,.4);border-radius:8px;' +
+      'border:2px solid transparent;background-clip:content-box}' +
+      '::-webkit-scrollbar-thumb:hover{background:rgba(140,145,155,.65);background-clip:content-box}' +
+      '::-webkit-scrollbar-corner{background:transparent}';
+    document.head.appendChild(s);
+  }
+
+  mountPageScrollbarStyle();
   mountFab();
 
   /* ============================================================
