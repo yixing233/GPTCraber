@@ -1296,6 +1296,11 @@
         }
         return true;
       });
+      // 状态栏随筛选结果变化：无筛选显示总数，有筛选显示「匹配/总数」
+      const filtered = shown.length !== metas.length;
+      statusEl.textContent = filtered
+        ? '筛选出 ' + shown.length + ' / 共 ' + metas.length + ' 个会话'
+        : '共 ' + metas.length + ' 个会话';
       if (!shown.length) {
         listEl.innerHTML = '<div class="craber-empty">无匹配会话</div>';
         return;
