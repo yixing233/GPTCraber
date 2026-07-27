@@ -1,13 +1,19 @@
 // ==UserScript==
-// @name         craber 抓包器（DeepSeek）
-// @namespace    deepseek-craber-sniffer
-// @version      0.1.0
-// @description  临时抓包脚本：拦截 DeepSeek 页面的 fetch/XHR，打印接口 URL/方法/请求体/响应/鉴权，用于分析数据结构。分析完即可卸载。
+// @name         craber 抓包器（通用）
+// @namespace    craber-sniffer
+// @version      0.2.0
+// @description  通用临时抓包脚本：拦截页面 fetch/XHR，打印接口 URL/方法/请求体/响应/鉴权，用于分析新平台的数据结构。分析完即可卸载。适配新平台时只需在下方 @match 增加目标域名即可，脚本会自动只抓当前站点自己的接口。
 // @author       craber
-// @match        https://chat.deepseek.com/*
+// @match        https://www.qianwen.com/*
+// @match        https://www.tongyi.com/*
+// @match        https://tongyi.aliyun.com/*
 // @grant        unsafeWindow
 // @run-at       document-start
 // ==/UserScript==
+
+// 用于抓取其他平台时：在上方 @match 增加目标站点（如 https://example.com/*）即可。
+// interesting() 会自动只保留“当前站点自己的接口”（相对路径，或域名与当前页面同主域），
+// 无需再改域名判定；若目标平台的接口走独立 API 子域，可在 KEYWORDS 或 sameSite() 里按需放宽。
 
 (function () {
   'use strict';
@@ -18,16 +24,38 @@
   // 只关心这些关键词相关的接口，避免刷屏（埋点/静态资源等无关请求过滤掉）
   const KEYWORDS = [
     'conversation', 'chat', 'session', 'message', 'history',
-    'fetch', 'completion', 'file', 'thread'
+    'fetch', 'completion', 'file', 'thread', 'dialog', 'query', 'session', 'list'
   ];
 
   // 抓到的记录都存这里，方便复制：window.__craberSniff
   W.__craberSniff = W.__craberSniff || [];
 
+  // 取一个主机名的“登录可识别主域”（如 chat2-api.qianwen.com -> qianwen.com），
+  // 用于判断某请求是否属于当前站点自己（含其 API 子域），从而通用适配任意平台。
+  function baseDomain(host) {
+    const parts = String(host || '').toLowerCase().split('.').filter(Boolean);
+    if (parts.length <= 2) return parts.join('.');
+    return parts.slice(-2).join('.');
+  }
+
+  const _selfBase = baseDomain(location.hostname);
+
+  // 是否属于“当前站点自己”的请求：相对路径，或域名与当前页面同主域
+  // （能覆盖如 www.x.com 页面下的 api.x.com / cdn.x.com 等自家子域）。
+  function sameSite(rawUrl) {
+    const u = String(rawUrl || '');
+    if (!u) return false;
+    if (u.charAt(0) === '/') return true; // 相对路径
+    try {
+      return baseDomain(new URL(u, location.origin).hostname) === _selfBase;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function interesting(url) {
+    if (!sameSite(url)) return false;
     const u = String(url || '').toLowerCase();
-    // 只看 deepseek 自己的 api，且命中关键词
-    if (u.indexOf('deepseek.com') < 0 && u.charAt(0) !== '/') return false;
     return KEYWORDS.some((k) => u.indexOf(k) >= 0);
   }
 
