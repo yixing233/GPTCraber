@@ -666,7 +666,10 @@
     const msgIndex = {};
     turns.forEach((t) => { if (t && t.req_id) msgIndex[t.req_id] = t; });
     let name = null;
-    try { name = await API.getSessionTitle(convId); } catch (e) { /* 标题取不到不影响导出 */ }
+    try {
+      const info = await API.getSessionInfo(convId);
+      name = (info && info.title) || null;
+    } catch (e) { /* 标题取不到不影响导出 */ }
     state = { convId, name, turns, msgIndex };
     return state;
   }
