@@ -1840,6 +1840,80 @@
     root.appendChild(menu);
   }
 
+  /* ============================================================
+   * 单条导出：在每条回复的操作栏注入蟹按钮
+   *   操作栏容器 .message-action-button-main 常驻（无需 hover）。
+   *   消息 id：从操作栏 closest('[data-observe-row]') 取 block_<id>，
+   *   去掉 block_ 前缀即接口的 message_id，直接喂 exportSingleByMessageId。
+   * ========================================================== */
+
+  // 操作栏用的小蟹图标（比悬浮球小一号，贴合工具条按钮尺寸）
+  const CRAB_SVG_SM = CRAB_SVG.replace('width="26" height="26"', 'width="18" height="18"');
+
+  // 从操作栏元素回溯到所属消息行，取 data-observe-row 里的 message_id
+  function messageIdFromToolbar(bar) {
+    const row = bar.closest('[data-observe-row]');
+    if (!row) return null;
+    const v = row.getAttribute('data-observe-row') || '';
+    const m = v.match(/(?:block_)?(\d+)/);
+    return m ? m[1] : null;
+  }
+
+  function injectSingleButtons() {
+    const bars = document.querySelectorAll('.message-action-button-main');
+    bars.forEach((bar) => {
+      if (bar.dataset.craberBar === '1') return;
+      // 只对能定位到 message_id 的操作栏注入（用户提问那栏没有则跳过）
+      const mid = messageIdFromToolbar(bar);
+      if (!mid) return;
+      bar.dataset.craberBar = '1';
+
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'craber-inline-btn';
+      b.title = 'craber 导出本回合为 Markdown';
+      b.innerHTML = CRAB_SVG_SM;
+
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (b.dataset.busy === '1') return;
+        b.dataset.busy = '1';
+        b.classList.add('craber-inline-busy');
+        try {
+          const id = messageIdFromToolbar(bar) || mid;
+          await exportSingleByMessageId(id);
+          b.classList.add('craber-inline-ok');
+        } catch (err) {
+          b.classList.add('craber-inline-err');
+          console.error('[doubao-craber]', err);
+          alert('导出失败：' + err.message);
+        } finally {
+          setTimeout(() => {
+            b.dataset.busy = '';
+            b.classList.remove('craber-inline-busy', 'craber-inline-ok', 'craber-inline-err');
+          }, 1200);
+        }
+      });
+
+      bar.appendChild(b);
+    });
+  }
+
+  // 豆包是虚拟列表：滚动会挂载/回收消息行。用 debounce 的 MutationObserver
+  // 跟进新出现的操作栏，变更停止后再扫一次（避免流式更新时疯狂重入）。
+  let _scanScheduled = false;
+  function scheduleInject() {
+    if (_scanScheduled) return;
+    _scanScheduled = true;
+    setTimeout(() => {
+      _scanScheduled = false;
+      try { injectSingleButtons(); } catch (e) { /* 忽略偶发 DOM 竞态 */ }
+    }, 250);
+  }
+  const _injectObserver = new MutationObserver(scheduleInject);
+  _injectObserver.observe(document.body, { childList: true, subtree: true });
+
   // SPA 切换对话时失效缓存
   let lastPath = location.pathname;
   setInterval(() => {
@@ -1862,12 +1936,24 @@
       '::-webkit-scrollbar-thumb{background:rgba(140,145,155,.4);border-radius:8px;' +
       'border:2px solid transparent;background-clip:content-box}' +
       '::-webkit-scrollbar-thumb:hover{background:rgba(140,145,155,.65);background-clip:content-box}' +
-      '::-webkit-scrollbar-corner{background:transparent}';
+      '::-webkit-scrollbar-corner{background:transparent}' +
+      // 操作栏注入的单条导出蟹按钮：贴合豆包工具条尺寸，蟹绿描边，hover 加底色
+      '.craber-inline-btn{display:inline-flex;align-items:center;justify-content:center;' +
+      'width:28px;height:28px;padding:0;margin:0;border:none;border-radius:8px;cursor:pointer;' +
+      'background:transparent;color:#22a06b;flex-shrink:0;' +
+      'transition:background .15s ease,transform .1s ease}' +
+      '.craber-inline-btn svg{width:18px;height:18px;pointer-events:none}' +
+      '.craber-inline-btn:hover{background:rgba(34,160,107,.12)}' +
+      '.craber-inline-btn:active{transform:scale(.92)}' +
+      '.craber-inline-btn.craber-inline-busy{opacity:.5;cursor:default}' +
+      '.craber-inline-btn.craber-inline-ok{color:#22a06b;background:rgba(34,160,107,.18)}' +
+      '.craber-inline-btn.craber-inline-err{color:#e5484d;background:rgba(229,72,77,.15)}';
     document.head.appendChild(s);
   }
 
   mountPageScrollbarStyle();
   mountFab();
+  injectSingleButtons();
 
   /* ============================================================
    * 诊断：在控制台运行 __craberDiag() 打印当前对话的真实结构
