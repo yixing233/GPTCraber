@@ -1850,6 +1850,39 @@
   // 操作栏用的小蟹图标（比悬浮球小一号，贴合工具条按钮尺寸）
   const CRAB_SVG_SM = CRAB_SVG.replace('width="26" height="26"', 'width="18" height="18"');
 
+  // 深色气泡 tooltip：挂在 body 上（逃出操作栏 overflow 裁切），hover 时按按钮位置定位。
+  // 不用原生 title（浏览器白框丑），也不用 ::after（会被操作栏 overflow 裁切）。
+  let _tipEl = null;
+  function getTipEl() {
+    if (!_tipEl) {
+      _tipEl = document.createElement('div');
+      _tipEl.className = 'craber-tip';
+      document.body.appendChild(_tipEl);
+    }
+    return _tipEl;
+  }
+  function bindTooltip(el, text) {
+    el.addEventListener('mouseenter', () => {
+      const tip = getTipEl();
+      tip.textContent = text;
+      tip.style.display = 'block';
+      const r = el.getBoundingClientRect();
+      const tw = tip.offsetWidth;
+      let left = r.left + r.width / 2 - tw / 2;
+      left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
+      tip.style.left = left + 'px';
+      tip.style.top = (r.bottom + 6) + 'px';
+      requestAnimationFrame(() => tip.classList.add('show'));
+    });
+    const hide = () => {
+      if (!_tipEl) return;
+      _tipEl.classList.remove('show');
+      _tipEl.style.display = 'none';
+    };
+    el.addEventListener('mouseleave', hide);
+    el.addEventListener('click', hide);
+  }
+
   // 从操作栏元素回溯到所属消息行，取 data-observe-row 里的 message_id
   function messageIdFromToolbar(bar) {
     const row = bar.closest('[data-observe-row]');
@@ -1871,8 +1904,8 @@
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'craber-inline-btn';
-      b.title = 'craber 导出本回合为 Markdown';
       b.innerHTML = CRAB_SVG_SM;
+      bindTooltip(b, 'crab导出');
 
       b.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1947,7 +1980,14 @@
       '.craber-inline-btn:active{transform:scale(.92)}' +
       '.craber-inline-btn.craber-inline-busy{opacity:.5;cursor:default}' +
       '.craber-inline-btn.craber-inline-ok{color:#22a06b;background:rgba(34,160,107,.18)}' +
-      '.craber-inline-btn.craber-inline-err{color:#e5484d;background:rgba(229,72,77,.15)}';
+      '.craber-inline-btn.craber-inline-err{color:#e5484d;background:rgba(229,72,77,.15)}' +
+      // 深色气泡 tooltip：替代浏览器原生 title 白框。挂 body，hover 时按按钮位置定位。
+      '.craber-tip{position:fixed;z-index:2147483647;pointer-events:none;' +
+      'background:#2f2f2f;color:#fff;font-size:12px;line-height:1;font-weight:400;' +
+      'padding:6px 9px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.25);' +
+      'white-space:nowrap;font-family:system-ui,sans-serif;' +
+      'opacity:0;transform:translateY(3px);transition:opacity .12s ease,transform .12s ease}' +
+      '.craber-tip.show{opacity:1;transform:translateY(0)}';
     document.head.appendChild(s);
   }
 
