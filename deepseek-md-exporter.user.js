@@ -559,12 +559,20 @@
       --craber-skeleton:#eceef1; --craber-skeleton-hi:#f6f7f9;
       all:initial;
     }
+    /* 深色变量：跟随系统（媒体查询）或页面实际主题（.craber-dark 类，由 JS 检测
+       页面背景亮度后加到 host 上）。DeepSeek 等平台用的是页面自身深色主题，不改
+       系统设置，故媒体查询不够，必须靠 .craber-dark 兜底。 */
     @media (prefers-color-scheme:dark){
       :host{
         --craber-bg:#26282c; --craber-fg:#e8eaed; --craber-sub:#9aa0a8;
         --craber-line:#3a3d43; --craber-hover:#2f3237; --craber-ghost:#34373d;
         --craber-skeleton:#33363b; --craber-skeleton-hi:#3c4046;
       }
+    }
+    :host(.craber-dark){
+      --craber-bg:#26282c; --craber-fg:#e8eaed; --craber-sub:#9aa0a8;
+      --craber-line:#3a3d43; --craber-hover:#2f3237; --craber-ghost:#34373d;
+      --craber-skeleton:#33363b; --craber-skeleton-hi:#3c4046;
     }
     @keyframes craber-fade-in{from{opacity:0}to{opacity:1}}
     @keyframes craber-pop-in{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
@@ -730,9 +738,29 @@
   // 解法：建一个 host 挂到 html 下，在其 shadow root 内放样式与所有 UI。
   // shadow root 的内容对 React 的 diff 完全不可见，永远不会被清理。
   // craberRoot() 返回该 shadow root，所有面板/按钮都 append 到它里面。
+  // 探测页面「实际」主题：媒体查询只认系统设置，但平台常有自己的明暗主题
+  // （如系统浅色、DeepSeek 深色）。故读 body/html 背景色的亮度判断，深色时给
+  // host 加 .craber-dark 类，CSS 里 :host(.craber-dark) 覆盖出深色变量。
+  function detectDark() {
+    try {
+      const bodyBg = getComputedStyle(document.body).backgroundColor ||
+        getComputedStyle(document.documentElement).backgroundColor;
+      const m = String(bodyBg).match(/rgba?\(([^)]+)\)/);
+      if (m) {
+        const p = m[1].split(',').map((s) => parseFloat(s));
+        // 透明背景（alpha 0）当作浅色处理，避免误判
+        if (p.length >= 4 && p[3] === 0) return false;
+        const lum = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+        return lum < 128;
+      }
+    } catch (e) {}
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme:dark)').matches;
+  }
+
   let _craberShadow = null;
   function craberRoot() {
     if (_craberShadow && _craberShadow.host && _craberShadow.host.isConnected) {
+      applyTheme();
       return _craberShadow;
     }
     const host = document.createElement('div');
@@ -743,7 +771,15 @@
     shadow.appendChild(style);
     document.documentElement.appendChild(host);
     _craberShadow = shadow;
+    _craberHost = host;
+    applyTheme();
     return shadow;
+  }
+
+  let _craberHost = null;
+  // 每次打开 UI 时按当前页面主题刷新 host 类（用户中途切主题也能跟上）
+  function applyTheme() {
+    if (_craberHost) _craberHost.classList.toggle('craber-dark', detectDark());
   }
 
   function escapeHtml(s) {
