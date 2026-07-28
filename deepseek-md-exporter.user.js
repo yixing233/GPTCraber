@@ -568,15 +568,23 @@
     @keyframes craber-row-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
     @keyframes craber-spin{to{transform:rotate(360deg)}}
 
-    .craber-fab-wrap{position:fixed;right:20px;bottom:20px;z-index:99998;
-      display:flex;flex-direction:column;gap:8px;align-items:flex-end}
-    .craber-fab{background:var(--craber-accent);color:#fff;border:none;border-radius:22px;padding:11px 18px;
-      font-size:13px;font-weight:500;cursor:pointer;box-shadow:0 4px 14px rgba(75,91,214,.35);
-      font-family:system-ui,sans-serif;transition:box-shadow .15s ease,background .15s ease}
-    .craber-fab:hover{background:var(--craber-accent-2);box-shadow:0 6px 18px rgba(75,91,214,.45)}
-    .craber-fab-ghost{background:var(--craber-bg);color:var(--craber-fg);
-      box-shadow:0 4px 14px rgba(0,0,0,.18)}
-    .craber-fab-ghost:hover{background:var(--craber-hover)}
+    /* 悬浮球：可拖拽、双击展开菜单。位置由 JS 用 left/top 定位并存 localStorage */
+    .craber-fab-ball{position:fixed;z-index:99998;width:52px;height:52px;border-radius:50%;
+      background:var(--craber-accent);color:#fff;border:none;cursor:grab;
+      display:flex;align-items:center;justify-content:center;font-size:24px;line-height:1;
+      box-shadow:0 4px 14px rgba(75,91,214,.4);user-select:none;touch-action:none;
+      font-family:system-ui,sans-serif;transition:box-shadow .15s ease,transform .12s ease}
+    .craber-fab-ball:hover{box-shadow:0 6px 20px rgba(75,91,214,.5)}
+    .craber-fab-ball:active{cursor:grabbing}
+    .craber-fab-ball.craber-dragging{transition:none;transform:scale(1.08)}
+    .craber-fab-menu{position:fixed;z-index:99998;display:flex;flex-direction:column;gap:8px;
+      animation:craber-fade-in .16s ease}
+    .craber-fab-menu[hidden]{display:none}
+    .craber-fab-item{background:var(--craber-bg);color:var(--craber-fg);border:none;border-radius:22px;
+      padding:11px 18px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;
+      box-shadow:0 4px 14px rgba(0,0,0,.18);font-family:system-ui,sans-serif;
+      transition:background .15s ease}
+    .craber-fab-item:hover{background:var(--craber-hover)}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
       z-index:99999;display:flex;align-items:center;justify-content:center;
@@ -1234,28 +1242,125 @@
    * UI：悬浮按钮
    * ========================================================== */
 
+  // 悬浮球：可拖拽（位置存 localStorage），双击展开菜单（会话列表 / 导出当前）。
+  // 固定右下角会挡内容，改成用户可随手拖到不碍事的位置。
+  const FAB_POS_KEY = 'deepseek_craber_fab_pos';
+
   function mountFab() {
     const root = craberRoot();
-    if (root.querySelector('.craber-fab-wrap')) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'craber-fab-wrap';
+    if (root.querySelector('.craber-fab-ball')) return;
+
+    const ball = document.createElement('button');
+    ball.className = 'craber-fab-ball';
+    ball.textContent = '🦀';
+    ball.title = '拖拽移动 · 双击展开菜单';
+
+    const menu = document.createElement('div');
+    menu.className = 'craber-fab-menu';
+    menu.hidden = true;
 
     const btnConv = document.createElement('button');
-    btnConv.className = 'craber-fab craber-fab-ghost';
+    btnConv.className = 'craber-fab-item';
     btnConv.textContent = '会话列表';
     btnConv.title = '获取并导出多个会话';
-    btnConv.addEventListener('click', openConvPanel);
 
-    const btn = document.createElement('button');
-    btn.className = 'craber-fab';
-    btn.textContent = '导出当前';
-    btn.title = '导出当前会话的回合';
-    btn.addEventListener('click', openPanel);
+    const btnCur = document.createElement('button');
+    btnCur.className = 'craber-fab-item';
+    btnCur.textContent = '导出当前';
+    btnCur.title = '导出当前会话的回合';
 
-    wrap.appendChild(btnConv);
-    wrap.appendChild(btn);
+    menu.appendChild(btnConv);
+    menu.appendChild(btnCur);
+
+    // ---- 定位：优先读存储，默认右下角 ----
+    const BALL = 52, MARGIN = 20;
+    function clamp(x, y) {
+      const maxX = window.innerWidth - BALL - 4;
+      const maxY = window.innerHeight - BALL - 4;
+      return { x: Math.max(4, Math.min(x, maxX)), y: Math.max(4, Math.min(y, maxY)) };
+    }
+    function loadPos() {
+      try {
+        const raw = localStorage.getItem(FAB_POS_KEY);
+        if (raw) { const p = JSON.parse(raw); if (typeof p.x === 'number' && typeof p.y === 'number') return p; }
+      } catch (e) {}
+      return { x: window.innerWidth - BALL - MARGIN, y: window.innerHeight - BALL - MARGIN };
+    }
+    let pos = clamp(loadPos().x, loadPos().y);
+    function applyPos() {
+      ball.style.left = pos.x + 'px';
+      ball.style.top = pos.y + 'px';
+      positionMenu();
+    }
+    // 菜单贴着球弹出：球在下半屏则向上展开，在右半屏则右对齐
+    function positionMenu() {
+      const onRight = pos.x + BALL / 2 > window.innerWidth / 2;
+      const onBottom = pos.y + BALL / 2 > window.innerHeight / 2;
+      menu.style.left = onRight ? '' : (pos.x + 'px');
+      menu.style.right = onRight ? (window.innerWidth - pos.x - BALL) + 'px' : '';
+      if (onBottom) {
+        menu.style.top = '';
+        menu.style.bottom = (window.innerHeight - pos.y + 8) + 'px';
+      } else {
+        menu.style.bottom = '';
+        menu.style.top = (pos.y + BALL + 8) + 'px';
+      }
+      menu.style.alignItems = onRight ? 'flex-end' : 'flex-start';
+    }
+
+    // ---- 拖拽：pointer 事件，移动超阈值算拖拽（避免和双击冲突） ----
+    let dragging = false, moved = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
+    ball.addEventListener('pointerdown', (e) => {
+      dragging = true; moved = false;
+      startX = e.clientX; startY = e.clientY; baseX = pos.x; baseY = pos.y;
+      ball.setPointerCapture(e.pointerId);
+      ball.classList.add('craber-dragging');
+      menu.hidden = true;
+    });
+    ball.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+      pos = clamp(baseX + dx, baseY + dy);
+      applyPos();
+    });
+    ball.addEventListener('pointerup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      ball.classList.remove('craber-dragging');
+      try { ball.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (moved) {
+        try { localStorage.setItem(FAB_POS_KEY, JSON.stringify(pos)); } catch (err) {}
+      }
+    });
+
+    // ---- 双击展开/收起菜单（拖拽过就不触发） ----
+    ball.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      if (moved) return;
+      menu.hidden = !menu.hidden;
+      if (!menu.hidden) positionMenu();
+    });
+
+    // 点菜单项：执行并收起
+    btnConv.addEventListener('click', () => { menu.hidden = true; openConvPanel(); });
+    btnCur.addEventListener('click', () => { menu.hidden = true; openPanel(); });
+
+    // 点球/菜单以外的地方收起菜单
+    document.addEventListener('pointerdown', (e) => {
+      if (menu.hidden) return;
+      const path = e.composedPath ? e.composedPath() : [];
+      if (path.indexOf(ball) >= 0 || path.indexOf(menu) >= 0) return;
+      menu.hidden = true;
+    });
+
+    // 窗口缩放时把球夹回可视区
+    window.addEventListener('resize', () => { pos = clamp(pos.x, pos.y); applyPos(); });
+
+    applyPos();
     // 放进 Shadow DOM：React 的 diff 看不到 shadow 内部，按钮常驻不被清。
-    root.appendChild(wrap);
+    root.appendChild(ball);
+    root.appendChild(menu);
   }
 
   // SPA 切换对话时失效缓存
