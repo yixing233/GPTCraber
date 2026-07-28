@@ -1308,12 +1308,48 @@
         '<div class="craber-dd-opt' + (o.value === projFilter ? ' sel' : '') +
         '" data-value="' + escapeHtml(o.value) + '">' +
         escapeHtml(o.label) + '</div>').join('');
-      const closeMenu = () => { projDD.classList.remove('open'); projMenu.hidden = true; };
-      const openMenu = () => { projDD.classList.add('open'); projMenu.hidden = false; };
+      const closeMenu = () => {
+        projDD.classList.remove('open');
+        projMenu.hidden = true;
+        // 关闭时移回原容器，避免遗留在 body 上
+        if (projMenu.parentElement === document.body) projDD.appendChild(projMenu);
+      };
+      // 菜单用 fixed 定位，避开面板 overflow 裁切。面板带 pop-in 动画（含 transform），
+      // 会让 fixed 基准变成面板本身，故打开时把菜单移到 body 顶层，确保基准是视口。
+      // 按触发器位置算坐标，下方空间不足时向上翻转。
+      const positionMenu = () => {
+        const r = projTrigger.getBoundingClientRect();
+        const vh = window.innerHeight;
+        const maxH = 240;
+        const below = vh - r.bottom - 8;
+        const above = r.top - 8;
+        // 下方放不下且上方更宽敞时，向上弹
+        const up = below < 180 && above > below;
+        const h = Math.min(maxH, up ? above : below);
+        projMenu.style.left = r.left + 'px';
+        projMenu.style.width = r.width + 'px';
+        projMenu.style.maxHeight = h + 'px';
+        if (up) {
+          projMenu.style.top = '';
+          projMenu.style.bottom = (vh - r.top + 4) + 'px';
+        } else {
+          projMenu.style.bottom = '';
+          projMenu.style.top = (r.bottom + 4) + 'px';
+        }
+      };
+      const openMenu = () => {
+        projDD.classList.add('open');
+        // 移到 body 顶层再定位，脱离面板的 transform 影响
+        if (projMenu.parentElement !== document.body) document.body.appendChild(projMenu);
+        projMenu.hidden = false;
+        positionMenu();
+      };
       projTrigger.onclick = (e) => {
         e.stopPropagation();
         if (projMenu.hidden) openMenu(); else closeMenu();
       };
+      // 面板滚动/窗口缩放时，重定位打开着的菜单
+      window.addEventListener('resize', () => { if (!projMenu.hidden) positionMenu(); });
       projMenu.querySelectorAll('.craber-dd-opt').forEach((el) => {
         el.onclick = () => {
           projFilter = el.getAttribute('data-value');
@@ -1325,10 +1361,14 @@
           renderList();
         };
       });
-      // 点击面板内其它区域关闭菜单（遮罩点击已在外层处理关闭面板）
-      mask.addEventListener('click', (e) => {
-        if (!projDD.contains(e.target)) closeMenu();
-      });
+      // 点击触发器/菜单以外任意处关闭菜单。菜单打开时被移到 body 顶层，
+      // 故不能只判 projDD.contains，要连 projMenu 一起判；用 document 捕获阶段监听，
+      // 覆盖遮罩、面板、菜单外的所有点击。
+      document.addEventListener('pointerdown', (e) => {
+        if (projMenu.hidden) return;
+        if (projDD.contains(e.target) || projMenu.contains(e.target)) return;
+        closeMenu();
+      }, true);
     };
 
     // 判断某会话的更新时间是否落在当前筛选区间内
