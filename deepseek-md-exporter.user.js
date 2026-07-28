@@ -583,8 +583,9 @@
     /* 悬浮球：可拖拽、双击展开菜单。位置由 JS 用 left/top 定位并存 localStorage。
        蟹图标用内联 SVG，蟹身填 currentColor（统一蟹绿），球底为白/浅色衬托。 */
     .craber-fab-ball{position:fixed;z-index:99998;width:52px;height:52px;border-radius:50%;
-      background:var(--craber-bg);color:#22a06b;border:none;cursor:grab;
+      background:rgba(255,255,255,.3);color:#22a06b;border:none;cursor:grab;
       display:flex;align-items:center;justify-content:center;
+      -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
       box-shadow:0 4px 14px rgba(0,0,0,.22);user-select:none;touch-action:none;
       font-family:system-ui,sans-serif;transition:box-shadow .15s ease,transform .12s ease}
     .craber-fab-ball svg{width:30px;height:30px;pointer-events:none}
@@ -599,13 +600,31 @@
     .craber-fab-item{background:var(--craber-bg);color:var(--craber-fg);border:none;border-radius:22px;
       padding:11px 18px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;
       box-shadow:0 4px 14px rgba(0,0,0,.18);font-family:system-ui,sans-serif;
-      opacity:0;transform:translateY(8px) scale(.96);
-      transition:background .15s ease,opacity .2s ease,transform .2s cubic-bezier(.2,.8,.25,1)}
-    /* 球在下半屏时菜单向上展开，项从下方滑入；这里默认向上滑入，方向对两种展开都自然 */
+      opacity:0;
+      transition:background .15s ease,opacity .24s ease,transform .24s cubic-bezier(.2,.8,.25,1)}
+    /* 项的初始位移方向跟随展开方向：向上展开(菜单在球上方)时项从下方滑入(+12px)；
+       向下展开时从上方滑入(-12px)。动画方向与展开方向一致，视觉更自然。 */
+    .craber-fab-menu.craber-up .craber-fab-item{transform:translateY(12px) scale(.9)}
+    .craber-fab-menu.craber-down .craber-fab-item{transform:translateY(-12px) scale(.9)}
     .craber-fab-menu.craber-open .craber-fab-item{opacity:1;transform:none}
-    .craber-fab-menu.craber-open .craber-fab-item:nth-child(1){transition-delay:.02s}
-    .craber-fab-menu.craber-open .craber-fab-item:nth-child(2){transition-delay:.06s}
-    .craber-fab-menu.craber-open .craber-fab-item:nth-child(3){transition-delay:.1s}
+    /* 交错延迟分两套：
+         展开(.craber-open 上的延迟)——离球由近到远依次出现；
+         收起(基础态、去掉 .craber-open 后生效的延迟)——离球由远到近依次缩回，
+         看起来像逐个「收回」到球里。 */
+    /* 展开：向上展开时最下面一项(离球最近)先出现 */
+    .craber-fab-menu.craber-up.craber-open .craber-fab-item:nth-last-child(1){transition-delay:0s}
+    .craber-fab-menu.craber-up.craber-open .craber-fab-item:nth-last-child(2){transition-delay:.07s}
+    .craber-fab-menu.craber-up.craber-open .craber-fab-item:nth-last-child(3){transition-delay:.14s}
+    .craber-fab-menu.craber-down.craber-open .craber-fab-item:nth-child(1){transition-delay:0s}
+    .craber-fab-menu.craber-down.craber-open .craber-fab-item:nth-child(2){transition-delay:.07s}
+    .craber-fab-menu.craber-down.craber-open .craber-fab-item:nth-child(3){transition-delay:.14s}
+    /* 收起：向上展开时最上面一项(离球最远)先缩回 */
+    .craber-fab-menu.craber-up .craber-fab-item:nth-child(1){transition-delay:0s}
+    .craber-fab-menu.craber-up .craber-fab-item:nth-child(2){transition-delay:.07s}
+    .craber-fab-menu.craber-up .craber-fab-item:nth-child(3){transition-delay:.14s}
+    .craber-fab-menu.craber-down .craber-fab-item:nth-last-child(1){transition-delay:0s}
+    .craber-fab-menu.craber-down .craber-fab-item:nth-last-child(2){transition-delay:.07s}
+    .craber-fab-menu.craber-down .craber-fab-item:nth-last-child(3){transition-delay:.14s}
     .craber-fab-item:hover{background:var(--craber-hover)}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
