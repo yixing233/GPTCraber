@@ -781,14 +781,16 @@
   }
 
   // 渲染一个回合为 markdown，返回 { title, md }
-  async function renderTurn(turn, onProgress, sink) {
-    const includeQuestion = settings.mode === 'qa';
-    const cache = await resolveTurnImages(turn, includeQuestion, sink || makeDataUriSink(), onProgress);
+  // opts.forceQuestion：无视 settings.mode 强制带上用户提问（单条导出用——
+  //   一段答案脱离对应问题就失去了上下文，所以单独导出时始终附问题）。
+  async function renderTurn(turn, onProgress, sink, opts) {
+    const withQuestion = settings.mode === 'qa' || !!(opts && opts.forceQuestion);
+    const cache = await resolveTurnImages(turn, withQuestion, sink || makeDataUriSink(), onProgress);
 
     const title = turnTitle(turn);
     let md = '';
 
-    if (settings.mode === 'qa') {
+    if (withQuestion) {
       md += '## 🧑 问题\n\n';
       const qMsgs = turn.questionMsgs || (turn.question ? [turn.question] : []);
       let qOut = '';
@@ -853,7 +855,24 @@
     const st = await ensureState();
     const turn = st.msgIndex[messageId];
     if (!turn) throw new Error('未在会话结构中找到该消息，试试刷新页面');
-    const { title, md } = await renderTurn(turn);
+
+    // 单条导出强制带上对应的用户提问（即便全局模式是"仅 AI 回复"），
+    // 否则单独一段答案脱离问题就没有上下文。
+    // 判断是否含图；含图时才打成 zip，把图片写进 images/ 目录、md 用相对路径引用
+    // ——base64 内嵌在很多 Markdown 阅读器里不显示。纯文字回合再套 zip 反而累赘，
+    // 仍旧直接下 .md。单条导出恒带问题，故数图也固定把问题算进去。
+    const hasImages = collectTurnImageUrls(turn, true).length > 0;
+
+    if (hasImages) {
+      const zip = createZip();
+      const sink = makeZipImageSink(zip); // 图片写入 images/，md 引用相对路径
+      const { title, md } = await renderTurn(turn, null, sink, { forceQuestion: true });
+      zip.add(sanitizeFilename(title) + '.md', _enc.encode(md));
+      triggerDownload(zip.generate(), sanitizeFilename(title) + '.zip');
+      return;
+    }
+
+    const { title, md } = await renderTurn(turn, null, null, { forceQuestion: true });
     triggerDownload(new Blob([md], { type: 'text/markdown;charset=utf-8' }), sanitizeFilename(title) + '.md');
   }
 

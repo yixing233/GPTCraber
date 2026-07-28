@@ -600,15 +600,17 @@
 
   // 渲染一个回合为 markdown。返回 { title, md }
   // sink：决定图片如何落地（base64 内嵌 / 写入 zip 的 images/）。默认 base64。
-  async function renderTurn(turn, onProgress, sink) {
-    const includeQuestion = settings.mode === 'qa';
-    const blobs = await fetchImageBlobs(turn, includeQuestion, onProgress);
+  // opts.forceQuestion：无视 settings.mode 强制带上用户提问（单条导出用——
+  //   一段答案脱离对应问题就失去了上下文，所以单独导出时始终附问题）。
+  async function renderTurn(turn, onProgress, sink, opts) {
+    const withQuestion = settings.mode === 'qa' || !!(opts && opts.forceQuestion);
+    const blobs = await fetchImageBlobs(turn, withQuestion, onProgress);
     const cache = await resolveImageCache(blobs, sink || makeDataUriSink());
 
     const title = extractText(turn.question);
     let md = '';
 
-    if (settings.mode === 'qa') {
+    if (withQuestion) {
       md += '## 🧑 问题\n\n';
       md += (title || '(空)') + '\n\n';
       const qParts = turn.question && turn.question.message.content && turn.question.message.content.parts;
@@ -682,16 +684,36 @@
    * 导出动作
    * ========================================================== */
 
+  // 用原生 TextEncoder 把字符串转字节，绕开 JSZip 的慢速 JS UTF-8 编码
+  const _enc = new TextEncoder();
+
   async function exportSingleByMessageId(messageId) {
     const st = await ensureState();
     const turn = st.nodeIndex[messageId];
     if (!turn) throw new Error('未在会话结构中找到该消息，试试刷新页面');
-    const { title, md } = await renderTurn(turn);
+
+    // 单条导出强制带上对应的用户提问（即便全局模式是"仅 AI 回复"），
+    // 否则单独一段答案脱离问题就没有上下文。
+    // 判断是否含图（托管图 + 搜索配图）；含图时才打成 zip，把图片写进 images/
+    // 目录、md 用相对路径引用——base64 内嵌在很多 Markdown 阅读器里不显示。
+    // 纯文字回合再套 zip 反而累赘，仍旧直接下 .md。
+    // 单条导出始终带问题，故数图时也把问题里的图算进去（第二参传 true），
+    // 与 renderTurn 的 forceQuestion 保持一致，避免漏判问题图而退回 base64。
+    const hasImages = settings.embedImages &&
+      (collectFileIds(turn, true).length > 0 || collectSearchImageUrls(turn).length > 0);
+
+    if (hasImages) {
+      const zip = createZip();
+      const sink = makeZipImageSink(zip); // 图片写入 images/，md 引用相对路径
+      const { title, md } = await renderTurn(turn, null, sink, { forceQuestion: true });
+      zip.add(sanitizeFilename(title) + '.md', _enc.encode(md));
+      triggerDownload(zip.generate(), sanitizeFilename(title) + '.zip');
+      return;
+    }
+
+    const { title, md } = await renderTurn(turn, null, null, { forceQuestion: true });
     triggerDownload(new Blob([md], { type: 'text/markdown;charset=utf-8' }), sanitizeFilename(title) + '.md');
   }
-
-  // 用原生 TextEncoder 把字符串转字节，绕开 JSZip 的慢速 JS UTF-8 编码
-  const _enc = new TextEncoder();
 
   async function exportBatch(selectedTurns, onProgress) {
     // 只选了一轮：直接导出单个 md（图片 base64 内嵌），不打包成 zip。
@@ -1882,8 +1904,12 @@
     const copyBtns = document.querySelectorAll('[data-testid="copy-turn-action-button"]');
     copyBtns.forEach((copyBtn) => {
       const bar = copyBtn.parentElement;
-      if (!bar || bar.dataset.craberBar === '1') return;
-      bar.dataset.craberBar = '1';
+      if (!bar) return;
+      // 防重复：查操作栏里是否已有我们的按钮（且仍在 DOM 中），而不是在 bar 上打标记。
+      // ChatGPT(React) 流式输出/重渲染操作栏时会移除我们注入的按钮，却保留 bar 上的
+      // 自定义属性；若靠属性标记判重，标记永远为真、按钮再也补不回来（表现为回复里的
+      // 导出按钮消失）。改成查子节点后，按钮被删就会在下次扫描时重新补上。
+      if (bar.querySelector(':scope > [data-craber-export]')) return;
 
       const b = document.createElement('button');
       b.type = 'button';
@@ -1921,8 +1947,10 @@
         }
       });
 
-      // 放到复制按钮之后
-      copyBtn.insertAdjacentElement('afterend', b);
+      // 追加到操作栏末尾，而不是插在复制按钮之后。插在原生按钮中间会打乱 React 对
+      // 同级节点的 diff，重渲染时可能抛 removeChild 错误、连带把整条操作栏（含原生
+      // 复制/朗读等按钮）清空。追加到末尾对 React 同级调和最友好。
+      bar.appendChild(b);
     });
   }
 
