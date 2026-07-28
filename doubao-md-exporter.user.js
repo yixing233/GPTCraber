@@ -1421,6 +1421,13 @@
       return true;
     };
 
+    // 底部实时显示：共 N 个会话 · 已选 M
+    const updateCount = () => {
+      const total = metas.length;
+      const sel = metas.reduce((n, m) => n + (checked[m.id] ? 1 : 0), 0);
+      statusEl.textContent = '共 ' + total + ' 个 · 已选 ' + sel;
+    };
+
     const renderList = () => {
       const kw = (searchEl.value || '').trim().toLowerCase();
       const shown = metas.filter((m) =>
@@ -1443,6 +1450,7 @@
           '<button class="craber-preview-btn" type="button" title="预览整个会话内容">预览</button>';
         row.querySelector('input').addEventListener('change', (e) => {
           checked[m.id] = e.target.checked;
+          updateCount();
         });
         row.querySelector('.craber-preview-btn').addEventListener('click', (e) => {
           e.preventDefault();
@@ -1472,8 +1480,8 @@
     }).then((all) => {
       metas = all;
       all.forEach((m) => { checked[m.id] = true; });
-      statusEl.textContent = '共 ' + all.length + ' 个会话';
       renderList();
+      updateCount();
     }).catch((err) => {
       listEl.innerHTML = '<div class="craber-empty">加载失败：' + escapeHtml(err.message) + '</div>';
     });
@@ -1481,10 +1489,12 @@
     mask.querySelector('[data-act="all"]').addEventListener('click', () => {
       metas.forEach((m) => { checked[m.id] = true; });
       renderList();
+      updateCount();
     });
     mask.querySelector('[data-act="none"]').addEventListener('click', () => {
       metas.forEach((m) => { checked[m.id] = !checked[m.id]; });
       renderList();
+      updateCount();
     });
 
     mask.querySelector('[data-act="export"]').addEventListener('click', async () => {

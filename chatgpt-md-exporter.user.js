@@ -951,7 +951,9 @@
     .craber-dd-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .craber-dd-caret{flex:none;color:var(--craber-sub);font-size:10px;transition:transform .15s}
     .craber-dd.open .craber-dd-caret{transform:rotate(180deg)}
-    .craber-dd-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:10;
+    /* fixed 定位：坐标/宽度/高度全部由 JS 按触发器位置设置（打开时菜单被移到
+       body 顶层，脱离面板 overflow 与 transform 影响）。这里不写死 top/left。 */
+    .craber-dd-menu{position:fixed;z-index:2147483647;
       max-height:240px;overflow-y:auto;padding:4px;background:var(--craber-bg);
       border:1px solid var(--craber-line);border-radius:10px;
       box-shadow:0 12px 32px rgba(0,0,0,.16);animation:craber-fade-in .12s ease}
@@ -1394,6 +1396,18 @@
       return true; // dateRange === 0：全部
     };
 
+    // 状态栏计数：筛选结果 + 已选数。renderList 存 lastShownCount，
+    // change/全选/反选后单独调 updateCount() 即可实时刷新已选数。
+    let lastShownCount = 0;
+    const updateCount = () => {
+      const total = metas.length;
+      const sel = metas.reduce((n, m) => n + (checked[m.id] ? 1 : 0), 0);
+      const head = lastShownCount !== total
+        ? '筛选出 ' + lastShownCount + ' / 共 ' + total + ' 个'
+        : '共 ' + total + ' 个';
+      statusEl.textContent = head + ' · 已选 ' + sel;
+    };
+
     const renderList = () => {
       const kw = (searchEl.value || '').trim().toLowerCase();
       const shown = metas.filter((m) => {
@@ -1407,11 +1421,9 @@
         }
         return true;
       });
-      // 状态栏随筛选结果变化：无筛选显示总数，有筛选显示「匹配/总数」
-      const filtered = shown.length !== metas.length;
-      statusEl.textContent = filtered
-        ? '筛选出 ' + shown.length + ' / 共 ' + metas.length + ' 个会话'
-        : '共 ' + metas.length + ' 个会话';
+      // 状态栏：显示筛选结果 + 已选数（updateCount 统一处理，change/全选/反选也复用）
+      lastShownCount = shown.length;
+      updateCount();
       if (!shown.length) {
         listEl.innerHTML = '<div class="craber-empty">无匹配会话</div>';
         return;
@@ -1435,6 +1447,7 @@
           '<button class="craber-preview-btn" type="button" title="预览整个会话内容">预览</button>';
         row.querySelector('input').addEventListener('change', (e) => {
           checked[m.id] = e.target.checked;
+          updateCount();
         });
         // 预览按钮：阻止冒泡到 label（否则会误触勾选），预览整个会话
         row.querySelector('.craber-preview-btn').addEventListener('click', (e) => {
