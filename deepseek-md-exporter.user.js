@@ -594,9 +594,11 @@
     .craber-fab-ball.craber-dragging{transition:none;transform:scale(1.08)}
     /* 菜单展开/收起过渡：用 opacity+transform（display:none 无法过渡）。
        收起态 pointer-events:none 防止不可见时误点；展开态各项交错淡入上滑。 */
+    /* 父级不做透明度过渡：否则收起时父级整体淡出会盖掉子项的交错，看起来“一次性消失”。
+       可见性完全交给各子项自己的 opacity，父级只用 pointer-events 管交互。 */
     .craber-fab-menu{position:fixed;z-index:99998;display:flex;flex-direction:column;gap:8px;
-      opacity:0;pointer-events:none;transition:opacity .18s ease}
-    .craber-fab-menu.craber-open{opacity:1;pointer-events:auto}
+      pointer-events:none}
+    .craber-fab-menu.craber-open{pointer-events:auto}
     .craber-fab-item{background:var(--craber-bg);color:var(--craber-fg);border:none;border-radius:22px;
       padding:11px 18px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;
       box-shadow:0 4px 14px rgba(0,0,0,.18);font-family:system-ui,sans-serif;
@@ -607,24 +609,8 @@
     .craber-fab-menu.craber-up .craber-fab-item{transform:translateY(12px) scale(.9)}
     .craber-fab-menu.craber-down .craber-fab-item{transform:translateY(-12px) scale(.9)}
     .craber-fab-menu.craber-open .craber-fab-item{opacity:1;transform:none}
-    /* 交错延迟分两套：
-         展开(.craber-open 上的延迟)——离球由近到远依次出现；
-         收起(基础态、去掉 .craber-open 后生效的延迟)——离球由远到近依次缩回，
-         看起来像逐个「收回」到球里。 */
-    /* 展开：向上展开时最下面一项(离球最近)先出现 */
-    .craber-fab-menu.craber-up.craber-open .craber-fab-item:nth-last-child(1){transition-delay:0s}
-    .craber-fab-menu.craber-up.craber-open .craber-fab-item:nth-last-child(2){transition-delay:.07s}
-    .craber-fab-menu.craber-up.craber-open .craber-fab-item:nth-last-child(3){transition-delay:.14s}
-    .craber-fab-menu.craber-down.craber-open .craber-fab-item:nth-child(1){transition-delay:0s}
-    .craber-fab-menu.craber-down.craber-open .craber-fab-item:nth-child(2){transition-delay:.07s}
-    .craber-fab-menu.craber-down.craber-open .craber-fab-item:nth-child(3){transition-delay:.14s}
-    /* 收起：向上展开时最上面一项(离球最远)先缩回 */
-    .craber-fab-menu.craber-up .craber-fab-item:nth-child(1){transition-delay:0s}
-    .craber-fab-menu.craber-up .craber-fab-item:nth-child(2){transition-delay:.07s}
-    .craber-fab-menu.craber-up .craber-fab-item:nth-child(3){transition-delay:.14s}
-    .craber-fab-menu.craber-down .craber-fab-item:nth-last-child(1){transition-delay:0s}
-    .craber-fab-menu.craber-down .craber-fab-item:nth-last-child(2){transition-delay:.07s}
-    .craber-fab-menu.craber-down .craber-fab-item:nth-last-child(3){transition-delay:.14s}
+    /* 交错延迟由 JS 逐项设内联 transition-delay（开合方向不同，见 setStagger），
+       CSS 特异度那套在 shadow DOM 里不稳，改由 JS 精确控制。 */
     .craber-fab-item:hover{background:var(--craber-hover)}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
@@ -1384,6 +1370,25 @@
       menu.style.alignItems = onRight ? 'flex-end' : 'flex-start';
     }
 
+    // 展开/收起菜单，逐项交错（用内联 transition-delay，最可控，不依赖 CSS 特异度）。
+    //   展开：离球近的项先出现；收起：离球远的项先缩回。
+    //   菜单在球上方(onBottom)时，DOM 末项离球最近；在球下方时，DOM 首项离球最近。
+    const STEP = 60; // 每项间隔 ms
+    function setMenuOpen(open) {
+      const items = [btnConv, btnCur, btnCollapse];
+      const onBottom = pos.y + BALL / 2 > window.innerHeight / 2;
+      const n = items.length;
+      items.forEach((it, i) => {
+        // nearIndex：该项“离球的远近序”，0=最近。菜单在上方时末项最近。
+        const nearIndex = onBottom ? (n - 1 - i) : i;
+        // 展开按“近→远”出现，收起按“远→近”缩回（延迟顺序相反）
+        const order = open ? nearIndex : (n - 1 - nearIndex);
+        it.style.transitionDelay = (order * STEP) + 'ms';
+      });
+      if (open) { positionMenu(); menu.classList.add('craber-open'); }
+      else { menu.classList.remove('craber-open'); }
+    }
+
     // ---- 拖拽：pointer 事件，移动超阈值算拖拽（避免和双击冲突） ----
     let dragging = false, moved = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
     ball.addEventListener('pointerdown', (e) => {
@@ -1391,7 +1396,7 @@
       startX = e.clientX; startY = e.clientY; baseX = pos.x; baseY = pos.y;
       ball.setPointerCapture(e.pointerId);
       ball.classList.add('craber-dragging');
-      menu.classList.remove('craber-open');
+      setMenuOpen(false);
     });
     ball.addEventListener('pointermove', (e) => {
       if (!dragging) return;
@@ -1415,15 +1420,14 @@
     ball.addEventListener('dblclick', (e) => {
       e.preventDefault();
       if (moved) return;
-      positionMenu();
-      menu.classList.add('craber-open');
+      setMenuOpen(true);
     });
 
     // 点菜单项：打开面板，菜单保持展开（面板是模态层，关掉后菜单还在）
     btnConv.addEventListener('click', openConvPanel);
     btnCur.addEventListener('click', openPanel);
     // 「收起」：手动收起菜单，只留悬浮球
-    btnCollapse.addEventListener('click', () => { menu.classList.remove('craber-open'); });
+    btnCollapse.addEventListener('click', () => { setMenuOpen(false); });
 
     // 窗口缩放时把球夹回可视区
     window.addEventListener('resize', () => { pos = clamp(pos.x, pos.y); applyPos(); });

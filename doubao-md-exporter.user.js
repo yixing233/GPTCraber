@@ -21,6 +21,10 @@
 (function () {
   'use strict';
 
+  // 悬浮球用的螃蟹图标（内联 SVG）。fill 用 currentColor，蟹身颜色由容器的
+  // color 决定（.craber-fab-ball 里设为绿色），换平台时也统一走这一处。
+  const CRAB_SVG = '<svg viewBox="0 0 71.493 71.493" width="26" height="26" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M69.857,43.299l-10.626-5.432c3.038-3.402,4.707-7.433,4.707-11.651 c0-8.227-6.175-15.503-16.114-18.989c-1.109-0.388-2.342-0.096-3.155,0.751c-0.814,0.846-1.06,2.089-0.628,3.182 c0.338,0.857,0.51,1.734,0.51,2.609c0,0.492-0.052,0.688-0.045,0.69c-0.083,0.105-0.393,0.362-0.643,0.569 c-0.422,0.35-0.947,0.785-1.546,1.386c-0.688,0.692-0.996,1.676-0.826,2.637s0.796,1.78,1.68,2.194 c1.956,0.918,8.324,4.331,8.361,9.76c-2.459-1.79-5.451-3.167-8.78-3.981c0.156-0.366,0.242-0.769,0.242-1.193 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.13,0.023,0.255,0.038,0.381 c-0.39-0.015-0.782-0.023-1.176-0.023c-0.394,0-0.787,0.008-1.176,0.023c0.016-0.126,0.038-0.25,0.038-0.381 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.423,0.086,0.826,0.242,1.193 c-3.785,0.925-7.138,2.576-9.763,4.737c0.216-4.082,4.91-8.435,9.345-10.516c0.884-0.415,1.511-1.233,1.68-2.195 c0.17-0.961-0.139-1.945-0.827-2.637c-0.598-0.601-1.124-1.037-1.546-1.386c-0.255-0.211-0.572-0.474-0.622-0.528 c-0.001-0.001-0.065-0.181-0.065-0.73c0-0.873,0.172-1.751,0.511-2.61c0.432-1.092,0.186-2.335-0.628-3.181 c-0.814-0.848-2.05-1.14-3.154-0.751C13.729,10.71,7.554,17.987,7.554,26.215c0,4.218,1.669,8.249,4.707,11.651L1.635,43.299 C0.16,44.053-0.425,45.86,0.33,47.336c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l8.695-4.445 c0.069,0.981,0.255,1.939,0.536,2.869L2.868,52.551c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635 c0.46,0,0.927-0.106,1.363-0.329l10.888-5.566c0.491,0.589,1.027,1.154,1.607,1.692l-9.282,4.745 c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l11.887-6.077 c0.131-0.067,0.253-0.143,0.369-0.226c3.474,1.623,7.568,2.563,11.949,2.563c4.381,0,8.475-0.94,11.949-2.563 c0.116,0.082,0.238,0.159,0.369,0.226l11.887,6.077c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 c0.755-1.476,0.17-3.283-1.306-4.037L53.4,54.02c0.58-0.538,1.116-1.103,1.606-1.692l10.888,5.566 c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635c0.755-1.476,0.17-3.283-1.306-4.037l-10.729-5.485 c0.281-0.931,0.466-1.888,0.536-2.87l8.695,4.445c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 C71.918,45.86,71.333,44.053,69.857,43.299z M50.472,15.06c4.65,2.828,7.466,6.906,7.466,11.155c0,1.07-0.176,2.131-0.516,3.166 c-0.584-4.354-3.438-8.421-8.006-11.487C49.934,17.163,50.316,16.273,50.472,15.06z M21.02,15.06 c0.158,1.229,0.548,2.126,1.076,2.863c-3.65,2.491-6.962,6.022-8.393,10.004c-0.099-0.566-0.149-1.138-0.149-1.711 C13.554,21.966,16.37,17.888,21.02,15.06z M19.027,43.278c0-6.011,7.656-11.089,16.72-11.089c9.063,0,16.719,5.078,16.719,11.089 s-7.656,11.089-16.719,11.089C26.683,54.368,19.027,49.29,19.027,43.278z"/></svg>';
+
   /* ============================================================
    * 常量与工具
    * ========================================================== */
@@ -972,21 +976,47 @@
         --craber-skeleton:#33363b; --craber-skeleton-hi:#3c4046;
       }
     }
+    :host(.craber-dark){
+      --craber-bg:#26282c; --craber-fg:#e8eaed; --craber-sub:#9aa0a8;
+      --craber-line:#3a3d43; --craber-hover:#2f3237; --craber-ghost:#34373d;
+      --craber-skeleton:#33363b; --craber-skeleton-hi:#3c4046;
+    }
     @keyframes craber-fade-in{from{opacity:0}to{opacity:1}}
     @keyframes craber-pop-in{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
     @keyframes craber-shimmer{0%{background-position:-360px 0}100%{background-position:360px 0}}
     @keyframes craber-row-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
     @keyframes craber-spin{to{transform:rotate(360deg)}}
 
-    .craber-fab-wrap{position:fixed;right:20px;bottom:20px;z-index:99998;
-      display:flex;flex-direction:column;gap:8px;align-items:flex-end}
-    .craber-fab{background:var(--craber-accent);color:#fff;border:none;border-radius:22px;padding:11px 18px;
-      font-size:13px;font-weight:500;cursor:pointer;box-shadow:0 4px 14px rgba(75,91,214,.35);
-      font-family:system-ui,sans-serif;transition:box-shadow .15s ease,background .15s ease}
-    .craber-fab:hover{background:var(--craber-accent-2);box-shadow:0 6px 18px rgba(75,91,214,.45)}
-    .craber-fab-ghost{background:var(--craber-bg);color:var(--craber-fg);
-      box-shadow:0 4px 14px rgba(0,0,0,.18)}
-    .craber-fab-ghost:hover{background:var(--craber-hover)}
+    /* 悬浮球：可拖拽、双击展开菜单。位置由 JS 用 left/top 定位并存 localStorage。
+       蟹图标用内联 SVG，蟹身填 currentColor（统一蟹绿），球底半透明毛玻璃。 */
+    .craber-fab-ball{position:fixed;z-index:99998;width:52px;height:52px;border-radius:50%;
+      background:rgba(255,255,255,.3);color:#22a06b;border:none;cursor:grab;
+      display:flex;align-items:center;justify-content:center;
+      -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+      box-shadow:0 4px 14px rgba(0,0,0,.22);user-select:none;touch-action:none;
+      font-family:system-ui,sans-serif;transition:box-shadow .15s ease,transform .12s ease}
+    :host(.craber-dark) .craber-fab-ball{background:rgba(38,40,44,.3)}
+    .craber-fab-ball svg{width:30px;height:30px;pointer-events:none}
+    .craber-fab-ball:hover{box-shadow:0 6px 20px rgba(0,0,0,.3)}
+    .craber-fab-ball:active{cursor:grabbing}
+    .craber-fab-ball.craber-dragging{transition:none;transform:scale(1.08)}
+    /* 菜单展开/收起过渡：父级不做透明度过渡（否则整体淡出会盖掉子项交错），
+       可见性交给各子项自己的 opacity，父级只用 pointer-events 管交互。 */
+    .craber-fab-menu{position:fixed;z-index:99998;display:flex;flex-direction:column;gap:8px;
+      pointer-events:none}
+    .craber-fab-menu.craber-open{pointer-events:auto}
+    .craber-fab-item{background:var(--craber-bg);color:var(--craber-fg);border:none;border-radius:22px;
+      padding:11px 18px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;
+      box-shadow:0 4px 14px rgba(0,0,0,.18);font-family:system-ui,sans-serif;
+      opacity:0;
+      transition:background .15s ease,opacity .24s ease,transform .24s cubic-bezier(.2,.8,.25,1)}
+    /* 项的初始位移方向跟随展开方向：向上展开(菜单在球上方)时项从下方滑入(+12px)；
+       向下展开时从上方滑入(-12px)。动画方向与展开方向一致。 */
+    .craber-fab-menu.craber-up .craber-fab-item{transform:translateY(12px) scale(.9)}
+    .craber-fab-menu.craber-down .craber-fab-item{transform:translateY(-12px) scale(.9)}
+    .craber-fab-menu.craber-open .craber-fab-item{opacity:1;transform:none}
+    /* 交错延迟由 JS 逐项设内联 transition-delay（开合方向不同，见 setMenuOpen）。 */
+    .craber-fab-collapse{color:var(--craber-sub);box-shadow:0 2px 8px rgba(0,0,0,.12)}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
       z-index:99999;display:flex;align-items:center;justify-content:center;
@@ -1126,20 +1156,47 @@
   // 解法：建一个 host 挂到 html 下，在其 shadow root 内放样式与所有 UI。
   // shadow root 的内容对 React 的 diff 完全不可见，永远不会被清理。
   // craberRoot() 返回该 shadow root，所有面板/按钮都 append 到它里面。
+  // 探测页面「实际」主题：媒体查询只认系统设置，但平台常有自己的明暗主题。
+  // 故读 body/html 背景色的亮度判断，深色时给 host 加 .craber-dark 类，
+  // CSS 里 :host(.craber-dark) 覆盖出深色变量。
+  function detectDark() {
+    try {
+      const bodyBg = getComputedStyle(document.body).backgroundColor ||
+        getComputedStyle(document.documentElement).backgroundColor;
+      const m = String(bodyBg).match(/rgba?\(([^)]+)\)/);
+      if (m) {
+        const p = m[1].split(',').map((s) => parseFloat(s));
+        if (p.length >= 4 && p[3] === 0) return false; // 透明背景当浅色
+        const lum = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+        return lum < 128;
+      }
+    } catch (e) {}
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme:dark)').matches;
+  }
+
   let _craberShadow = null;
   function craberRoot() {
     if (_craberShadow && _craberShadow.host && _craberShadow.host.isConnected) {
+      applyTheme();
       return _craberShadow;
     }
     const host = document.createElement('div');
     host.id = 'craber-host';
-    // host 本身不占布局，真正的定位由内部 .craber-mask/.craber-fab-wrap 的 fixed 完成
+    // host 本身不占布局，真正的定位由内部 .craber-mask/.craber-fab-ball 的 fixed 完成
     host.style.cssText = 'all:initial';
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.appendChild(style);
     document.documentElement.appendChild(host);
     _craberShadow = shadow;
+    _craberHost = host;
+    applyTheme();
     return shadow;
+  }
+
+  let _craberHost = null;
+  // 每次打开 UI 时按当前页面主题刷新 host 类（用户中途切主题也能跟上）
+  function applyTheme() {
+    if (_craberHost) _craberHost.classList.toggle('craber-dark', detectDark());
   }
 
   function escapeHtml(s) {
@@ -1644,28 +1701,143 @@
    * UI：悬浮按钮
    * ========================================================== */
 
+  // 悬浮球：可拖拽（位置存 localStorage），双击展开菜单（会话列表 / 导出当前）。
+  // 固定右下角会挡内容，改成用户可随手拖到不碍事的位置。
+  const FAB_POS_KEY = 'doubao_craber_fab_pos';
+
   function mountFab() {
     const root = craberRoot();
-    if (root.querySelector('.craber-fab-wrap')) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'craber-fab-wrap';
+    if (root.querySelector('.craber-fab-ball')) return;
+
+    const ball = document.createElement('button');
+    ball.className = 'craber-fab-ball';
+    // 蟹图标：蟹身填 currentColor（由 .craber-fab-ball 的 color 统一控制为蟹绿）
+    ball.innerHTML = CRAB_SVG;
+    ball.title = '拖拽移动 · 双击展开菜单';
+
+    const menu = document.createElement('div');
+    menu.className = 'craber-fab-menu';
+    // 默认收起：CSS 里 .craber-fab-menu 无 .craber-open 即不可点、子项 opacity:0
 
     const btnConv = document.createElement('button');
-    btnConv.className = 'craber-fab craber-fab-ghost';
+    btnConv.className = 'craber-fab-item';
     btnConv.textContent = '会话列表';
     btnConv.title = '获取并导出多个会话';
+
+    const btnCur = document.createElement('button');
+    btnCur.className = 'craber-fab-item';
+    btnCur.textContent = '导出当前';
+    btnCur.title = '导出当前会话的回合';
+
+    const btnCollapse = document.createElement('button');
+    btnCollapse.className = 'craber-fab-item craber-fab-collapse';
+    btnCollapse.textContent = '收起';
+    btnCollapse.title = '收起菜单，只留悬浮球';
+
+    menu.appendChild(btnConv);
+    menu.appendChild(btnCur);
+    menu.appendChild(btnCollapse);
+
+    // ---- 定位：优先读存储，默认右下角 ----
+    const BALL = 52, MARGIN = 20;
+    function clamp(x, y) {
+      const maxX = window.innerWidth - BALL - 4;
+      const maxY = window.innerHeight - BALL - 4;
+      return { x: Math.max(4, Math.min(x, maxX)), y: Math.max(4, Math.min(y, maxY)) };
+    }
+    function loadPos() {
+      try {
+        const raw = localStorage.getItem(FAB_POS_KEY);
+        if (raw) { const p = JSON.parse(raw); if (typeof p.x === 'number' && typeof p.y === 'number') return p; }
+      } catch (e) {}
+      return { x: window.innerWidth - BALL - MARGIN, y: window.innerHeight - BALL - MARGIN };
+    }
+    let pos = clamp(loadPos().x, loadPos().y);
+    function applyPos() {
+      ball.style.left = pos.x + 'px';
+      ball.style.top = pos.y + 'px';
+      positionMenu();
+    }
+    // 菜单贴着球弹出：球在下半屏则向上展开，在右半屏则右对齐
+    function positionMenu() {
+      const onRight = pos.x + BALL / 2 > window.innerWidth / 2;
+      const onBottom = pos.y + BALL / 2 > window.innerHeight / 2;
+      menu.classList.toggle('craber-up', onBottom);
+      menu.classList.toggle('craber-down', !onBottom);
+      menu.style.left = onRight ? '' : (pos.x + 'px');
+      menu.style.right = onRight ? (window.innerWidth - pos.x - BALL) + 'px' : '';
+      if (onBottom) {
+        menu.style.top = '';
+        menu.style.bottom = (window.innerHeight - pos.y + 8) + 'px';
+      } else {
+        menu.style.bottom = '';
+        menu.style.top = (pos.y + BALL + 8) + 'px';
+      }
+      menu.style.alignItems = onRight ? 'flex-end' : 'flex-start';
+    }
+
+    // 展开/收起菜单，逐项交错（用内联 transition-delay，最可控）。
+    //   展开：离球近的项先出现；收起：离球远的项先缩回。
+    //   菜单在球上方(onBottom)时 DOM 末项离球最近；在球下方时 DOM 首项离球最近。
+    const STEP = 60; // 每项间隔 ms
+    function setMenuOpen(open) {
+      const items = [btnConv, btnCur, btnCollapse];
+      const onBottom = pos.y + BALL / 2 > window.innerHeight / 2;
+      const n = items.length;
+      items.forEach((it, i) => {
+        const nearIndex = onBottom ? (n - 1 - i) : i;
+        const order = open ? nearIndex : (n - 1 - nearIndex);
+        it.style.transitionDelay = (order * STEP) + 'ms';
+      });
+      if (open) { positionMenu(); menu.classList.add('craber-open'); }
+      else { menu.classList.remove('craber-open'); }
+    }
+
+    // ---- 拖拽：pointer 事件，移动超阈值算拖拽（避免和双击冲突） ----
+    let dragging = false, moved = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
+    ball.addEventListener('pointerdown', (e) => {
+      dragging = true; moved = false;
+      startX = e.clientX; startY = e.clientY; baseX = pos.x; baseY = pos.y;
+      ball.setPointerCapture(e.pointerId);
+      ball.classList.add('craber-dragging');
+      setMenuOpen(false);
+    });
+    ball.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+      pos = clamp(baseX + dx, baseY + dy);
+      applyPos();
+    });
+    ball.addEventListener('pointerup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      ball.classList.remove('craber-dragging');
+      try { ball.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (moved) {
+        try { localStorage.setItem(FAB_POS_KEY, JSON.stringify(pos)); } catch (err) {}
+      }
+    });
+
+    // ---- 双击展开菜单（拖拽过就不触发）。收起只靠菜单里的「收起」项。 ----
+    ball.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      if (moved) return;
+      setMenuOpen(true);
+    });
+
+    // 点菜单项：打开面板，菜单保持展开（面板是模态层，关掉后菜单还在）
     btnConv.addEventListener('click', openConvPanel);
+    btnCur.addEventListener('click', openPanel);
+    btnCollapse.addEventListener('click', () => { setMenuOpen(false); });
 
-    const btn = document.createElement('button');
-    btn.className = 'craber-fab';
-    btn.textContent = '导出当前';
-    btn.title = '导出当前会话的回合';
-    btn.addEventListener('click', openPanel);
+    // 窗口缩放时把球夹回可视区
+    window.addEventListener('resize', () => { pos = clamp(pos.x, pos.y); applyPos(); });
 
-    wrap.appendChild(btnConv);
-    wrap.appendChild(btn);
+    applyPos();
     // 放进 Shadow DOM：React 的 diff 看不到 shadow 内部，按钮常驻不被清。
-    root.appendChild(wrap);
+    root.appendChild(ball);
+    root.appendChild(menu);
   }
 
   // SPA 切换对话时失效缓存

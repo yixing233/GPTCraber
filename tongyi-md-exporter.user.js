@@ -1483,28 +1483,132 @@
    * UI：悬浮按钮
    * ========================================================== */
 
+  // 悬浮球：可拖拽（位置存 localStorage），双击展开菜单（会话列表 / 导出当前）。
+  const FAB_POS_KEY = 'tongyi_craber_fab_pos';
+
   function mountFab() {
     const root = craberRoot();
-    if (root.querySelector('.craber-fab-wrap')) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'craber-fab-wrap';
+    if (root.querySelector('.craber-fab-ball')) return;
+
+    const ball = document.createElement('button');
+    ball.className = 'craber-fab-ball';
+    // 蟹图标：蟹身填 currentColor（由 .craber-fab-ball 的 color 统一控制为蟹绿）
+    ball.innerHTML = CRAB_SVG;
+    ball.title = '拖拽移动 · 双击展开菜单';
+
+    const menu = document.createElement('div');
+    menu.className = 'craber-fab-menu';
 
     const btnConv = document.createElement('button');
-    btnConv.className = 'craber-fab craber-fab-ghost';
+    btnConv.className = 'craber-fab-item';
     btnConv.textContent = '会话列表';
     btnConv.title = '获取并导出多个会话';
+
+    const btnCur = document.createElement('button');
+    btnCur.className = 'craber-fab-item';
+    btnCur.textContent = '导出当前';
+    btnCur.title = '导出当前会话的回合';
+
+    const btnCollapse = document.createElement('button');
+    btnCollapse.className = 'craber-fab-item craber-fab-collapse';
+    btnCollapse.textContent = '收起';
+    btnCollapse.title = '收起菜单，只留悬浮球';
+
+    menu.appendChild(btnConv);
+    menu.appendChild(btnCur);
+    menu.appendChild(btnCollapse);
+
+    const BALL = 52, MARGIN = 20;
+    function clamp(x, y) {
+      const maxX = window.innerWidth - BALL - 4;
+      const maxY = window.innerHeight - BALL - 4;
+      return { x: Math.max(4, Math.min(x, maxX)), y: Math.max(4, Math.min(y, maxY)) };
+    }
+    function loadPos() {
+      try {
+        const raw = localStorage.getItem(FAB_POS_KEY);
+        if (raw) { const p = JSON.parse(raw); if (typeof p.x === 'number' && typeof p.y === 'number') return p; }
+      } catch (e) {}
+      return { x: window.innerWidth - BALL - MARGIN, y: window.innerHeight - BALL - MARGIN };
+    }
+    let pos = clamp(loadPos().x, loadPos().y);
+    function applyPos() {
+      ball.style.left = pos.x + 'px';
+      ball.style.top = pos.y + 'px';
+      positionMenu();
+    }
+    function positionMenu() {
+      const onRight = pos.x + BALL / 2 > window.innerWidth / 2;
+      const onBottom = pos.y + BALL / 2 > window.innerHeight / 2;
+      menu.style.left = onRight ? '' : (pos.x + 'px');
+      menu.style.right = onRight ? (window.innerWidth - pos.x - BALL) + 'px' : '';
+      if (onBottom) {
+        menu.style.top = '';
+        menu.style.bottom = (window.innerHeight - pos.y + 8) + 'px';
+      } else {
+        menu.style.bottom = '';
+        menu.style.top = (pos.y + BALL + 8) + 'px';
+      }
+      menu.style.alignItems = onRight ? 'flex-end' : 'flex-start';
+      menu.classList.toggle('craber-up', onBottom);
+      menu.classList.toggle('craber-down', !onBottom);
+    }
+
+    const STEP = 60;
+    function setMenuOpen(open) {
+      const items = [btnConv, btnCur, btnCollapse];
+      const onBottom = pos.y + BALL / 2 > window.innerHeight / 2;
+      const n = items.length;
+      items.forEach((it, i) => {
+        const nearIndex = onBottom ? (n - 1 - i) : i;
+        const order = open ? nearIndex : (n - 1 - nearIndex);
+        it.style.transitionDelay = (order * STEP) + 'ms';
+      });
+      if (open) { positionMenu(); menu.classList.add('craber-open'); }
+      else { menu.classList.remove('craber-open'); }
+    }
+
+    let dragging = false, moved = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
+    ball.addEventListener('pointerdown', (e) => {
+      dragging = true; moved = false;
+      startX = e.clientX; startY = e.clientY; baseX = pos.x; baseY = pos.y;
+      ball.setPointerCapture(e.pointerId);
+      ball.classList.add('craber-dragging');
+      setMenuOpen(false);
+    });
+    ball.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+      pos = clamp(baseX + dx, baseY + dy);
+      applyPos();
+    });
+    ball.addEventListener('pointerup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      ball.classList.remove('craber-dragging');
+      try { ball.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (moved) {
+        try { localStorage.setItem(FAB_POS_KEY, JSON.stringify(pos)); } catch (err) {}
+      }
+    });
+
+    ball.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      if (moved) return;
+      setMenuOpen(true);
+    });
+
     btnConv.addEventListener('click', openConvPanel);
+    btnCur.addEventListener('click', openPanel);
+    btnCollapse.addEventListener('click', () => { setMenuOpen(false); });
 
-    const btn = document.createElement('button');
-    btn.className = 'craber-fab';
-    btn.textContent = '导出当前';
-    btn.title = '导出当前会话的回合';
-    btn.addEventListener('click', openPanel);
+    window.addEventListener('resize', () => { pos = clamp(pos.x, pos.y); applyPos(); });
 
-    wrap.appendChild(btnConv);
-    wrap.appendChild(btn);
+    applyPos();
     // 放进 Shadow DOM：React 的 diff 看不到 shadow 内部，按钮常驻不被清。
-    root.appendChild(wrap);
+    root.appendChild(ball);
+    root.appendChild(menu);
   }
 
   // SPA 切换对话时失效缓存
