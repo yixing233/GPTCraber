@@ -591,13 +591,21 @@
     .craber-fab-ball:hover{box-shadow:0 6px 20px rgba(0,0,0,.3)}
     .craber-fab-ball:active{cursor:grabbing}
     .craber-fab-ball.craber-dragging{transition:none;transform:scale(1.08)}
+    /* 菜单展开/收起过渡：用 opacity+transform（display:none 无法过渡）。
+       收起态 pointer-events:none 防止不可见时误点；展开态各项交错淡入上滑。 */
     .craber-fab-menu{position:fixed;z-index:99998;display:flex;flex-direction:column;gap:8px;
-      animation:craber-fade-in .16s ease}
-    .craber-fab-menu[hidden]{display:none}
+      opacity:0;pointer-events:none;transition:opacity .18s ease}
+    .craber-fab-menu.craber-open{opacity:1;pointer-events:auto}
     .craber-fab-item{background:var(--craber-bg);color:var(--craber-fg);border:none;border-radius:22px;
       padding:11px 18px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;
       box-shadow:0 4px 14px rgba(0,0,0,.18);font-family:system-ui,sans-serif;
-      transition:background .15s ease}
+      opacity:0;transform:translateY(8px) scale(.96);
+      transition:background .15s ease,opacity .2s ease,transform .2s cubic-bezier(.2,.8,.25,1)}
+    /* 球在下半屏时菜单向上展开，项从下方滑入；这里默认向上滑入，方向对两种展开都自然 */
+    .craber-fab-menu.craber-open .craber-fab-item{opacity:1;transform:none}
+    .craber-fab-menu.craber-open .craber-fab-item:nth-child(1){transition-delay:.02s}
+    .craber-fab-menu.craber-open .craber-fab-item:nth-child(2){transition-delay:.06s}
+    .craber-fab-menu.craber-open .craber-fab-item:nth-child(3){transition-delay:.1s}
     .craber-fab-item:hover{background:var(--craber-hover)}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
@@ -1300,7 +1308,7 @@
 
     const menu = document.createElement('div');
     menu.className = 'craber-fab-menu';
-    menu.hidden = true;
+    // 默认收起：CSS 里 .craber-fab-menu 无 .craber-open 即 opacity:0 且不可点
 
     const btnConv = document.createElement('button');
     btnConv.className = 'craber-fab-item';
@@ -1312,8 +1320,14 @@
     btnCur.textContent = '导出当前';
     btnCur.title = '导出当前会话的回合';
 
+    const btnCollapse = document.createElement('button');
+    btnCollapse.className = 'craber-fab-item craber-fab-collapse';
+    btnCollapse.textContent = '收起';
+    btnCollapse.title = '收起菜单，只留悬浮球';
+
     menu.appendChild(btnConv);
     menu.appendChild(btnCur);
+    menu.appendChild(btnCollapse);
 
     // ---- 定位：优先读存储，默认右下角 ----
     const BALL = 52, MARGIN = 20;
@@ -1358,7 +1372,7 @@
       startX = e.clientX; startY = e.clientY; baseX = pos.x; baseY = pos.y;
       ball.setPointerCapture(e.pointerId);
       ball.classList.add('craber-dragging');
-      menu.hidden = true;
+      menu.classList.remove('craber-open');
     });
     ball.addEventListener('pointermove', (e) => {
       if (!dragging) return;
@@ -1377,25 +1391,20 @@
       }
     });
 
-    // ---- 双击展开/收起菜单（拖拽过就不触发） ----
+    // ---- 双击展开菜单（拖拽过就不触发）。收起只靠菜单里的「收起」项，
+    //      不再点外部自动收起，也不再双击切换——展开后常驻，符合“手动收起”。 ----
     ball.addEventListener('dblclick', (e) => {
       e.preventDefault();
       if (moved) return;
-      menu.hidden = !menu.hidden;
-      if (!menu.hidden) positionMenu();
+      positionMenu();
+      menu.classList.add('craber-open');
     });
 
-    // 点菜单项：执行并收起
-    btnConv.addEventListener('click', () => { menu.hidden = true; openConvPanel(); });
-    btnCur.addEventListener('click', () => { menu.hidden = true; openPanel(); });
-
-    // 点球/菜单以外的地方收起菜单
-    document.addEventListener('pointerdown', (e) => {
-      if (menu.hidden) return;
-      const path = e.composedPath ? e.composedPath() : [];
-      if (path.indexOf(ball) >= 0 || path.indexOf(menu) >= 0) return;
-      menu.hidden = true;
-    });
+    // 点菜单项：打开面板，菜单保持展开（面板是模态层，关掉后菜单还在）
+    btnConv.addEventListener('click', openConvPanel);
+    btnCur.addEventListener('click', openPanel);
+    // 「收起」：手动收起菜单，只留悬浮球
+    btnCollapse.addEventListener('click', () => { menu.classList.remove('craber-open'); });
 
     // 窗口缩放时把球夹回可视区
     window.addEventListener('resize', () => { pos = clamp(pos.x, pos.y); applyPos(); });
