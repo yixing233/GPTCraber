@@ -1,0 +1,14 @@
+# 测试 / 导出产物
+*.md
+!README.md
+
+# 导出的图片目录与压缩包
+images/
+*.zip
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
