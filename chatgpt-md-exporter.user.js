@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.3.2
+// @version      0.4.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -101,6 +101,36 @@
    * 接口封装
    * ========================================================== */
 
+  // 官方限流是按账号/IP 生效的（实测连续取全量会话约 9~12 个就会 429），
+  // 429 响应带 Retry-After，照它等待再继续，比盲目重试有效得多。
+  let apiBackoffUntil = 0;   // 命中 429 后的静默期终点
+
+  // 记录一次限流：有 Retry-After 就照它，没有就给个保守值。
+  function noteRateLimit(res) {
+    const ra = parseInt(res && res.headers.get('retry-after'), 10);
+    const ms = ra > 0 ? ra * 1000 : 30000;
+    apiBackoffUntil = Math.max(apiBackoffUntil, Date.now() + ms);
+    return ms;
+  }
+
+  // 所有 backend-api 请求前都过一下：正在静默期就等到期为止。
+  async function apiWait() {
+    while (true) {
+      const wait = apiBackoffUntil - Date.now();
+      if (wait <= 0) return;
+      await new Promise((r) => setTimeout(r, Math.min(wait, 10000)));
+    }
+  }
+
+  // 取全量会话之间留的间隔。这条接口的限制比列表接口严，挨着打很快会 429。
+  const API_GAP_MS = 2000;
+  let apiLastAt = 0;
+  async function apiGap() {
+    const wait = apiLastAt + API_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    apiLastAt = Date.now();
+  }
+
   const API = {
     _token: null,
     _tokenTs: 0,
@@ -117,12 +147,21 @@
       return this._token;
     },
 
-    async getConversation(convId) {
+    // 全量取会话：这条最容易触发限流，所以排队等待 + 限流退避 + 按 Retry-After 自动重试。
+    // attempt 让"被限流后自动接着拉"成为默认行为，调用方不用自己写重试。
+    async getConversation(convId, attempt) {
+      const tries = attempt || 0;
+      await apiWait();
       const t = await this.getToken();
+      await apiGap();
       const r = await fetch('/backend-api/conversation/' + convId, {
         headers: { Authorization: 'Bearer ' + t },
         credentials: 'include'
       });
+      if (r.status === 429 && tries < 3) {
+        noteRateLimit(r);
+        return this.getConversation(convId, tries + 1);
+      }
       if (!r.ok) {
         const err = new Error('会话内容获取失败: ' + r.status);
         err.status = r.status;   // 调用方要靠它区分 429（限流）和真失败
@@ -132,6 +171,7 @@
     },
 
     async getFileInfo(fileId) {
+      await apiWait();
       const t = await this.getToken();
       const r = await fetch('/backend-api/files/' + fileId + '/download', {
         headers: { Authorization: 'Bearer ' + t },
@@ -143,12 +183,19 @@
 
     // 拉取会话列表的一页：{ items, total, limit, offset }
     async getConversations(offset, limit) {
+      await apiWait();
       const t = await this.getToken();
       const url = '/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated';
       const r = await fetch(url, {
         headers: { Authorization: 'Bearer ' + t },
         credentials: 'include'
       });
+      if (r.status === 429) {
+        noteRateLimit(r);
+        const err = new Error('会话列表获取失败: 429（已限流，请稍后再试）');
+        err.status = 429;
+        throw err;
+      }
       if (!r.ok) throw new Error('会话列表获取失败: ' + r.status);
       return r.json();
     },
@@ -1837,7 +1884,7 @@
   // ChatGPT 的消息区是 main 内部的滚动 div，不是 window。从任意已挂载消息往上找
   // 第一个真正可滚动的祖先；找不到就退回文档滚动元素。
   function getScrollContainer() {
-    let el = document.querySelector('[data-message-id]');
+    let el = document.querySelector('[data-turn-key],[data-message-id]');
     el = el && el.parentElement;
     while (el && el !== document.body && el !== document.documentElement) {
       const oy = getComputedStyle(el).overflowY;
@@ -1847,12 +1894,11 @@
     return document.scrollingElement || document.documentElement;
   }
 
-  // [data-message-id] 是撑满整行的外层容器，用户提问真正的气泡是里面那个带背景、
-  // 靠右对齐的小块 —— 光圈画在外层上，看起来就是整行被框住，跟"这条消息"对不上。
-  // 类名随 ChatGPT 改版会变，所以先试已知选择器，再退回几何 + 背景色判断：
-  // 文档顺序上第一个"明显比整行窄、且自己有不透明背景"的后代就是气泡。
-  const NAV_BUBBLE_SEL = '.user-message-bubble-color,[class*="user-message-bubble"],' +
-    '[class*="bg-token-message-surface"]';
+  // 用户提问真正的气泡是里面那个带背景、靠右对齐的小块 —— 光圈画在外层上，
+  // 看起来就是整行被框住，跟"这条消息"对不上。新版直接把气泡标成
+  // [data-user-message-bubble]，优先用它；旧类名和几何判断留作兜底。
+  const NAV_BUBBLE_SEL = '[data-user-message-bubble],.user-message-bubble-color,' +
+    '[class*="user-message-bubble"],[class*="bg-token-message-surface"]';
   function findFlashTarget(el) {
     const hit = el.querySelector(NAV_BUBBLE_SEL);
     if (hit && hit.offsetHeight) return hit;
@@ -1897,7 +1943,7 @@
   // 时 1.4s 的动画早放完了，用户看到的是"跳过去，什么都没发生"。
   const NAV_SCROLL_OFFSET = 88;
   function scrollToMessage(messageId) {
-    const el = document.querySelector('[data-message-id="' + messageId + '"]');
+    const el = findMsgEl(messageId);
     if (!el) return false;
     const sc = getScrollContainer();
     const m = navScrollMetrics(sc);
@@ -2374,8 +2420,36 @@
     if (curActive) curActive.scrollIntoView({ block: 'nearest' });
   }
 
+  // 改版后回合容器的标记从 data-message-id 换成了 data-turn-key，两者都认。
+  // 这里集中一处，避免选择器散落在各个函数里，下次再改版只需改这两行。
+  const TURN_SEL = '[data-turn-key],[data-message-id]';
+  const TURN_KEY_ATTR = 'data-turn-key';
+
+  function getTurnKey(el) {
+    if (!el) return null;
+    return el.getAttribute(TURN_KEY_ATTR) || el.getAttribute('data-message-id') || null;
+  }
+
+  // 按消息 id 找回合容器：新老两套标记都试。
+  function findMsgEl(id) {
+    return document.querySelector('[data-turn-key="' + id + '"]') ||
+      document.querySelector('[data-message-id="' + id + '"]');
+  }
+
+  // 页面上已挂载的用户消息容器（用于滚动联动、最旧下标等）。
+  // 新版：回合容器内带 [data-user-message-bubble]；旧版：带 data-message-author-role 的节点。
+  function mountedUserTurns() {
+    const out = [];
+    document.querySelectorAll(TURN_SEL).forEach((el) => {
+      const key = getTurnKey(el);
+      if (!key) return;
+      if (!el.querySelector('[data-user-message-bubble],[data-message-author-role="user"]')) return;
+      out.push(el);
+    });
+    return out;
+  }
+
   const navSleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const findMsgEl = (id) => document.querySelector('[data-message-id="' + id + '"]');
 
   // 滚动内容坐标系（相对滚动内容顶部），把 root 滚动和内层容器两种情况拉平。
   function navScrollMetrics(sc) {
@@ -2423,10 +2497,10 @@
   // DOM 里最靠前的、能映射回轨道的用户消息下标。判断"目标还没拉到"只能靠它：
   // scrollHeight 只覆盖已加载的那一段，按 idx/total 算全局比例没有任何依据。
   function oldestMountedIdx() {
-    const els = document.querySelectorAll('[data-message-author-role="user"][data-message-id]');
+    const els = mountedUserTurns();
     let min = -1;
     for (let i = 0; i < els.length; i++) {
-      const at = navIdxById[els[i].dataset.messageId];
+      const at = navIdxById[getTurnKey(els[i])];
       if (at === undefined) continue;
       if (min < 0 || at < min) min = at;
     }
@@ -2478,12 +2552,12 @@
   // 目标已加载、只是被卸载：取两侧最近的已挂载邻居，按下标线性插值估它的位置。
   // 用真实几何比全局比例可靠得多，而且这条路不碰接口。
   function jumpByAnchors(sc, idx) {
-    const els = document.querySelectorAll('[data-message-author-role="user"][data-message-id]');
+    const els = mountedUserTurns();
     const m = navScrollMetrics(sc);
     let lo = null;
     let hi = null;
     for (let i = 0; i < els.length; i++) {
-      const at = navIdxById[els[i].dataset.messageId];
+      const at = navIdxById[getTurnKey(els[i])];
       if (at === undefined) continue;
       const top = els[i].getBoundingClientRect().top - m.base + m.pos;
       if (at <= idx && (!lo || at > lo.at)) lo = { at: at, top: top };
@@ -2661,10 +2735,10 @@
     if (!navRailEl || navRailEl.style.display === 'none') return;
     if (!navRailEl.children.length) return;
     const line = window.innerHeight * 0.35;
-    const els = document.querySelectorAll('[data-message-author-role="user"][data-message-id]');
+    const els = mountedUserTurns();
     let act = -1;
     for (let i = 0; i < els.length; i++) {
-      const idx = navIdxById[els[i].dataset.messageId];
+      const idx = navIdxById[getTurnKey(els[i])];
       if (idx === undefined) continue;
       if (els[i].getBoundingClientRect().top > line) break; // 文档顺序，后面只会更靠下
       act = idx;
@@ -2773,8 +2847,12 @@
     if (Date.now() < navBackoffUntil) return;   // 正被限流，安静等着，别陪 ChatGPT 一起卡死
     // ChatGPT 自己的首屏请求还没落地就别插队。页面上一条消息都没挂出来时，
     // 我们这一发全量拉取正好和它撞车。
-    if (!document.querySelector('[data-message-id]')) {
+    if (!document.querySelector(TURN_SEL)) {
+      // 等不到首屏消息也不能一走了之：长会话首屏可能超过等待上限，直接放弃会让
+      // 轨道在这一整个页面生命周期里都不出现（旧版就是这样"消失"的）。
+      // 超过上限后换成慢速轮询，直到消息挂出来为止。
       if (navWaitTries++ < NAV_WAIT_MOUNT_MAX) scheduleNavRender(600, force);
+      else if (!navRenderTimer) scheduleNavRender(4000, force);
       return;
     }
     navWaitTries = 0;
@@ -2809,11 +2887,17 @@
       navRendering = false;
       // 429 是 ChatGPT 在限流。这时候继续重试会把它自己的请求一起拖住（表现就是
       // 会话打不开），所以退避一段时间，反复触发就翻倍。
+      // 接口层已经按 Retry-After 等过了，这里只负责把轨道重排到退避结束之后。
       if (e && e.status === 429) {
         navBackoffMs = Math.min(navBackoffMs ? navBackoffMs * 2 : NAV_429_BACKOFF, NAV_429_BACKOFF_MAX);
         navBackoffUntil = Date.now() + navBackoffMs;
+      } else {
+        navBackoffMs = 0;
       }
+      // 先收起轨道（别在半成品状态露出几个节点），但要排一次重试：
+      // 旧版在这里直接隐藏就再也不管了，任何一次失败都会让轨道在本页彻底消失。
       navRailEl.style.display = 'none';
+      scheduleNavRender(navBackoffUntil ? navBackoffUntil - Date.now() + 500 : 5000, true);
     });
   }
 
@@ -2836,6 +2920,8 @@
     clearTimeout(navRenderTimer);
     navRenderTimer = 0;
     navWaitTries = 0;
+    navBackoffMs = 0;
+    navBackoffUntil = 0;   // 换会话是新的开始，别把上一轮吃到的退避带过来
     navConvId = null;
     navActiveIdx = -1;
     navRenderedCount = 0;
@@ -2854,9 +2940,9 @@
   function maybeRefreshNavRail() {
     if (!navRailEl || navRailEl.style.display === 'none') return;
     if (navRendering || navRenderTimer) return;
-    const els = document.querySelectorAll('[data-message-author-role="user"][data-message-id]');
+    const els = mountedUserTurns();
     for (let i = els.length - 1; i >= 0; i--) {   // 新消息挂在末尾，倒着扫最快命中
-      if (navIdxById[els[i].dataset.messageId] === undefined) {
+      if (navIdxById[getTurnKey(els[i])] === undefined) {
         scheduleNavRender(0, true);
         return;
       }
@@ -3229,14 +3315,19 @@
     document.body.appendChild(menu);
   }
 
-  // 从 assistant 的操作栏所在 section，回溯到最近的带 user message-id 的
-  // section，用该 id 在 nodeIndex 里定位对应回合。
-  // 结构（已确认）：conversation-turn section 交替出现，user 段带 data-message-id，
-  // assistant 段带复制按钮但自身无 message-id。
+  // 从操作栏按钮回溯到它所属回合的 key，用该 id 在 nodeIndex 里定位对应回合。
+  // 新版结构（实测）：一个回合就是一个 [data-turn-key]，用户提问与助手回复都在其中，
+  // 所以 key 直接落在祖先上。旧版靠 [data-testid^="conversation-turn"] 分段，
+  // 助手段的 id 还得往前找一轮 —— 两个路径都保留。
   function resolveUserMessageIdFromToolbar(toolbarBtn) {
+    // 新版：回合容器就在祖先链上，key 即该回合的用户消息 id
+    const turn = toolbarBtn.closest('[data-turn-key]');
+    if (turn) return turn.getAttribute('data-turn-key');
+
+    // 旧版：conversation-turn section 交替出现，user 段带 data-message-id，
+    // assistant 段带复制按钮但自身无 message-id，需要往前找一轮。
     const section = toolbarBtn.closest('[data-testid^="conversation-turn"]');
     if (!section) return null;
-    // 先看本 section 内是否直接有 user message-id
     const inSelf = section.querySelector('[data-message-author-role="user"][data-message-id]');
     if (inSelf) return inSelf.getAttribute('data-message-id');
     // 各 section 分处不同父容器，previousElementSibling 辿不到前一轮。
@@ -3284,22 +3375,40 @@
     el.addEventListener('click', hide);
   }
 
-  // 克隆原生复制按钮的外观，做一个同款“导出 md”按钮，插进原生操作栏。
+  // 收集"助手回复的操作栏"。
+  // 新版（实测）：一个回合 [data-turn-key] 内含两条 .turn-action-controls ——
+  // 用户提问的在前面，助手回复的在后；取最后一条。回复还没出现时只有用户那一条，
+  // 这时不注入（没有回复可导出）。
+  // 旧版：以复制按钮所在容器为操作栏。
+  function collectAssistantActionBars() {
+    const bars = [];
+    document.querySelectorAll('[data-turn-key]').forEach((turn) => {
+      const all = turn.querySelectorAll('.turn-action-controls');
+      if (all.length >= 2) bars.push(all[all.length - 1]);
+    });
+    if (bars.length) return bars;
+    return [...document.querySelectorAll('[data-testid="copy-turn-action-button"]')]
+      .map((btn) => btn.parentElement)
+      .filter(Boolean);
+  }
+
+  // 克隆原生按钮的外观，做一个同款“导出 md”按钮，插进原生操作栏。
   function injectSingleButtons() {
-    const copyBtns = document.querySelectorAll('[data-testid="copy-turn-action-button"]');
-    copyBtns.forEach((copyBtn) => {
-      const bar = copyBtn.parentElement;
+    collectAssistantActionBars().forEach((bar) => {
       if (!bar) return;
       // 防重复：查操作栏里是否已有我们的按钮（且仍在 DOM 中），而不是在 bar 上打标记。
       // ChatGPT(React) 流式输出/重渲染操作栏时会移除我们注入的按钮，却保留 bar 上的
       // 自定义属性；若靠属性标记判重，标记永远为真、按钮再也补不回来（表现为回复里的
       // 导出按钮消失）。改成查子节点后，按钮被删就会在下次扫描时重新补上。
       if (bar.querySelector(':scope > [data-craber-export]')) return;
+      // 借同栏原生按钮的 class 保持外观一致；没有按钮就不注入
+      const like = bar.querySelector('button');
+      if (!like) return;
 
       const b = document.createElement('button');
       b.type = 'button';
       // 沿用原生按钮的 class，外观与复制/朗读一致
-      b.className = copyBtn.className;
+      b.className = like.className;
       b.setAttribute('aria-label', '导出为 Markdown');
       b.setAttribute('data-craber-export', '1');
       // 用螃蟹 emoji 作图标，套用原生图标按钮的正方形尺寸（h-8 w-8），
