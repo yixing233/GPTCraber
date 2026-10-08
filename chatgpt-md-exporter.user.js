@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.4.0
+// @version      0.4.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -2043,15 +2043,30 @@
   let navHuntSeq = 0;                  // 跳转世代号：后发的跳转作废先发的
   let navHunting = false;              // 逼顶期间挂起滚动联动，否则 active 会一路乱跳
 
-  // 取会话内容区左边缘（sidebar 收起/展开时 main 的 left 会变），
-  // 轨道贴住内容区左侧，避免盖到侧边栏上。
+  // 取轨道应该贴住的左边缘。
+  // 不能只看 main.left —— 侧栏展开时它是浮层盖在 main 上（实测侧栏内容宽 252px，
+  // 而 main.left 仍是收起的 52px），照 main.left 定位会让轨道落进侧栏里跟它重叠。
+  // 所以要把所有"占着左侧空间的原生元素"的右边界都算进来，取最右者再加间距。
   function getNavRailLeft() {
+    let edge = 0;
+
+    // 1) 侧边栏（展开时是浮层，收起时是细导航条）—— 只看真正可见的
+    document.querySelectorAll('aside, nav[aria-label="聊天记录"], .app-shell-left-panel')
+      .forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width > 20 && r.height > 100 && r.left < innerWidth * 0.5) {
+          edge = Math.max(edge, r.right);
+        }
+      });
+
+    // 2) 内容区本身也可能已经把侧栏宽度让出来了（收起状态）
     const main = document.querySelector('main');
     if (main) {
       const r = main.getBoundingClientRect();
-      if (r.width > 100 && r.left >= 0) return Math.max(8, r.left + 6);
+      if (r.width > 100 && r.left >= 0) edge = Math.max(edge, r.left);
     }
-    return 12;
+
+    return edge > 0 ? Math.round(edge + 8) : 12;
   }
 
   function updateNavRailPos() {
