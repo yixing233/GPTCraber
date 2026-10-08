@@ -1881,17 +1881,37 @@
     return '(无文字回复)';
   }
 
-  // ChatGPT 的消息区是 main 内部的滚动 div，不是 window。从任意已挂载消息往上找
-  // 第一个真正可滚动的祖先；找不到就退回文档滚动元素。
+  // ChatGPT 的消息区是 main 内的滚动 div。找法不能是"从第一个已挂载消息往上找
+  // 可滚动祖先" —— SPA 切换会话时，上一个会话的 DOM 会以零尺寸留在页面上，
+  // 从它出发一路都是 span 0，最后什么也选不到，滚动就全落到文档上（表现为跳转
+  // 完全不动、一直卡在"正在向上加载"）。
+  // 可靠做法：直接列出页面上所有可滚动容器，挑尺寸正常、且真正装了消息的那个。
   function getScrollContainer() {
-    let el = document.querySelector('[data-turn-key],[data-message-id]');
-    el = el && el.parentElement;
-    while (el && el !== document.body && el !== document.documentElement) {
-      const oy = getComputedStyle(el).overflowY;
-      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight - el.clientHeight > 40) return el;
-      el = el.parentElement;
-    }
-    return document.scrollingElement || document.documentElement;
+    const candidates = [];
+    const add = (node) => {
+      if (!node || candidates.includes(node)) return;
+      const cs = getComputedStyle(node);
+      if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') return;
+      const r = node.getBoundingClientRect();
+      // 零尺寸/不可见的多半是残留 DOM，直接排除
+      if (r.width < 100 || r.height < 100) return;
+      if (node.scrollHeight - node.clientHeight <= 40) return;
+      candidates.push({ node: node, area: r.width * r.height,
+        turns: node.querySelectorAll(TURN_SEL).length });
+    };
+
+    add(document.scrollingElement);
+    add(document.documentElement);
+    const all = document.querySelectorAll('main div, main');
+    for (let i = 0; i < all.length; i++) add(all[i]);
+
+    if (!candidates.length) return document.scrollingElement || document.documentElement;
+
+    // 装了消息的优先；都不含消息时退回面积最大的（最大的那个通常就是会话区）
+    const withTurns = candidates.filter((c) => c.turns > 0);
+    const pool = withTurns.length ? withTurns : candidates;
+    pool.sort((a, b) => b.area - a.area);
+    return pool[0].node;
   }
 
   // 用户提问真正的气泡是里面那个带背景、靠右对齐的小块 —— 光圈画在外层上，
@@ -1946,12 +1966,10 @@
     const el = findMsgEl(messageId);
     if (!el) return false;
     const sc = getScrollContainer();
-    const m = navScrollMetrics(sc);
-    const delta = el.getBoundingClientRect().top - m.base - NAV_SCROLL_OFFSET;
     try {
-      const top = Math.max(0, m.pos + delta);
-      if (m.isRoot) window.scrollTo({ top: top, behavior: 'smooth' });
-      else sc.scrollTo({ top: top, behavior: 'smooth' });
+      // 一律走内容坐标：容器是 column-reverse 时由 navScrollTo 负责翻方向，
+      // 直接写 sc.scrollTo({top}) 会把方向弄反、落点跑到会话另一头。
+      navScrollTo(sc, contentTopOf(sc, el) - NAV_SCROLL_OFFSET, true);
     } catch (e) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
@@ -2451,21 +2469,54 @@
 
   const navSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // 滚动内容坐标系（相对滚动内容顶部），把 root 滚动和内层容器两种情况拉平。
+  // 滚动容器的方向。ChatGPT 的会话容器是 flex-direction:column-reverse：
+  // 它的 scrollTop = 0 表示**视觉底部（最新消息）**，往更旧的内容走是**负值**
+  // （实测写入 -16280 能到最旧端，写入正值一律被夹回 0）。
+  // 所有"按内容坐标算位置再写回去"的代码都必须过一次换算，否则方向正好相反 ——
+  // 表现就是节点跳转时一直在底部打转、卡在"正在向上加载"。
+  function isReversedScroller(sc) {
+    return getComputedStyle(sc).flexDirection === 'column-reverse';
+  }
+
+  // 内容坐标（0 = 最旧内容顶端，正方向 = 向更新）与容器原生 scrollTop 互转。
+  // 非 reverse 容器两者相同；reverse 容器需要反号并以"可滚动量"为基准偏移。
+  function scrollSpan(sc) {
+    return Math.max(0, sc.scrollHeight - sc.clientHeight);
+  }
+
+  // 滚动内容坐标系（相对滚动内容顶部，0 = 最旧端），把 root 滚动、普通容器、
+  // column-reverse 容器三种情况拉平到同一套语义。
   function navScrollMetrics(sc) {
     const isRoot = sc === document.scrollingElement || sc === document.documentElement;
+    if (isRoot) {
+      return { isRoot: true, reversed: false, base: 0, pos: window.scrollY, span: 0 };
+    }
+    const reversed = isReversedScroller(sc);
+    const span = scrollSpan(sc);
+    // 原生 scrollTop：reverse 下 -span 是最旧端，0 是最新端。
+    // contentPos 统一成"离最旧端的距离"：非 reverse 就是 scrollTop，reverse 要翻转。
+    const raw = sc.scrollTop;
     return {
-      isRoot: isRoot,
-      base: isRoot ? 0 : sc.getBoundingClientRect().top,
-      pos: isRoot ? window.scrollY : sc.scrollTop,
+      isRoot: false,
+      reversed: reversed,
+      base: sc.getBoundingClientRect().top,
+      pos: reversed ? raw + span : raw,
+      span: span
     };
   }
 
-  function navScrollTo(sc, top) {
+  // 把内容坐标写回容器。top 是"离最旧端的距离"，由本函数负责翻译成该容器
+  // 真正接受的数值 —— 调用方一律按内容坐标思考，不必关心方向。
+  function navScrollTo(sc, top, smooth) {
     const m = navScrollMetrics(sc);
-    const v = Math.max(0, Math.round(top));
-    if (m.isRoot) window.scrollTo({ top: v, behavior: 'auto' });
-    else sc.scrollTop = v;
+    const v = Math.max(0, Math.min(m.span, Math.round(top)));
+    if (m.isRoot) {
+      window.scrollTo({ top: v, behavior: smooth ? 'smooth' : 'auto' });
+      return;
+    }
+    const target = m.reversed ? v - m.span : v;
+    if (smooth) sc.scrollTo({ top: target, behavior: 'smooth' });
+    else sc.scrollTop = target;
   }
 
   // 等平滑滚动真正停下来。smooth 没有通用的结束回调（scrollend 不是所有浏览器都有），
@@ -2549,17 +2600,23 @@
     });
   }
 
+  // 元素当前在"内容坐标"里的位置（0 = 最旧端）。视口坐标加上已滚过的距离即可，
+  // 与容器方向无关 —— 方向只在写回时由 navScrollTo 处理。
+  function contentTopOf(sc, node) {
+    const m = navScrollMetrics(sc);
+    return node.getBoundingClientRect().top - m.base + m.pos;
+  }
+
   // 目标已加载、只是被卸载：取两侧最近的已挂载邻居，按下标线性插值估它的位置。
   // 用真实几何比全局比例可靠得多，而且这条路不碰接口。
   function jumpByAnchors(sc, idx) {
     const els = mountedUserTurns();
-    const m = navScrollMetrics(sc);
     let lo = null;
     let hi = null;
     for (let i = 0; i < els.length; i++) {
       const at = navIdxById[getTurnKey(els[i])];
       if (at === undefined) continue;
-      const top = els[i].getBoundingClientRect().top - m.base + m.pos;
+      const top = contentTopOf(sc, els[i]);
       if (at <= idx && (!lo || at > lo.at)) lo = { at: at, top: top };
       if (at >= idx && (!hi || at < hi.at)) hi = { at: at, top: top };
     }
@@ -2590,10 +2647,10 @@
       for (let i = 0; i < 6; i++) {
         el = findMsgEl(msgId);
         if (!el) return false;
+        const delta = contentTopOf(sc, el) - NAV_SCROLL_OFFSET;
         const m = navScrollMetrics(sc);
-        const delta = el.getBoundingClientRect().top - m.base - NAV_SCROLL_OFFSET;
-        if (Math.abs(delta) < 4) break;
-        navScrollTo(sc, m.pos + delta);
+        if (Math.abs(delta - m.pos) < 4) break;
+        navScrollTo(sc, delta);
         await navSleep(110);
       }
     } finally {
