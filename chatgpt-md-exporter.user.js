@@ -2448,20 +2448,40 @@
     return el.getAttribute(TURN_KEY_ATTR) || el.getAttribute('data-message-id') || null;
   }
 
-  // 按消息 id 找回合容器：新老两套标记都试。
+  // 按消息 id 找回合容器。新版每个回合在 DOM 里会存在**两个**同 key 的元素：
+  // 一个是虚拟化留下的零尺寸占位符，一个是真正渲染出内容的节点（实测 0×0 与
+  // 768×6474 成对出现），而 document.querySelector 命中的恰恰是前者。
+  // 拿到占位符就会误判"消息已挂载"，随后去滚动一个不可见的空节点，落点永远
+  // 算不对 —— 这是节点跳转失效的直接原因。所以这里必须挑有尺寸的那个。
   function findMsgEl(id) {
-    return document.querySelector('[data-turn-key="' + id + '"]') ||
-      document.querySelector('[data-message-id="' + id + '"]');
+    const pick = (sel) => {
+      const list = document.querySelectorAll(sel);
+      let fallback = null;
+      for (let i = 0; i < list.length; i++) {
+        const el = list[i];
+        // 宽度和高度都大于 0 才是真正渲染出来的节点
+        if (el.offsetWidth > 0 && el.offsetHeight > 0) return el;
+        if (!fallback) fallback = el;
+      }
+      return fallback;
+    };
+    return pick('[data-turn-key="' + id + '"]') ||
+      pick('[data-message-id="' + id + '"]');
   }
 
   // 页面上已挂载的用户消息容器（用于滚动联动、最旧下标等）。
   // 新版：回合容器内带 [data-user-message-bubble]；旧版：带 data-message-author-role 的节点。
+  // 同一 key 的占位符要排掉，否则同一个回合会被数两次。
   function mountedUserTurns() {
     const out = [];
+    const seen = Object.create(null);
     document.querySelectorAll(TURN_SEL).forEach((el) => {
       const key = getTurnKey(el);
-      if (!key) return;
+      if (!key || seen[key]) return;
       if (!el.querySelector('[data-user-message-bubble],[data-message-author-role="user"]')) return;
+      // 零尺寸的是虚拟化占位符，不含可滚动到的真实位置
+      if (!el.offsetWidth && !el.offsetHeight) return;
+      seen[key] = 1;
       out.push(el);
     });
     return out;
