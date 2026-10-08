@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.4.1
+// @version      0.4.2
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -1064,14 +1064,26 @@
     @keyframes craber-spin{to{transform:rotate(360deg)}}
 
     /* 悬浮球：可拖拽、双击展开菜单。位置由 JS 用 left/top 定位并存 localStorage。
-       蟹图标用内联 SVG，蟹身填 currentColor（统一蟹绿），球底半透明毛玻璃。 */
-    .craber-fab-ball{position:fixed;z-index:99998;width:52px;height:52px;border-radius:50%;
-      background:rgba(255,255,255,.3);color:#22a06b;border:none;cursor:grab;
+       蟹图标用内联 SVG，蟹身填 currentColor（统一蟹绿），球底半透明毛玻璃。
+       描边：深色主题白、浅色主题黑。颜色走自定义属性 --craber-fab-line，由 JS 按
+       实际主题写入（见 applyFabTheme）。
+       注意描边不能加 transition —— 元素入 DOM 前若先经过一次 transition 注册，
+       浏览器会生成一个 currentTime 停在 0 的过渡动画，而"运行中的动画"优先级高于
+       内联 !important，颜色会被永久锁在起始值、之后怎么写都改不动（实测）。
+       也不写死 border：border 会挤小内容盒让蟹图标偏移，outline 不占布局。 */
+    .craber-fab-ball{--craber-fab-line:rgba(0,0,0,.75);
+      position:fixed;z-index:99998;width:52px;height:52px;border-radius:50%;
+      background:rgba(255,255,255,.3);color:#22a06b;border:none;
+      outline:1.5px solid var(--craber-fab-line);outline-offset:-1px;cursor:grab;
       display:flex;align-items:center;justify-content:center;
       -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
       box-shadow:0 4px 14px rgba(0,0,0,.22);user-select:none;touch-action:none;
       font-family:system-ui,sans-serif;transition:box-shadow .15s ease,transform .12s ease}
-    @media (prefers-color-scheme:dark){.craber-fab-ball{background:rgba(38,40,44,.3)}}
+    /* 系统偏好兜底：JS 未跑到时也不至于颜色错得离谱 */
+    @media (prefers-color-scheme:dark){
+      .craber-fab-ball{--craber-fab-line:rgba(255,255,255,.85);
+        background:rgba(38,40,44,.3)}
+    }
     .craber-fab-ball svg{width:30px;height:30px;pointer-events:none}
     .craber-fab-ball:hover{box-shadow:0 6px 20px rgba(0,0,0,.3)}
     .craber-fab-ball:active{cursor:grabbing}
@@ -3283,6 +3295,29 @@
   // 固定右下角会挡内容，改成用户可随手拖到不碍事的位置。
   const FAB_POS_KEY = 'gpt_craber_fab_pos';
 
+  // 判断当前是不是深色主题。
+  // 优先看 ChatGPT 自己的 html[data-theme]（它的主题开关），而不是系统偏好 ——
+  // 两者可以不一致：站点设成浅色、系统却是深色时，只有按站点算才画得对。
+  // data-theme 缺失或取值意外时退回 prefers-color-scheme。
+  function isDarkTheme() {
+    const t = document.documentElement.dataset.theme ||
+      document.body.dataset.theme || '';
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  // 描边：深色主题白、浅色主题黑。颜色写自定义属性，由样式表里的
+  // outline: 1.5px solid var(--craber-fab-line) 取用。
+  function applyFabTheme(ball) {
+    const el = ball || document.querySelector('.craber-fab-ball');
+    if (!el) return;
+    const dark = isDarkTheme();
+    el.style.setProperty('--craber-fab-line',
+      dark ? 'rgba(255,255,255,.85)' : 'rgba(0,0,0,.75)');
+    el.style.background = dark ? 'rgba(38,40,44,.3)' : 'rgba(255,255,255,.3)';
+  }
+
   function mountFab() {
     if (document.querySelector('.craber-fab-ball')) return;
 
@@ -3408,6 +3443,21 @@
     applyPos();
     document.body.appendChild(ball);
     document.body.appendChild(menu);
+    // 必须在 appendChild 之后再设主题色：元素尚未入 DOM 时会先跑一次
+    // transition 注册，浏览器据此生成一个 currentTime 停在 0 的过渡动画，
+    // 而"运行中的动画"优先级高于内联 !important —— 颜色会被永久锁在起始值，
+    // 之后怎么写都改不动（实测连内联 !important 都压不住）。
+    // 插进文档再设，转场能正常推进，值也就落得下来。
+    applyFabTheme(ball);
+    // 主题切换（含跟随系统、跨标签页同步）时重画描边。属性变化用 MutationObserver
+    // 最准，系统偏好变化用媒体查询监听；两者都很轻。
+    new MutationObserver(() => applyFabTheme(ball))
+      .observe(document.documentElement,
+        { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    try {
+      window.matchMedia('(prefers-color-scheme: dark)')
+        .addEventListener('change', () => applyFabTheme(ball));
+    } catch (e) { /* 老浏览器不支持，忽略 */ }
   }
 
   // 从操作栏按钮回溯到它所属回合的 key，用该 id 在 nodeIndex 里定位对应回合。
