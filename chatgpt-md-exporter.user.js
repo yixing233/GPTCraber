@@ -2535,7 +2535,10 @@
       return;
     }
     const target = m.reversed ? v - m.span : v;
-    if (smooth) sc.scrollTo({ top: target, behavior: 'smooth' });
+    // column-reverse 容器里 scrollTo({top: 负值, behavior:'smooth'}) 会静默失效
+    // （实测停在 0 不动，而同样的负值直接赋值就正常）。所以 reverse 容器一律
+    // 直接赋值，不走 smooth —— 平滑动画和"能跳过去"之间只能选后者。
+    if (smooth && !m.reversed) sc.scrollTo({ top: target, behavior: 'smooth' });
     else sc.scrollTop = target;
   }
 
