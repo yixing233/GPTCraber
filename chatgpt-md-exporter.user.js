@@ -27,8 +27,8 @@
    * 常量与工具
    * ========================================================== */
 
-  // 悬浮球用的螃蟹图标（内联 SVG）。fill 用 currentColor，蟹身颜色由容器的
-  // color 决定（.craber-fab-ball 里设为绿色），换平台时也统一走这一处。
+  // 螃蟹图标（内联 SVG）。fill 用 currentColor，蟹身颜色由容器 color 决定
+  // （顶栏导出按钮里设为蟹绿），换平台时也统一走这一处。
   const CRAB_SVG = '<svg viewBox="0 0 71.493 71.493" width="26" height="26" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M69.857,43.299l-10.626-5.432c3.038-3.402,4.707-7.433,4.707-11.651 c0-8.227-6.175-15.503-16.114-18.989c-1.109-0.388-2.342-0.096-3.155,0.751c-0.814,0.846-1.06,2.089-0.628,3.182 c0.338,0.857,0.51,1.734,0.51,2.609c0,0.492-0.052,0.688-0.045,0.69c-0.083,0.105-0.393,0.362-0.643,0.569 c-0.422,0.35-0.947,0.785-1.546,1.386c-0.688,0.692-0.996,1.676-0.826,2.637s0.796,1.78,1.68,2.194 c1.956,0.918,8.324,4.331,8.361,9.76c-2.459-1.79-5.451-3.167-8.78-3.981c0.156-0.366,0.242-0.769,0.242-1.193 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.13,0.023,0.255,0.038,0.381 c-0.39-0.015-0.782-0.023-1.176-0.023c-0.394,0-0.787,0.008-1.176,0.023c0.016-0.126,0.038-0.25,0.038-0.381 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.423,0.086,0.826,0.242,1.193 c-3.785,0.925-7.138,2.576-9.763,4.737c0.216-4.082,4.91-8.435,9.345-10.516c0.884-0.415,1.511-1.233,1.68-2.195 c0.17-0.961-0.139-1.945-0.827-2.637c-0.598-0.601-1.124-1.037-1.546-1.386c-0.255-0.211-0.572-0.474-0.622-0.528 c-0.001-0.001-0.065-0.181-0.065-0.73c0-0.873,0.172-1.751,0.511-2.61c0.432-1.092,0.186-2.335-0.628-3.181 c-0.814-0.848-2.05-1.14-3.154-0.751C13.729,10.71,7.554,17.987,7.554,26.215c0,4.218,1.669,8.249,4.707,11.651L1.635,43.299 C0.16,44.053-0.425,45.86,0.33,47.336c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l8.695-4.445 c0.069,0.981,0.255,1.939,0.536,2.869L2.868,52.551c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635 c0.46,0,0.927-0.106,1.363-0.329l10.888-5.566c0.491,0.589,1.027,1.154,1.607,1.692l-9.282,4.745 c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l11.887-6.077 c0.131-0.067,0.253-0.143,0.369-0.226c3.474,1.623,7.568,2.563,11.949,2.563c4.381,0,8.475-0.94,11.949-2.563 c0.116,0.082,0.238,0.159,0.369,0.226l11.887,6.077c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 c0.755-1.476,0.17-3.283-1.306-4.037L53.4,54.02c0.58-0.538,1.116-1.103,1.606-1.692l10.888,5.566 c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635c0.755-1.476,0.17-3.283-1.306-4.037l-10.729-5.485 c0.281-0.931,0.466-1.888,0.536-2.87l8.695,4.445c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 C71.918,45.86,71.333,44.053,69.857,43.299z M50.472,15.06c4.65,2.828,7.466,6.906,7.466,11.155c0,1.07-0.176,2.131-0.516,3.166 c-0.584-4.354-3.438-8.421-8.006-11.487C49.934,17.163,50.316,16.273,50.472,15.06z M21.02,15.06 c0.158,1.229,0.548,2.126,1.076,2.863c-3.65,2.491-6.962,6.022-8.393,10.004c-0.099-0.566-0.149-1.138-0.149-1.711 C13.554,21.966,16.37,17.888,21.02,15.06z M19.027,43.278c0-6.011,7.656-11.089,16.72-11.089c9.063,0,16.719,5.078,16.719,11.089 s-7.656,11.089-16.719,11.089C26.683,54.368,19.027,49.29,19.027,43.278z"/></svg>';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
@@ -1029,6 +1029,17 @@
   style.textContent = `
     :root{
       --craber-accent:#10a37f; --craber-accent-2:#0e8e6d;
+      /* 层级：脚本自己的浮层必须排在原生 UI 之下。
+         实测原生的菜单 / tooltip / 下拉都是 z-index 50，而我们最初用了 99990 这种
+         量级 —— 结果是导航节点横条直接压在原生右键菜单上面，把菜单遮住。
+         所以这里统一收进 40~45 这一段：既能浮在正文（z-0/1）和顶栏（z-20）之上，
+         又稳稳低于原生浮层的 50，原生的任何弹出都不会被我们盖住。
+         例外是我们自己的模态（遮罩 + 面板）：那是全屏对话框，本就要盖住页面，
+         仍保留极高的层级（见 .craber-mask）。 */
+      --craber-z-rail:40; --craber-z-card:41; --craber-z-panel:42;
+      --craber-z-pbar-menu:43; --craber-z-fab-menu:44; --craber-z-tip:45;
+      /* 我们自己的模态是全屏对话框，必须盖住页面，故仍取高位 */
+      --craber-z-modal:900; --craber-z-modal-top:901;
       --craber-bg:#ffffff; --craber-fg:#1f2328; --craber-sub:#8a9099;
       --craber-line:#ececf0; --craber-hover:#f5f6f8; --craber-ghost:#f1f2f4;
       --craber-skeleton:#eceef1; --craber-skeleton-hi:#f6f7f9;
@@ -1066,87 +1077,95 @@
     @keyframes craber-row-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
     @keyframes craber-spin{to{transform:rotate(360deg)}}
 
-    /* 悬浮球：可拖拽、双击展开菜单。位置由 JS 用 left/top 定位并存 localStorage。
-       蟹图标用内联 SVG，蟹身填 currentColor（统一蟹绿），球底半透明毛玻璃。
-       描边：深色主题白、浅色主题黑。颜色走自定义属性 --craber-fab-line，由 JS 按
-       实际主题写入（见 applyFabTheme）。
-       注意描边不能加 transition —— 元素入 DOM 前若先经过一次 transition 注册，
-       浏览器会生成一个 currentTime 停在 0 的过渡动画，而"运行中的动画"优先级高于
-       内联 !important，颜色会被永久锁在起始值、之后怎么写都改不动（实测）。
-       也不写死 border：border 会挤小内容盒让蟹图标偏移，outline 不占布局。 */
-    .craber-fab-ball{--craber-fab-line:rgba(0,0,0,.75);
-      position:fixed;z-index:99998;width:52px;height:52px;border-radius:50%;
-      background:rgba(255,255,255,.3);color:#22a06b;border:none;
-      outline:1.5px solid var(--craber-fab-line);outline-offset:-1px;cursor:grab;
-      display:flex;align-items:center;justify-content:center;
-      -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
-      box-shadow:0 4px 14px rgba(0,0,0,.22);user-select:none;touch-action:none;
-      font-family:system-ui,sans-serif;transition:box-shadow .15s ease,transform .12s ease}
-    /* 系统偏好兜底：JS 未跑到时也不至于颜色错得离谱 */
+    /* 导出按钮：固定进原生顶栏右侧按钮组，不再做成可拖拽的浮动球。
+       顶栏本来就有"分享 / 更多"这排控件，导出属于同一类操作，放在一起
+       位置固定、可预期，也不会像浮球那样飘在正文上挡内容。
+       蟹图标用内联 SVG、蟹身填 currentColor（蟹绿）。
+       描边：深色主题白、浅色主题黑，颜色走 --craber-fab-line，由 JS 按实际
+       主题写入（见 applyFabTheme）。
+       描边不能加 transition —— 入 DOM 前若先经过一次 transition 注册，
+       浏览器会生成一个 currentTime 停在 0 的过渡动画，而"运行中的动画"
+       优先级高于内联 !important，颜色会被永久锁死（实测）。
+       也不写死 border：border 会挤小内容盒让图标偏移，outline 不占布局。 */
+    .craber-fab-btn{--craber-fab-line:rgba(0,0,0,.4);
+      flex:none;width:32px;height:32px;border-radius:9px;
+      background:transparent;color:#22a06b;border:none;
+      outline:1.5px solid var(--craber-fab-line);outline-offset:-1px;
+      display:flex;align-items:center;justify-content:center;cursor:pointer;
+      pointer-events:auto;
+      transition:background-color .14s ease,box-shadow .15s ease}
+    .craber-fab-btn:hover{background:var(--craber-hover)}
+    .craber-fab-btn:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
+    .craber-fab-btn[aria-expanded="true"]{background:var(--craber-hover)}
     @media (prefers-color-scheme:dark){
-      .craber-fab-ball{--craber-fab-line:rgba(255,255,255,.85);
-        background:rgba(38,40,44,.3)}
+      .craber-fab-btn{--craber-fab-line:rgba(255,255,255,.45)}
     }
-    .craber-fab-ball svg{width:30px;height:30px;pointer-events:none}
-    .craber-fab-ball:hover{box-shadow:0 6px 20px rgba(0,0,0,.3)}
-    .craber-fab-ball:active{cursor:grabbing}
-    .craber-fab-ball.craber-dragging{transition:none;transform:scale(1.08)}
-    /* 菜单展开/收起过渡：父级不做透明度过渡（否则整体淡出会盖掉子项交错），
-       可见性交给各子项自己的 opacity，父级只用 pointer-events 管交互。 */
-    .craber-fab-menu{position:fixed;z-index:99998;display:flex;flex-direction:column;gap:8px;
-      pointer-events:none}
-    .craber-fab-menu.craber-open{pointer-events:auto}
-    .craber-fab-item{background:var(--craber-bg);color:var(--craber-fg);border:none;border-radius:22px;
-      padding:11px 18px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;
-      box-shadow:0 4px 14px rgba(0,0,0,.18);font-family:system-ui,sans-serif;
-      opacity:0;
-      transition:background .15s ease,opacity .24s ease,transform .24s cubic-bezier(.2,.8,.25,1)}
-    /* 项的初始位移方向跟随展开方向：向上展开(菜单在球上方)时项从下方滑入(+12px)；
-       向下展开时从上方滑入(-12px)。动画方向与展开方向一致。 */
-    .craber-fab-menu.craber-up .craber-fab-item{transform:translateY(12px) scale(.9)}
-    .craber-fab-menu.craber-down .craber-fab-item{transform:translateY(-12px) scale(.9)}
-    .craber-fab-menu.craber-open .craber-fab-item{opacity:1;transform:none}
-    /* 交错延迟由 JS 逐项设内联 transition-delay（开合方向不同，见 setMenuOpen）。 */
-    .craber-fab-collapse{color:var(--craber-sub);box-shadow:0 2px 8px rgba(0,0,0,.12)}
+    .craber-fab-btn svg{width:19px;height:19px;pointer-events:none}
 
-    /* 项目条：项目内对话页顶部的一条上下文带，让"这条对话属于哪个项目"一眼可见，
-       并提供项目内上/下一个对话的跳转。
-       位置是 fixed，贴在原生 header（52px 高）正下方；正文区整体下移由 JS 设
-       --craber-push 完成，避免遮住第一条消息。 */
-    .craber-pbar{position:fixed;z-index:99996;left:0;right:0;
-      display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;
-      font-family:system-ui,sans-serif;font-size:13px;
-      background:var(--craber-pbar-bg);color:var(--craber-fg);
-      border-bottom:1px solid var(--craber-line);
-      -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
-      transition:opacity .18s ease,transform .18s ease}
-    /* 滚动时收细：不抢正文视线 */
-    .craber-pbar.craber-pbar-tuck{opacity:.55}
-    .craber-pbar:hover{opacity:1}
-    .craber-pbar-btn{flex:none;display:flex;align-items:center;justify-content:center;
-      width:26px;height:26px;border:none;padding:0;border-radius:7px;
-      background:transparent;color:var(--craber-fg);cursor:pointer;
-      transition:background-color .14s ease,color .14s ease}
-    .craber-pbar-btn:hover:not(:disabled){background:var(--craber-hover)}
-    .craber-pbar-btn:disabled{opacity:.3;cursor:default}
-    .craber-pbar-btn:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px}
-    /* 项目入口：图标 + 名称，点击回到项目页 */
-    .craber-pbar-proj{flex:none;display:flex;align-items:center;gap:7px;max-width:32%;
-      height:28px;padding:0 9px;border-radius:8px;border:none;background:transparent;
-      color:var(--craber-fg);cursor:pointer;font:inherit;font-weight:600;
-      text-decoration:none;transition:background-color .14s ease}
-    .craber-pbar-proj:hover{background:var(--craber-hover)}
-    .craber-pbar-proj-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .craber-pbar-count{flex:none;padding:1px 7px;border-radius:9px;
-      background:var(--craber-hover);color:var(--craber-sub);
-      font-size:11px;font-weight:600}
-    .craber-pbar-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
-      white-space:nowrap;color:var(--craber-sub)}
-    .craber-pbar-pos{flex:none;color:var(--craber-sub);font-size:12px;
-      font-variant-numeric:tabular-nums}
-    .craber-pbar-sep{flex:none;width:1px;height:16px;background:var(--craber-line)}
-    /* 展开的本项目对话列表 */
-    .craber-pbar-menu{position:fixed;z-index:99997;min-width:280px;max-width:min(420px,92vw);
+    /* 下拉菜单：锚在按钮下方右对齐（按钮在顶栏最右，左对齐会溢出视口） */
+    .craber-fab-menu{position:fixed;z-index:var(--craber-z-fab-menu);display:none}
+    .craber-fab-menu.craber-open{display:block}
+    .craber-fab-panel{display:flex;flex-direction:column;gap:2px;min-width:170px;padding:6px;
+      border-radius:12px;background:var(--craber-bg);border:1px solid var(--craber-line);
+      box-shadow:0 12px 34px rgba(0,0,0,.22);font-family:system-ui,sans-serif;
+      animation:craber-pop-in .16s ease}
+    .craber-fab-item{display:flex;align-items:center;gap:8px;width:100%;
+      padding:9px 10px;border:none;border-radius:8px;
+      background:transparent;color:var(--craber-fg);
+      font:inherit;font-size:13px;font-weight:500;text-align:left;cursor:pointer;
+      transition:background-color .12s ease}
+    .craber-fab-item:hover{background:var(--craber-hover)}
+    .craber-fab-collapse{color:var(--craber-sub)}
+    .craber-fab-sep{height:1px;background:var(--craber-line);margin:5px 6px}
+    /* 开关行：文字靠左、拨动件靠右，拨动件同时用颜色和位移表达状态 */
+    .craber-fab-toggle{cursor:pointer}
+    .craber-fab-toggle-label{flex:1;min-width:0;text-align:left}
+    .craber-fab-switch{flex:none;position:relative;width:32px;height:18px;border-radius:9px;
+      background:var(--craber-ghost);transition:background-color .16s ease}
+    .craber-fab-switch::after{content:'';position:absolute;top:2px;left:2px;
+      width:14px;height:14px;border-radius:50%;background:#fff;
+      box-shadow:0 1px 3px rgba(0,0,0,.3);
+      transition:transform .16s cubic-bezier(.34,1.3,.64,1)}
+    .craber-fab-toggle.on .craber-fab-switch{background:var(--craber-accent)}
+    .craber-fab-toggle.on .craber-fab-switch::after{transform:translateX(14px)}
+
+    /* 原生顶栏是 position:sticky 但背景全透明，正文滚上去会和它叠字
+       （实测「MMR 公式」那行直接压到会话名上）。这里给它半透明底色 +
+       高斯模糊：滚过的内容被糊化，顶栏文字保持清晰可读。
+       背景色走内联 !important（见 applyHeaderBg）—— header 原生 class 带
+       Tailwind 的 bg-transparent!，那条规则在 CDN 样式表里读不到也盖不住，
+       只有内联 !important 稳赢。
+       -webkit- 前缀是 Safari 需要的。
+       注意模糊必须与半透明底色搭配：底色不透明时模糊没有可见效果。 */
+    .craber-hdr-glass{-webkit-backdrop-filter:blur(14px) saturate(1.5);
+      backdrop-filter:blur(14px) saturate(1.5)}
+
+    /* 项目条：注入原生顶栏内部（面包屑所在的那个可伸缩容器里），
+       不新增垂直空间，因此不存在遮挡正文的问题。
+       可点击的是"会话名"本身 —— 用户本来就在读它，直接让它可以点开
+       本项目对话列表，比再加一个「N 个对话」按钮自然。 */
+    .craber-pbar{display:flex;align-items:center;gap:8px;
+      min-width:0;margin-left:10px;padding-left:10px;
+      border-left:1px solid var(--craber-line);
+      font-family:system-ui,sans-serif;font-size:13px;color:var(--craber-fg);
+      pointer-events:auto}
+    /* 会话名按钮：常态读起来就是一行标题，悬停才显出可点的样子 */
+    .craber-pbar-title{flex:0 1 auto;display:inline-flex;align-items:center;gap:5px;
+      min-width:0;max-width:44ch;height:28px;padding:0 8px;
+      border:1px solid transparent;border-radius:8px;
+      background:transparent;color:var(--craber-fg);
+      font:inherit;font-size:13px;font-weight:500;
+      cursor:pointer;transition:background-color .14s ease,border-color .14s ease}
+    .craber-pbar-title:hover{background:var(--craber-hover);border-color:var(--craber-line)}
+    .craber-pbar-title:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
+    .craber-pbar-title-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-pbar-title svg{flex:none;opacity:.6;
+      transition:transform .18s cubic-bezier(.34,1.3,.64,1)}
+    .craber-pbar-title[aria-expanded="true"] svg{transform:rotate(180deg)}
+    .craber-pbar-pos{flex:none;color:var(--craber-sub);font-size:11.5px;
+      font-variant-numeric:tabular-nums;opacity:.75}
+    /* 展开的本项目对话列表：仍是浮层（它必须盖在正文上，这是下拉菜单的正常行为） */
+    .craber-pbar-menu{position:fixed;z-index:var(--craber-z-pbar-menu);min-width:290px;max-width:min(420px,92vw);
       max-height:min(56vh,420px);overflow-y:auto;padding:6px;border-radius:12px;
       background:var(--craber-bg);border:1px solid var(--craber-line);
       box-shadow:0 12px 34px rgba(0,0,0,.22);font-family:system-ui,sans-serif;
@@ -1165,7 +1184,7 @@
     .craber-pbar-item-d{flex:none;color:var(--craber-sub);font-size:11px}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
-      z-index:99999;display:flex;align-items:center;justify-content:center;
+      z-index:var(--craber-z-modal);display:flex;align-items:center;justify-content:center;
       font-family:system-ui,sans-serif;animation:craber-fade-in .18s ease}
     .craber-panel{background:var(--craber-bg);color:var(--craber-fg);width:580px;max-width:92vw;max-height:84vh;
       border-radius:16px;display:flex;flex-direction:column;overflow:hidden;
@@ -1217,7 +1236,7 @@
     .craber-dd.open .craber-dd-caret{transform:rotate(180deg)}
     /* fixed 定位：坐标/宽度/高度全部由 JS 按触发器位置设置（打开时菜单被移到
        body 顶层，脱离面板 overflow 与 transform 影响）。这里不写死 top/left。 */
-    .craber-dd-menu{position:fixed;z-index:2147483647;
+    .craber-dd-menu{position:fixed;z-index:var(--craber-z-modal-top);
       max-height:240px;overflow-y:auto;padding:4px;background:var(--craber-bg);
       border:1px solid var(--craber-line);border-radius:10px;
       box-shadow:0 12px 32px rgba(0,0,0,.16);animation:craber-fade-in .12s ease}
@@ -1297,7 +1316,7 @@
        命中区高度 = --nav-pitch，节点多时由 JS 压缩，尽量一屏排完。
        轨道本身 pointer-events:none：它是一条盖在正文上的固定竖条，只让小横条吃事件，
        内边距区域不再抢走对话文本的点击（:hover / mouseleave 由子元素冒泡照常触发）。 */
-    .craber-nav-rail{position:fixed;top:50%;transform:translateY(-50%);z-index:99990;
+    .craber-nav-rail{position:fixed;top:50%;transform:translateY(-50%);z-index:var(--craber-z-rail);
       display:flex;flex-direction:column;align-items:flex-start;
       max-height:74vh;overflow-y:auto;padding:8px 12px 8px 4px;
       scrollbar-width:none;pointer-events:none;opacity:.7;transition:opacity .2s ease}
@@ -1331,7 +1350,7 @@
        内层管外观和出现/换内容的动画，这样两个 transform 不会互相覆盖。
        --cdur 由 JS 按位移距离写入：相邻节点只差十几像素，固定 160ms 显得黏；
        从头扫到尾要跨几百像素，太快又像闪现。 */
-    .craber-nav-card{position:fixed;left:0;top:0;z-index:99991;width:340px;max-width:74vw;
+    .craber-nav-card{position:fixed;left:0;top:0;z-index:var(--craber-z-card);width:340px;max-width:74vw;
       cursor:pointer;font-family:system-ui,sans-serif;
       transform:translate3d(var(--cx,0px),var(--cy,0px),0);
       transition:transform var(--cdur,160ms) cubic-bezier(.22,.85,.3,1)}
@@ -1379,7 +1398,7 @@
     .craber-nav-more-btn:focus-visible::before{box-shadow:0 0 0 2px var(--craber-accent)}
 
     /* 全量节点列表悬浮面板（卡片形式并支持搜索） */
-    .craber-nav-panel{position:fixed;z-index:99992;width:380px;max-width:85vw;max-height:calc(100vh - 28px);
+    .craber-nav-panel{position:fixed;z-index:var(--craber-z-panel);width:380px;max-width:85vw;max-height:calc(100vh - 28px);
       background:var(--craber-bg);border:1px solid var(--craber-line);border-radius:14px;
       box-shadow:0 12px 38px rgba(0,0,0,.22);display:flex;flex-direction:column;
       font-family:system-ui,sans-serif;color:var(--craber-fg);
@@ -1413,7 +1432,7 @@
     .craber-nav-panel-empty{padding:28px 16px;text-align:center;font-size:12px;color:var(--craber-sub)}
 
     /* 轻提示条：次要反馈（如目标消息尚未挂载）用它，不再用 alert 打断阅读 */
-    .craber-toast{position:fixed;left:50%;bottom:84px;z-index:2147483647;pointer-events:none;
+    .craber-toast{position:fixed;left:50%;bottom:84px;z-index:var(--craber-z-tip);pointer-events:none;
       max-width:70vw;background:#2f2f2f;color:#fff;font-size:12.5px;line-height:1.5;
       padding:9px 14px;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.28);
       font-family:system-ui,sans-serif;opacity:0;
@@ -1454,7 +1473,7 @@
     }
 
     /* 螃蟹按钮的 tooltip：挂在 body 上的独立元素，不受操作栏 overflow 裁切 */
-    .craber-tip{position:fixed;z-index:2147483647;pointer-events:none;
+    .craber-tip{position:fixed;z-index:var(--craber-z-tip);pointer-events:none;
       background:#2f2f2f;color:#fff;font-size:12px;line-height:1;font-weight:400;
       padding:6px 9px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.25);
       white-space:nowrap;font-family:system-ui,sans-serif;
@@ -2999,6 +3018,8 @@
 
   // 渲染当前会话的节点轨道。没有 /c/ 会话时隐藏。
   function renderNavRail(force) {
+    // 开关关掉就彻底不做事（也顺带撤掉已挂的轨道），别在后台继续请求接口
+    if (!uiPrefs.navRail) { hideNavRailNow(); return; }
     mountNavRail();
     if (!getConvId()) {
       navRailEl.style.display = 'none';
@@ -3372,7 +3393,6 @@
   let pbarFetchedAt = 0;
   let pbarForProject = null;  // 上述数据属于哪个项目，换项目要作废
   let pbarRenderedConv = null; // 上一次渲染时的对话 id，用来避免每秒重画
-  let pbarTuckHandler = null;
 
   // 建元素的小助手：项目条节点较多，逐个 createElement + className 太啰嗦
   function el(tag, cls, text) {
@@ -3387,10 +3407,9 @@
       ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + path + '</svg>';
   }
   const PBAR_ICON = {
-    folder: pbarIcon('<path d="M3 7a2 2 0 0 1 2-2h3.5l2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
     prev: pbarIcon('<path d="M15 5l-7 7 7 7"/>'),
     next: pbarIcon('<path d="M9 5l7 7-7 7"/>'),
-    list: pbarIcon('<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/>')
+    chevron: pbarIcon('<path d="M6 9l6 6 6-6"/>')
   };
 
   // 相对时间，跟项目条上的粒度（今天 / 昨天 / N天前 / 日期）
@@ -3452,15 +3471,6 @@
     return getConvId();
   }
 
-  // 上/下一个：按项目内接口返回的顺序（更新时间倒序）走
-  function pbarNeighbor(delta) {
-    const cur = pbarCurrentConvId();
-    const at = pbarConvs.findIndex((c) => c.id === cur);
-    if (at < 0) return null;
-    const next = pbarConvs[at + delta];
-    return next || null;
-  }
-
   function pbarRenderMenu() {
     if (!pbarMenuEl) return;
     const cur = pbarCurrentConvId();
@@ -3494,11 +3504,18 @@
     setTimeout(() => a.remove(), 0);
   }
 
+  // 展开状态同步到会话名按钮的 aria-expanded，箭头据此翻转（见 CSS）。
+  function pbarSetExpanded(on) {
+    const b = pbarEl && pbarEl.querySelector('.craber-pbar-title');
+    if (b) b.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
+
   function pbarToggleMenu(anchor) {
     if (!pbarMenuEl) return;
     if (pbarMenuEl.classList.contains('craber-open')) { pbarCloseMenu(); return; }
     pbarRenderMenu();
     pbarMenuEl.classList.add('craber-open');
+    pbarSetExpanded(true);
     // 锚在按钮下方左对齐，超出视口就右移
     const r = anchor.getBoundingClientRect();
     const w = pbarMenuEl.offsetWidth;
@@ -3508,6 +3525,7 @@
 
   function pbarCloseMenu() {
     if (pbarMenuEl) pbarMenuEl.classList.remove('craber-open');
+    pbarSetExpanded(false);
   }
 
   function pbarRender() {
@@ -3518,125 +3536,114 @@
 
     pbarEl.textContent = '';
 
-    // 原生 header 已经有「项目名」面包屑了，这里不再重复显示项目名 ——
-    // 只补原生没有的东西：本项目规模、当前对话在项目内的位置、以及切换入口。
-    const proj = el('a', 'craber-pbar-proj');
-    proj.href = '/g/' + pbarProject.id + '/project';
+    // 会话名本身就是开关：用户本来就在读它，直接让它可点开本项目对话列表。
+    // 项目名由原生面包屑承担，不重复；会话数只在展开列表的标题里出现。
+    const t = el('button', 'craber-pbar-title');
+    t.type = 'button';
+    t.setAttribute('aria-haspopup', 'true');
+    t.setAttribute('aria-expanded', 'false');
+    const txt = el('span', 'craber-pbar-title-text',
+      curConv ? curConv.title : '（不在本项目对话内）');
+    if (curConv) t.title = curConv.title;
     const ico = el('span');
-    ico.innerHTML = PBAR_ICON.folder;
+    ico.innerHTML = PBAR_ICON.chevron;
     ico.style.display = 'flex';
-    // 图标 + 计数，点回项目页；项目名交给原生面包屑展示
-    proj.append(ico, el('span', 'craber-pbar-count', String(pbarConvs.length) + ' 个对话'));
-    proj.title = '回到项目页';
-    proj.addEventListener('click', (e) => {
-      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-      e.preventDefault();
-      const a = document.createElement('a');
-      a.href = proj.href;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => a.remove(), 0);
+    t.append(txt, ico);
+    t.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pbarToggleMenu(t);
     });
-    pbarEl.append(proj);
-
-    pbarEl.append(el('span', 'craber-pbar-sep'));
-
-    const t = el('span', 'craber-pbar-title');
-    if (curConv) {
-      t.textContent = curConv.title;
-      t.title = curConv.title;
-    } else {
-      t.textContent = '（不在本项目对话内）';
-    }
     pbarEl.append(t);
 
-    if (at >= 0) {
-      pbarEl.append(el('span', 'craber-pbar-pos', '第 ' + (at + 1) + ' / ' + pbarConvs.length + ' 个'));
+    if (at >= 0 && pbarConvs.length > 1) {
+      pbarEl.append(el('span', 'craber-pbar-pos', (at + 1) + '/' + pbarConvs.length));
     }
-
-    const prev = el('button', 'craber-pbar-btn');
-    prev.type = 'button';
-    prev.innerHTML = PBAR_ICON.prev;
-    prev.setAttribute('aria-label', '上一个对话');
-    prev.title = '上一个对话';
-    if (!pbarNeighbor(-1)) prev.disabled = true;
-    prev.addEventListener('click', () => {
-      const n = pbarNeighbor(-1);
-      if (n) pbarNavigate(n.id);
-    });
-    pbarEl.append(prev);
-
-    const next = el('button', 'craber-pbar-btn');
-    next.type = 'button';
-    next.innerHTML = PBAR_ICON.next;
-    next.setAttribute('aria-label', '下一个对话');
-    next.title = '下一个对话';
-    if (!pbarNeighbor(1)) next.disabled = true;
-    next.addEventListener('click', () => {
-      const n = pbarNeighbor(1);
-      if (n) pbarNavigate(n.id);
-    });
-    pbarEl.append(next);
-
-    const more = el('button', 'craber-pbar-btn');
-    more.type = 'button';
-    more.innerHTML = PBAR_ICON.list;
-    more.setAttribute('aria-label', '展开本项目全部对话');
-    more.title = '本项目全部对话';
-    more.addEventListener('click', (e) => {
-      e.stopPropagation();
-      pbarToggleMenu(more);
-    });
-    pbarEl.append(more);
   }
 
-  // 项目条要贴在原生 header 下面，并把正文整体往下推，避免压住第一条消息。
-  // header 高度实测 52px；推挤只作用于滚动容器，不动原生布局本身。
+  // 找项目条的宿主：原生顶栏里那个"吃掉剩余水平空间"的容器。
+  //
+  // 优先从面包屑往上找（最准），但面包屑并一定存在 —— 窗口偏窄时原生会把它
+  // 整个隐藏（实测侧栏展开后 hasBreadcrumb=false），所以不能只依赖它，
+  // 否则项目条会静默消失。没有面包屑时改为在顶栏内直接筛：
+  // 挑一个 display:flex、flex-grow 生效、且在顶栏左半侧的容器 ——
+  // 那正是面包屑原本待的位置，不会跑到右侧按钮组里去。
+  function pbarHost() {
+    // 路径一：面包屑在，从它往上找 flex:1 的祖先
+    const bc = document.querySelector('nav[aria-label="面包屑导航"]');
+    if (bc) {
+      let e = bc.parentElement;
+      for (let i = 0; i < 3 && e; i++) {
+        const cs = getComputedStyle(e);
+        if (cs.display === 'flex' && cs.flexDirection === 'row'
+            && (parseFloat(cs.flexGrow) || 0) >= 1) return e;
+        e = e.parentElement;
+      }
+      if (bc.parentElement) return bc.parentElement;
+    }
+
+    // 路径二：面包屑不在（被原生隐藏），在顶栏里自己筛
+    const hdr = document.querySelector('header');
+    if (!hdr) return null;
+    const vw = window.innerWidth;
+    const cands = [];
+    hdr.querySelectorAll('div').forEach((d) => {
+      const cs = getComputedStyle(d);
+      if (cs.display !== 'flex' || cs.flexDirection !== 'row') return;
+      if ((parseFloat(cs.flexGrow) || 0) < 1) return;      // 只认可伸缩的
+      const r = d.getBoundingClientRect();
+      if (r.width < 120 || r.height < 24) return;
+      if (r.left > vw * 0.6) return;                        // 排除右侧按钮组
+      // 不能是已经装了我们的节点的容器
+      if (d.querySelector('.craber-pbar')) return;
+      cands.push({ el: d, w: r.width });
+    });
+    if (!cands.length) return null;
+    // 取最宽的那个（就是原来放面包屑的空间）
+    cands.sort((a, b) => b.w - a.w);
+    return cands[0].el;
+  }
+
+  // 项目条不再自己定位 —— 它作为顶栏容器的子元素参与原生 flex 排布，
+  // 因此不需要任何 fixed 定位，也就不存在遮挡/重叠。
   function pbarPlace() {
     if (!pbarEl) return 0;
-    const hdr = document.querySelector('header');
-    const top = hdr ? Math.max(0, Math.round(hdr.getBoundingClientRect().height)) : 52;
-    pbarEl.style.top = top + 'px';
-
-    const sc = getScrollContainer();
-    let push = 0;
-    if (sc && sc !== document.scrollingElement && sc !== document.documentElement) {
-      sc.style.scrollPaddingTop = (top + 38 + 8) + 'px';
-      push = top + 38;
-    }
-    return push;
+    const host = pbarHost();
+    if (!host) return 0;
+    // 宿主被 React 重建过（引用失效）时重新挂回去
+    if (pbarEl.parentElement !== host) host.appendChild(pbarEl);
+    return 0;
   }
 
   function pbarMount() {
-    if (pbarEl && document.body.contains(pbarEl)) return;
-    pbarEl = el('div', 'craber-pbar');
-    pbarEl.setAttribute('role', 'navigation');
-    pbarEl.setAttribute('aria-label', '项目导航');
-    document.body.appendChild(pbarEl);
+    const host = pbarHost();
+    if (!host) return false;
+    if (pbarEl && pbarEl.parentElement === host) return true;
 
-    pbarMenuEl = el('div', 'craber-pbar-menu');
-    document.body.appendChild(pbarMenuEl);
+    if (!pbarEl) {
+      pbarEl = el('div', 'craber-pbar');
+      pbarEl.setAttribute('role', 'navigation');
+      pbarEl.setAttribute('aria-label', '项目内对话导航');
+    }
+    host.appendChild(pbarEl);
 
-    // 点空白处收起菜单。必须放过"项目条自身"的点击 —— 这段用的是捕获阶段，
-    // 早于按钮自己的 click 处理函数执行；若不排除，点按钮会先被这里关掉，
-    // 按钮随后又当成"已收起"重新展开，于是再点一次永远关不上。
-    document.addEventListener('click', (e) => {
-      if (!pbarMenuEl || !pbarMenuEl.classList.contains('craber-open')) return;
-      if (pbarMenuEl.contains(e.target)) return;
-      if (pbarEl && pbarEl.contains(e.target)) return;
-      pbarCloseMenu();
-    }, true);
+    if (!pbarMenuEl) {
+      pbarMenuEl = el('div', 'craber-pbar-menu');
+      document.body.appendChild(pbarMenuEl);
+    }
 
-    // 滚动时淡出，不抢正文；鼠标移上去恢复
-    pbarTuckHandler = () => {
-      if (!pbarEl) return;
-      const sc = getScrollContainer();
-      const y = sc === document.scrollingElement || sc === document.documentElement
-        ? window.scrollY : sc.scrollTop;
-      pbarEl.classList.toggle('craber-pbar-tuck', Math.abs(y) > 80);
-    };
-    document.addEventListener('scroll', pbarTuckHandler, { capture: true, passive: true });
+    // 点空白处收起菜单。必须放过"项目条自身"的点击 —— 这段用捕获阶段，
+    // 早于按钮自己的 click 处理函数；若不排除，点按钮会先被关掉、按钮
+    // 又当成"已收起"重新展开，于是再点一次永远关不上。
+    if (!pbarMount.__bound) {
+      pbarMount.__bound = true;
+      document.addEventListener('click', (e) => {
+        if (!pbarMenuEl || !pbarMenuEl.classList.contains('craber-open')) return;
+        if (pbarMenuEl.contains(e.target)) return;
+        if (pbarEl && pbarEl.contains(e.target)) return;
+        pbarCloseMenu();
+      }, true);
+    }
+    return true;
   }
 
   function pbarUnmount() {
@@ -3647,6 +3654,12 @@
 
   // 主循环：判断当前是否在项目内对话页，是则显示并保证数据最新。
   async function pbarTick() {
+    // 开关关掉：撤下项目条，也不再去拉项目接口
+    if (!uiPrefs.projectUI) {
+      if (pbarEl) pbarUnmount();
+      pbarForProject = null;
+      return;
+    }
     const projectId = getProjectId();
     // 不在项目里（普通对话页 / 首页）就把条收掉
     if (!projectId || !getConvId()) {
@@ -3693,7 +3706,41 @@
 
   // 悬浮球：可拖拽（位置存 localStorage），双击展开菜单（会话列表 / 导出当前）。
   // 固定右下角会挡内容，改成用户可随手拖到不碍事的位置。
-  const FAB_POS_KEY = 'gpt_craber_fab_pos';
+  // 导出按钮与它的下拉菜单（都挂在原生顶栏里，见 mountFab）。
+  let fabEl = null;
+  let fabMenuEl = null;
+
+  // 界面增强开关。默认都开，用户可各自关掉。
+  // 关掉必须真的卸载（移除已注入的节点 + 停掉后续挂载），而不是只隐藏 ——
+  // 否则功能还在后台跑、还会去请求接口。
+  const UI_PREFS_KEY = 'gpt_craber_ui_prefs';
+  const UI_PREFS_DEFAULT = { navRail: true, projectUI: true };
+  let uiPrefs = (() => {
+    try {
+      const raw = localStorage.getItem(UI_PREFS_KEY);
+      return Object.assign({}, UI_PREFS_DEFAULT, raw ? JSON.parse(raw) : {});
+    } catch (e) { return Object.assign({}, UI_PREFS_DEFAULT); }
+  })();
+
+  function setUiPref(key, on) {
+    uiPrefs[key] = !!on;
+    try { localStorage.setItem(UI_PREFS_KEY, JSON.stringify(uiPrefs)); } catch (e) {}
+    if (key === 'navRail') {
+      if (on) scheduleNavRender(0, true);
+      else hideNavRailNow();          // 立刻收起，不等下一轮 tick
+    } else if (key === 'projectUI') {
+      if (on) pbarTick();
+      else pbarUnmount();
+    }
+  }
+
+  // 关掉节点导航时把轨道连同卡片一并撤下
+  function hideNavRailNow() {
+    resetNavRail();
+    if (navRailEl) { navRailEl.remove(); navRailEl = null; }
+    hideNavCard();
+    hideNavPanel();
+  }
 
   // 判断当前是不是深色主题。
   // 优先看 ChatGPT 自己的 html[data-theme]（它的主题开关），而不是系统偏好 ——
@@ -3710,154 +3757,230 @@
   // 描边：深色主题白、浅色主题黑。颜色写自定义属性，由样式表里的
   // outline: 1.5px solid var(--craber-fab-line) 取用。
   function applyFabTheme(ball) {
-    const el = ball || document.querySelector('.craber-fab-ball');
+    const el = ball || document.querySelector('.craber-fab-btn');
     if (!el) return;
-    const dark = isDarkTheme();
+    // 顶栏里的按钮比原来悬浮球小得多，描边用较低不透明度即可看清，
+    // 太亮会显得脏（尤其是按钮本身就贴着"分享/更多"那排）。
     el.style.setProperty('--craber-fab-line',
-      dark ? 'rgba(255,255,255,.85)' : 'rgba(0,0,0,.75)');
-    el.style.background = dark ? 'rgba(38,40,44,.3)' : 'rgba(255,255,255,.3)';
+      isDarkTheme() ? 'rgba(255,255,255,.45)' : 'rgba(0,0,0,.4)');
   }
 
+  // 导出按钮的宿主：顶栏右侧那排按钮组（"分享 / 更多"所在处）。
+  function fabHost() {
+    const hdr = document.querySelector('header');
+    if (!hdr) return null;
+    const groups = [...hdr.querySelectorAll('div')].filter((d) => {
+      const cs = getComputedStyle(d);
+      if (cs.display !== 'flex') return false;
+      if (cs.marginLeft !== 'auto' && cs.flexGrow !== '0') return false;
+      const r = d.getBoundingClientRect();
+      return r.height > 24 && r.width > 40 && d.querySelectorAll('button').length > 0;
+    });
+    if (!groups.length) return null;
+    // 取最靠右的那组
+    groups.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+    return groups[0];
+  }
+
+  // 把一个颜色降成半透明，供顶栏毛玻璃用。
+  // 站点给的可能是 #rgb / #rrggbb / rgb() / rgba() 各种形式，统一解析成
+  // rgba(r,g,b,a)。解析不了就原样返回（宁可没有模糊，也不要画错颜色）。
+  function toTranslucent(color, alpha) {
+    const c = String(color || '').trim();
+
+    // #rgb / #rrggbb
+    const hex = c.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      let h = hex[1];
+      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      const r = parseInt(h.slice(0, 2), 16);
+      const g = parseInt(h.slice(2, 4), 16);
+      const b = parseInt(h.slice(4, 6), 16);
+      return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+    }
+
+    // rgb() / rgba()
+    const m = c.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    if (m) {
+      return 'rgba(' + Math.round(+m[1]) + ',' + Math.round(+m[2]) + ','
+        + Math.round(+m[3]) + ',' + alpha + ')';
+    }
+
+    return c;
+  }
+
+  // 原生顶栏背景是全透明的（sticky 但不占视觉），正文滚上去会与它叠字。
+  // 这里补上半透明底色 + 高斯模糊：滚过的内容被糊化，顶栏文字保持清晰。
+  //
+  // 底色取页面自身的主题色（--main-surface-primary / --bg-primary）再降到
+  // 半透明，不写死深浅两套色值 —— 站点换主题时自动跟随，也和正文底色一致。
+  // 必须用内联 !important：header 的原生 class 带着 Tailwind 的 bg-transparent!，
+  // 那条规则在 CDN 样式表里（读不到 cssRules），普通规则压不过它。
+  function applyHeaderBg() {
+    const hdr = document.querySelector('header');
+    if (!hdr) return;
+    if (!hdr.classList.contains('craber-hdr-glass')) hdr.classList.add('craber-hdr-glass');
+
+    const rootCs = getComputedStyle(document.documentElement);
+    const pick = (n) => rootCs.getPropertyValue(n).trim();
+    // 先拿到页面自己的"主表面"色（可能是 #000 / #212121 这类不透明值）
+    let solid = pick('--main-surface-primary') || pick('--bg-primary');
+    if (!solid) {
+      const b = getComputedStyle(document.body).backgroundColor;
+      solid = (b && b !== 'rgba(0, 0, 0, 0)') ? b : (isDarkTheme() ? '#000' : '#fff');
+    }
+    // 转成半透明：模糊要有可见效果，底色就不能是全不透明。
+    // 同时留 0.72 的不透明度，保证顶栏文字在糊化背景上依然清楚。
+    const bg = toTranslucent(solid, isDarkTheme() ? 0.72 : 0.76);
+
+    if (hdr.dataset.craberHdrBg !== bg) {
+      hdr.style.setProperty('background-color', bg, 'important');
+      hdr.dataset.craberHdrBg = bg;
+    }
+
+    // 让正文的吸顶小标题让开顶栏。
+    //
+    // 正文块顶部那条吸顶标题用的是 md:top-(--sticky-padding-top)，而该变量在
+    // 当前页面解析为 0px —— 也就是"贴在滚动容器最顶端"。顶栏原本全透明，
+    // 两者叠着看不出来；一旦给顶栏加了底色，这条吸顶标题就会钻到顶栏底下被切掉。
+    //
+    // 该变量的本意就是"顶栏下面留多少空间"，把它设成顶栏高度即可。
+    //
+    // 落点必须选 main：实测设在 documentElement 上不生效（该变量在更靠内的层级
+    // 被重新定义为 0px，根的赋值传不到目标元素）；设在滚动容器上也能生效，但
+    // 滚动容器要等内容渲染出来才存在，首屏那几秒会漏设。main 始终在、且是这些
+    // 吸顶条的共同祖先，设一处即可覆盖全部。
+    const h = Math.round(hdr.getBoundingClientRect().height);
+    const main = document.querySelector('main');
+    if (main && h > 0) {
+      const want = h + 'px';
+      if (main.style.getPropertyValue('--sticky-padding-top') !== want) {
+        main.style.setProperty('--sticky-padding-top', want);
+      }
+    }
+  }
+
+  // 导出按钮：固定进顶栏右侧，不再做可拖拽悬浮球。
+  // 下载/导出和"分享"是同一类操作，放一起位置固定、可预期。
   function mountFab() {
-    if (document.querySelector('.craber-fab-ball')) return;
+    const host = fabHost();
+    applyHeaderBg();   // 顶栏底色：和导出按钮同在顶栏，一起维护
+    if (!host) return false;
 
-    const ball = document.createElement('button');
-    ball.className = 'craber-fab-ball';
-    // 蟹图标：蟹身填 currentColor（由 .craber-fab-ball 的 color 统一控制为蟹绿）
-    ball.innerHTML = CRAB_SVG;
-    ball.title = '拖拽移动 · 双击展开菜单';
+    if (fabEl && fabEl.parentElement === host) { applyFabTheme(fabEl); return true; }
 
-    const menu = document.createElement('div');
-    menu.className = 'craber-fab-menu';
-
-    const btnConv = document.createElement('button');
-    btnConv.className = 'craber-fab-item';
-    btnConv.textContent = '会话列表';
-    btnConv.title = '获取并导出多个会话';
-
-    const btnCur = document.createElement('button');
-    btnCur.className = 'craber-fab-item';
-    btnCur.textContent = '导出当前';
-    btnCur.title = '导出当前会话的回合';
-
-    const btnCollapse = document.createElement('button');
-    btnCollapse.className = 'craber-fab-item craber-fab-collapse';
-    btnCollapse.textContent = '收起';
-    btnCollapse.title = '收起菜单，只留悬浮球';
-
-    menu.appendChild(btnConv);
-    menu.appendChild(btnCur);
-    menu.appendChild(btnCollapse);
-
-    const BALL = 52, MARGIN = 20;
-    function clamp(x, y) {
-      const maxX = window.innerWidth - BALL - 4;
-      const maxY = window.innerHeight - BALL - 4;
-      return { x: Math.max(4, Math.min(x, maxX)), y: Math.max(4, Math.min(y, maxY)) };
-    }
-    function loadPos() {
-      try {
-        const raw = localStorage.getItem(FAB_POS_KEY);
-        if (raw) { const p = JSON.parse(raw); if (typeof p.x === 'number' && typeof p.y === 'number') return p; }
-      } catch (e) {}
-      return { x: window.innerWidth - BALL - MARGIN, y: window.innerHeight - BALL - MARGIN };
-    }
-    let pos = clamp(loadPos().x, loadPos().y);
-    function applyPos() {
-      ball.style.left = pos.x + 'px';
-      ball.style.top = pos.y + 'px';
-      positionMenu();
-    }
-    // 菜单贴着球弹出：球在下半屏则向上展开，在右半屏则右对齐
-    function positionMenu() {
-      const onRight = pos.x + BALL / 2 > window.innerWidth / 2;
-      const onBottom = pos.y + BALL / 2 > window.innerHeight / 2;
-      menu.classList.toggle('craber-up', onBottom);
-      menu.classList.toggle('craber-down', !onBottom);
-      menu.style.left = onRight ? '' : (pos.x + 'px');
-      menu.style.right = onRight ? (window.innerWidth - pos.x - BALL) + 'px' : '';
-      if (onBottom) {
-        menu.style.top = '';
-        menu.style.bottom = (window.innerHeight - pos.y + 8) + 'px';
-      } else {
-        menu.style.bottom = '';
-        menu.style.top = (pos.y + BALL + 8) + 'px';
-      }
-      menu.style.alignItems = onRight ? 'flex-end' : 'flex-start';
-    }
-
-    // 展开/收起菜单，逐项交错（用内联 transition-delay）。
-    // 展开：离球近的项先出现；收起：离球远的项先缩回。
-    const STEP = 60;
-    function setMenuOpen(open) {
-      const items = [btnConv, btnCur, btnCollapse];
-      const onBottom = pos.y + BALL / 2 > window.innerHeight / 2;
-      const n = items.length;
-      items.forEach((it, i) => {
-        const nearIndex = onBottom ? (n - 1 - i) : i;
-        const order = open ? nearIndex : (n - 1 - nearIndex);
-        it.style.transitionDelay = (order * STEP) + 'ms';
+    if (!fabEl) {
+      fabEl = document.createElement('button');
+      fabEl.className = 'craber-fab-btn';
+      fabEl.type = 'button';
+      fabEl.innerHTML = CRAB_SVG;
+      fabEl.title = '导出';
+      fabEl.setAttribute('aria-label', '导出');
+      fabEl.setAttribute('aria-haspopup', 'true');
+      fabEl.setAttribute('aria-expanded', 'false');
+      fabEl.addEventListener('click', (e) => {
+        // 点在按钮上只切菜单；不要冒泡到页面（顶栏里有别的手势处理）
+        e.stopPropagation();
+        fabToggleMenu();
       });
-      if (open) { positionMenu(); menu.classList.add('craber-open'); }
-      else { menu.classList.remove('craber-open'); }
+    }
+    host.appendChild(fabEl);
+
+    if (!fabMenuEl) {
+      fabMenuEl = el('div', 'craber-fab-menu');
+      const panel = el('div', 'craber-fab-panel');
+
+      const mk = (label, title, handler, cls) => {
+        const b = el('button', 'craber-fab-item' + (cls ? ' ' + cls : ''));
+        b.type = 'button';
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener('click', () => { fabCloseMenu(); handler(); });
+        return b;
+      };
+      panel.append(
+        mk('会话列表', '获取并导出多个会话', openConvPanel),
+        mk('导出当前', '导出当前会话的回合', openPanel)
+      );
+
+      // 界面增强开关：关掉后对应功能立即卸载，不留半个残件。
+      // 状态存 localStorage，刷新后保持。
+      panel.append(el('div', 'craber-fab-sep'));
+      const mkToggle = (key, label, title) => {
+        const row = el('button', 'craber-fab-item craber-fab-toggle');
+        row.type = 'button';
+        row.title = title;
+        row.setAttribute('role', 'switch');
+        const lab = el('span', 'craber-fab-toggle-label', label);
+        const sw = el('span', 'craber-fab-switch');
+        row.append(lab, sw);
+        const sync = () => {
+          const on = !!uiPrefs[key];
+          row.setAttribute('aria-checked', on ? 'true' : 'false');
+          row.classList.toggle('on', on);
+        };
+        row.addEventListener('click', (e) => {
+          // 切换开关不收起菜单，方便连着拨两个
+          e.stopPropagation();
+          setUiPref(key, !uiPrefs[key]);
+          sync();
+        });
+        sync();
+        return row;
+      };
+      panel.append(
+        mkToggle('navRail', '节点导航', '在会话左侧显示回合节点轨道，可悬停预览、点击跳转'),
+        mkToggle('projectUI', '项目 UI 优化', '在顶栏里显示项目对话入口与当前对话位置')
+      );
+
+      panel.append(el('div', 'craber-fab-sep'));
+      panel.append(mk('收起', '收起菜单', () => {}, 'craber-fab-collapse'));
+      fabMenuEl.append(panel);
+      document.body.appendChild(fabMenuEl);
+
+      // 点空白处收起
+      document.addEventListener('click', (e) => {
+        if (!fabMenuEl.classList.contains('craber-open')) return;
+        if (fabMenuEl.contains(e.target)) return;
+        if (fabEl && fabEl.contains(e.target)) return;
+        fabCloseMenu();
+      }, true);
+      window.addEventListener('resize', fabCloseMenu);
     }
 
-    let dragging = false, moved = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
-    ball.addEventListener('pointerdown', (e) => {
-      dragging = true; moved = false;
-      startX = e.clientX; startY = e.clientY; baseX = pos.x; baseY = pos.y;
-      ball.setPointerCapture(e.pointerId);
-      ball.classList.add('craber-dragging');
-      setMenuOpen(false);
-    });
-    ball.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const dx = e.clientX - startX, dy = e.clientY - startY;
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
-      pos = clamp(baseX + dx, baseY + dy);
-      applyPos();
-    });
-    ball.addEventListener('pointerup', (e) => {
-      if (!dragging) return;
-      dragging = false;
-      ball.classList.remove('craber-dragging');
-      try { ball.releasePointerCapture(e.pointerId); } catch (err) {}
-      if (moved) {
-        try { localStorage.setItem(FAB_POS_KEY, JSON.stringify(pos)); } catch (err) {}
-      }
-    });
+    // 必须在 appendChild 之后再设主题色：元素尚未入 DOM 时先跑一次 transition
+    // 注册会生成一个 currentTime 停在 0 的动画，而"运行中的动画"优先级高于内联
+    // !important —— 颜色会被永久锁在起始值（实测）。插进文档再设才落得下来。
+    applyFabTheme(fabEl);
 
-    // 双击展开菜单（拖拽过就不触发）。收起只靠菜单里的「收起」项。
-    ball.addEventListener('dblclick', (e) => {
-      e.preventDefault();
-      if (moved) return;
-      setMenuOpen(true);
-    });
+    if (!mountFab.__themed) {
+      mountFab.__themed = true;
+      new MutationObserver(() => applyFabTheme(fabEl))
+        .observe(document.documentElement,
+          { attributes: true, attributeFilter: ['data-theme', 'class'] });
+      try {
+        window.matchMedia('(prefers-color-scheme: dark)')
+          .addEventListener('change', () => applyFabTheme(fabEl));
+      } catch (e) { /* 老浏览器不支持，忽略 */ }
+    }
+    return true;
+  }
 
-    btnConv.addEventListener('click', openConvPanel);
-    btnCur.addEventListener('click', openPanel);
-    btnCollapse.addEventListener('click', () => { setMenuOpen(false); });
+  function fabToggleMenu() {
+    if (!fabMenuEl || !fabEl) return;
+    if (fabMenuEl.classList.contains('craber-open')) { fabCloseMenu(); return; }
+    fabMenuEl.classList.add('craber-open');
+    fabEl.setAttribute('aria-expanded', 'true');
+    // 按钮在顶栏最右，菜单右对齐才不会溢出视口
+    const r = fabEl.getBoundingClientRect();
+    const mw = fabMenuEl.offsetWidth;
+    fabMenuEl.style.top = (r.bottom + 6) + 'px';
+    fabMenuEl.style.left = Math.max(8, r.right - mw) + 'px';
+  }
 
-    window.addEventListener('resize', () => { pos = clamp(pos.x, pos.y); applyPos(); });
-
-    applyPos();
-    document.body.appendChild(ball);
-    document.body.appendChild(menu);
-    // 必须在 appendChild 之后再设主题色：元素尚未入 DOM 时会先跑一次
-    // transition 注册，浏览器据此生成一个 currentTime 停在 0 的过渡动画，
-    // 而"运行中的动画"优先级高于内联 !important —— 颜色会被永久锁在起始值，
-    // 之后怎么写都改不动（实测连内联 !important 都压不住）。
-    // 插进文档再设，转场能正常推进，值也就落得下来。
-    applyFabTheme(ball);
-    // 主题切换（含跟随系统、跨标签页同步）时重画描边。属性变化用 MutationObserver
-    // 最准，系统偏好变化用媒体查询监听；两者都很轻。
-    new MutationObserver(() => applyFabTheme(ball))
-      .observe(document.documentElement,
-        { attributes: true, attributeFilter: ['data-theme', 'class'] });
-    try {
-      window.matchMedia('(prefers-color-scheme: dark)')
-        .addEventListener('change', () => applyFabTheme(ball));
-    } catch (e) { /* 老浏览器不支持，忽略 */ }
+  function fabCloseMenu() {
+    if (fabMenuEl) fabMenuEl.classList.remove('craber-open');
+    if (fabEl) fabEl.setAttribute('aria-expanded', 'false');
   }
 
   // 从操作栏按钮回溯到它所属回合的 key，用该 id 在 nodeIndex 里定位对应回合。
@@ -4025,6 +4148,8 @@
       // 路径没变时也轻量重定位：侧边栏收起/展开会改变 main 的左边缘
       updateNavRailPos();
     }
+    // 顶栏里的导出按钮会被 React 重建清掉，每秒补挂一次（已挂则是空操作）
+    mountFab();
     // 项目条：位置要跟着 header 高度与窗口变化走，同时判断是否还在项目内对话页
     pbarTick();
   }, 1000);
@@ -4034,6 +4159,6 @@
   // 等 ChatGPT 自己的首屏请求先跑，避免和它的 paginated_conversation 撞车触发 429
   scheduleNavRender(NAV_SWITCH_DELAY);
   pbarTick();
-  window.addEventListener('resize', () => { pbarPlace(); pbarCloseMenu(); });
+  window.addEventListener('resize', () => { pbarCloseMenu(); fabCloseMenu(); });
   console.log('[gpt-craber] 对话导出脚本已加载');
 })();
