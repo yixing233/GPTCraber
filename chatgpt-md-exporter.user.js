@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.4.2
+// @version      0.5.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -1036,6 +1036,8 @@
       --craber-nav-bar:#c3c8d0; --craber-nav-bar-mid:#8a9099; --craber-nav-bar-hi:#1f2328;
       --craber-nav-card:#f7f7f8; --craber-nav-card-line:#e3e5e8;
       --craber-nav-strong:#1f2328; --craber-nav-muted:#8a9099;
+      /* 项目条底色：比面板再透一点，压在正文上不糊字 */
+      --craber-pbar-bg:rgba(255,255,255,.86);
     }
     @media (prefers-color-scheme:dark){
       :root{
@@ -1045,6 +1047,7 @@
         --craber-nav-bar:#50555d; --craber-nav-bar-mid:#8e949d; --craber-nav-bar-hi:#e8eaed;
         --craber-nav-card:#2b2d31; --craber-nav-card-line:#3a3d43;
         --craber-nav-strong:#e8eaed; --craber-nav-muted:#9aa0a8;
+        --craber-pbar-bg:rgba(38,40,44,.86);
       }
     }
     /* 平台页面全局滚动条美化：作用于站点本身（非本插件面板，面板选择器更具体不受影响）。
@@ -1105,6 +1108,61 @@
     .craber-fab-menu.craber-open .craber-fab-item{opacity:1;transform:none}
     /* 交错延迟由 JS 逐项设内联 transition-delay（开合方向不同，见 setMenuOpen）。 */
     .craber-fab-collapse{color:var(--craber-sub);box-shadow:0 2px 8px rgba(0,0,0,.12)}
+
+    /* 项目条：项目内对话页顶部的一条上下文带，让"这条对话属于哪个项目"一眼可见，
+       并提供项目内上/下一个对话的跳转。
+       位置是 fixed，贴在原生 header（52px 高）正下方；正文区整体下移由 JS 设
+       --craber-push 完成，避免遮住第一条消息。 */
+    .craber-pbar{position:fixed;z-index:99996;left:0;right:0;
+      display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;
+      font-family:system-ui,sans-serif;font-size:13px;
+      background:var(--craber-pbar-bg);color:var(--craber-fg);
+      border-bottom:1px solid var(--craber-line);
+      -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+      transition:opacity .18s ease,transform .18s ease}
+    /* 滚动时收细：不抢正文视线 */
+    .craber-pbar.craber-pbar-tuck{opacity:.55}
+    .craber-pbar:hover{opacity:1}
+    .craber-pbar-btn{flex:none;display:flex;align-items:center;justify-content:center;
+      width:26px;height:26px;border:none;padding:0;border-radius:7px;
+      background:transparent;color:var(--craber-fg);cursor:pointer;
+      transition:background-color .14s ease,color .14s ease}
+    .craber-pbar-btn:hover:not(:disabled){background:var(--craber-hover)}
+    .craber-pbar-btn:disabled{opacity:.3;cursor:default}
+    .craber-pbar-btn:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px}
+    /* 项目入口：图标 + 名称，点击回到项目页 */
+    .craber-pbar-proj{flex:none;display:flex;align-items:center;gap:7px;max-width:32%;
+      height:28px;padding:0 9px;border-radius:8px;border:none;background:transparent;
+      color:var(--craber-fg);cursor:pointer;font:inherit;font-weight:600;
+      text-decoration:none;transition:background-color .14s ease}
+    .craber-pbar-proj:hover{background:var(--craber-hover)}
+    .craber-pbar-proj-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-pbar-count{flex:none;padding:1px 7px;border-radius:9px;
+      background:var(--craber-hover);color:var(--craber-sub);
+      font-size:11px;font-weight:600}
+    .craber-pbar-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap;color:var(--craber-sub)}
+    .craber-pbar-pos{flex:none;color:var(--craber-sub);font-size:12px;
+      font-variant-numeric:tabular-nums}
+    .craber-pbar-sep{flex:none;width:1px;height:16px;background:var(--craber-line)}
+    /* 展开的本项目对话列表 */
+    .craber-pbar-menu{position:fixed;z-index:99997;min-width:280px;max-width:min(420px,92vw);
+      max-height:min(56vh,420px);overflow-y:auto;padding:6px;border-radius:12px;
+      background:var(--craber-bg);border:1px solid var(--craber-line);
+      box-shadow:0 12px 34px rgba(0,0,0,.22);font-family:system-ui,sans-serif;
+      display:none}
+    .craber-pbar-menu.craber-open{display:block;animation:craber-pop-in .16s ease}
+    .craber-pbar-menu-hd{padding:6px 8px 8px;color:var(--craber-sub);font-size:11px;
+      font-weight:600;letter-spacing:.03em;text-transform:uppercase}
+    .craber-pbar-item{display:flex;align-items:center;gap:8px;width:100%;
+      min-height:32px;padding:6px 8px;border:none;border-radius:8px;
+      background:transparent;color:var(--craber-fg);font:inherit;font-size:13px;
+      text-align:left;cursor:pointer;transition:background-color .12s ease}
+    .craber-pbar-item:hover{background:var(--craber-hover)}
+    .craber-pbar-item.current{background:var(--craber-hover);font-weight:600}
+    .craber-pbar-item-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap}
+    .craber-pbar-item-d{flex:none;color:var(--craber-sub);font-size:11px}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
       z-index:99999;display:flex;align-items:center;justify-content:center;
@@ -3288,6 +3346,348 @@
   }
 
   /* ============================================================
+   * 项目条：项目内对话页的上下文带
+   * ------------------------------------------------------------
+   * 项目内的对话页 URL 是 /g/{项目id}/c/{对话id}，但原生界面除了一个小面包屑
+   * 之外看不出"这条对话属于哪个项目"，也没有项目内切换对话的入口 —— 项目因此
+   * 退化成一个筛选标签，而不是一个可沉浸的空间。
+   *
+   * 这里在原生 header 下方补一条常驻项目条：
+   *   [🦀 项目名 · N个对话] [当前对话标题] [‹ ›] [展开列表]
+   * 项目名点击回项目页（一级），‹/› 与展开列表用于项目内切换（二级内的横向移动）。
+   * 于是层级变成 项目 > 对话 > 回合，与已有的回合轨道自然衔接。
+   * ========================================================== */
+
+  // 项目 id：URL 里 /g/g-p-xxx/… 中的那一段。后面可能跟可读 slug，只取 id 本身。
+  function getProjectId() {
+    const m = location.pathname.match(/\/g\/(g-p-[0-9a-f]+)/);
+    return m ? m[1] : null;
+  }
+
+  const PPROJ_CACHE_MS = 60 * 1000;
+  let pbarEl = null;
+  let pbarMenuEl = null;
+  let pbarProject = null;     // { id, name }
+  let pbarConvs = [];         // [{ id, title, updated }]
+  let pbarFetchedAt = 0;
+  let pbarForProject = null;  // 上述数据属于哪个项目，换项目要作废
+  let pbarRenderedConv = null; // 上一次渲染时的对话 id，用来避免每秒重画
+  let pbarTuckHandler = null;
+
+  // 建元素的小助手：项目条节点较多，逐个 createElement + className 太啰嗦
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function pbarIcon(path) {
+    return '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"' +
+      ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + path + '</svg>';
+  }
+  const PBAR_ICON = {
+    folder: pbarIcon('<path d="M3 7a2 2 0 0 1 2-2h3.5l2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+    prev: pbarIcon('<path d="M15 5l-7 7 7 7"/>'),
+    next: pbarIcon('<path d="M9 5l7 7-7 7"/>'),
+    list: pbarIcon('<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/>')
+  };
+
+  // 相对时间，跟项目条上的粒度（今天 / 昨天 / N天前 / 日期）
+  function pbarWhen(iso) {
+    const t = Date.parse(iso || '');
+    if (!t) return '';
+    const d = new Date(t);
+    const now = new Date();
+    const sameDay = (a, b) => a.getFullYear() === b.getFullYear()
+      && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    if (sameDay(d, now)) return '今天';
+    const y = new Date(now.getTime() - 86400000);
+    if (sameDay(d, y)) return '昨天';
+    const days = Math.floor((now - d) / 86400000);
+    if (days < 7) return days + ' 天前';
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  }
+
+  // 取项目信息 + 本项目全部对话。项目接口一次给全，不需要按对话逐个拉。
+  // limit 上限实测为 50（超过返回 422），所以按 50 分页取完。
+  async function pbarLoad(projectId) {
+    const tok = await API.getToken();
+    const all = [];
+    let offset = 0;
+    let total = Infinity;
+    while (offset < total && offset < 500) {   // 500 只是防呆上限
+      const r = await fetch('/backend-api/gizmos/' + projectId
+        + '/conversations?offset=' + offset + '&limit=50',
+        { headers: { Authorization: 'Bearer ' + tok }, credentials: 'include' });
+      if (!r.ok) throw new Error('项目对话获取失败 ' + r.status);
+      const j = await r.json();
+      const items = j.items || [];
+      total = j.total != null ? j.total : all.length + items.length;
+      for (const c of items) all.push(c);
+      if (!items.length) break;
+      offset += 50;
+    }
+
+    let name = null;
+    try {
+      name = await API.getGizmoName(projectId);
+    } catch (e) { /* 名字拿不到就退回"项目" */ }
+
+    return {
+      project: { id: projectId, name: name || '项目' },
+      convs: all.map((c) => ({
+        id: c.id,
+        title: c.title || '未命名对话',
+        updated: c.update_time || c.create_time || null
+      }))
+    };
+  }
+
+  function pbarHref(convId) {
+    return '/g/' + pbarProject.id + '/c/' + convId;
+  }
+
+  function pbarCurrentConvId() {
+    return getConvId();
+  }
+
+  // 上/下一个：按项目内接口返回的顺序（更新时间倒序）走
+  function pbarNeighbor(delta) {
+    const cur = pbarCurrentConvId();
+    const at = pbarConvs.findIndex((c) => c.id === cur);
+    if (at < 0) return null;
+    const next = pbarConvs[at + delta];
+    return next || null;
+  }
+
+  function pbarRenderMenu() {
+    if (!pbarMenuEl) return;
+    const cur = pbarCurrentConvId();
+    pbarMenuEl.textContent = '';
+    const hd = el('div', 'craber-pbar-menu-hd');
+    hd.textContent = pbarProject.name + ' · ' + pbarConvs.length + ' 个对话';
+    pbarMenuEl.append(hd);
+    pbarConvs.forEach((c) => {
+      const b = el('button', 'craber-pbar-item');
+      b.type = 'button';
+      if (c.id === cur) b.classList.add('current');
+      b.append(el('span', 'craber-pbar-item-t', c.title));
+      b.append(el('span', 'craber-pbar-item-d', pbarWhen(c.updated)));
+      // 走原生链接点击，ChatGPT 的 router 接管，不整页刷新
+      b.addEventListener('click', () => {
+        pbarCloseMenu();
+        pbarNavigate(c.id);
+      });
+      pbarMenuEl.append(b);
+    });
+  }
+
+  // 用原生 <a> 的语义做跳转：造一个锚点并触发 click，让页面自身的路由处理。
+  // 直接改 location 会整页刷新，丢失会话状态、也更慢。
+  function pbarNavigate(convId) {
+    const a = document.createElement('a');
+    a.href = pbarHref(convId);
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 0);
+  }
+
+  function pbarToggleMenu(anchor) {
+    if (!pbarMenuEl) return;
+    if (pbarMenuEl.classList.contains('craber-open')) { pbarCloseMenu(); return; }
+    pbarRenderMenu();
+    pbarMenuEl.classList.add('craber-open');
+    // 锚在按钮下方左对齐，超出视口就右移
+    const r = anchor.getBoundingClientRect();
+    const w = pbarMenuEl.offsetWidth;
+    pbarMenuEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+    pbarMenuEl.style.top = (r.bottom + 6) + 'px';
+  }
+
+  function pbarCloseMenu() {
+    if (pbarMenuEl) pbarMenuEl.classList.remove('craber-open');
+  }
+
+  function pbarRender() {
+    if (!pbarEl) return;
+    const cur = pbarCurrentConvId();
+    const at = pbarConvs.findIndex((c) => c.id === cur);
+    const curConv = at >= 0 ? pbarConvs[at] : null;
+
+    pbarEl.textContent = '';
+
+    // 原生 header 已经有「项目名」面包屑了，这里不再重复显示项目名 ——
+    // 只补原生没有的东西：本项目规模、当前对话在项目内的位置、以及切换入口。
+    const proj = el('a', 'craber-pbar-proj');
+    proj.href = '/g/' + pbarProject.id + '/project';
+    const ico = el('span');
+    ico.innerHTML = PBAR_ICON.folder;
+    ico.style.display = 'flex';
+    // 图标 + 计数，点回项目页；项目名交给原生面包屑展示
+    proj.append(ico, el('span', 'craber-pbar-count', String(pbarConvs.length) + ' 个对话'));
+    proj.title = '回到项目页';
+    proj.addEventListener('click', (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      const a = document.createElement('a');
+      a.href = proj.href;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 0);
+    });
+    pbarEl.append(proj);
+
+    pbarEl.append(el('span', 'craber-pbar-sep'));
+
+    const t = el('span', 'craber-pbar-title');
+    if (curConv) {
+      t.textContent = curConv.title;
+      t.title = curConv.title;
+    } else {
+      t.textContent = '（不在本项目对话内）';
+    }
+    pbarEl.append(t);
+
+    if (at >= 0) {
+      pbarEl.append(el('span', 'craber-pbar-pos', '第 ' + (at + 1) + ' / ' + pbarConvs.length + ' 个'));
+    }
+
+    const prev = el('button', 'craber-pbar-btn');
+    prev.type = 'button';
+    prev.innerHTML = PBAR_ICON.prev;
+    prev.setAttribute('aria-label', '上一个对话');
+    prev.title = '上一个对话';
+    if (!pbarNeighbor(-1)) prev.disabled = true;
+    prev.addEventListener('click', () => {
+      const n = pbarNeighbor(-1);
+      if (n) pbarNavigate(n.id);
+    });
+    pbarEl.append(prev);
+
+    const next = el('button', 'craber-pbar-btn');
+    next.type = 'button';
+    next.innerHTML = PBAR_ICON.next;
+    next.setAttribute('aria-label', '下一个对话');
+    next.title = '下一个对话';
+    if (!pbarNeighbor(1)) next.disabled = true;
+    next.addEventListener('click', () => {
+      const n = pbarNeighbor(1);
+      if (n) pbarNavigate(n.id);
+    });
+    pbarEl.append(next);
+
+    const more = el('button', 'craber-pbar-btn');
+    more.type = 'button';
+    more.innerHTML = PBAR_ICON.list;
+    more.setAttribute('aria-label', '展开本项目全部对话');
+    more.title = '本项目全部对话';
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pbarToggleMenu(more);
+    });
+    pbarEl.append(more);
+  }
+
+  // 项目条要贴在原生 header 下面，并把正文整体往下推，避免压住第一条消息。
+  // header 高度实测 52px；推挤只作用于滚动容器，不动原生布局本身。
+  function pbarPlace() {
+    if (!pbarEl) return 0;
+    const hdr = document.querySelector('header');
+    const top = hdr ? Math.max(0, Math.round(hdr.getBoundingClientRect().height)) : 52;
+    pbarEl.style.top = top + 'px';
+
+    const sc = getScrollContainer();
+    let push = 0;
+    if (sc && sc !== document.scrollingElement && sc !== document.documentElement) {
+      sc.style.scrollPaddingTop = (top + 38 + 8) + 'px';
+      push = top + 38;
+    }
+    return push;
+  }
+
+  function pbarMount() {
+    if (pbarEl && document.body.contains(pbarEl)) return;
+    pbarEl = el('div', 'craber-pbar');
+    pbarEl.setAttribute('role', 'navigation');
+    pbarEl.setAttribute('aria-label', '项目导航');
+    document.body.appendChild(pbarEl);
+
+    pbarMenuEl = el('div', 'craber-pbar-menu');
+    document.body.appendChild(pbarMenuEl);
+
+    // 点空白处收起菜单。必须放过"项目条自身"的点击 —— 这段用的是捕获阶段，
+    // 早于按钮自己的 click 处理函数执行；若不排除，点按钮会先被这里关掉，
+    // 按钮随后又当成"已收起"重新展开，于是再点一次永远关不上。
+    document.addEventListener('click', (e) => {
+      if (!pbarMenuEl || !pbarMenuEl.classList.contains('craber-open')) return;
+      if (pbarMenuEl.contains(e.target)) return;
+      if (pbarEl && pbarEl.contains(e.target)) return;
+      pbarCloseMenu();
+    }, true);
+
+    // 滚动时淡出，不抢正文；鼠标移上去恢复
+    pbarTuckHandler = () => {
+      if (!pbarEl) return;
+      const sc = getScrollContainer();
+      const y = sc === document.scrollingElement || sc === document.documentElement
+        ? window.scrollY : sc.scrollTop;
+      pbarEl.classList.toggle('craber-pbar-tuck', Math.abs(y) > 80);
+    };
+    document.addEventListener('scroll', pbarTuckHandler, { capture: true, passive: true });
+  }
+
+  function pbarUnmount() {
+    if (pbarEl) { pbarEl.remove(); pbarEl = null; }
+    if (pbarMenuEl) { pbarMenuEl.remove(); pbarMenuEl = null; }
+    pbarRenderedConv = null;
+  }
+
+  // 主循环：判断当前是否在项目内对话页，是则显示并保证数据最新。
+  async function pbarTick() {
+    const projectId = getProjectId();
+    // 不在项目里（普通对话页 / 首页）就把条收掉
+    if (!projectId || !getConvId()) {
+      if (pbarEl) pbarUnmount();
+      pbarForProject = null;
+      return;
+    }
+
+    const stale = Date.now() - pbarFetchedAt > PPROJ_CACHE_MS;
+    const switched = pbarForProject !== projectId;
+    if (!stale && !switched && pbarEl) {
+      pbarPlace();
+      // 当前对话变了才重画。tick 每秒跑一次，若无条件重建整条 DOM，
+      // 展开中的列表会被每秒销毁一次（表现为菜单刚点开就消失、点不动）。
+      const curId = pbarCurrentConvId();
+      if (curId !== pbarRenderedConv) {
+        pbarRenderedConv = curId;
+        pbarRender();
+        if (pbarMenuEl && pbarMenuEl.classList.contains('craber-open')) pbarRenderMenu();
+      }
+      return;
+    }
+
+    try {
+      // 切项目时先清掉旧数据，免得一闪而过显示上一个项目的信息
+      if (switched) { pbarForProject = projectId; pbarConvs = []; pbarProject = null; }
+      const data = await pbarLoad(projectId);
+      if (getProjectId() !== projectId) return;   // 加载期间又切走了
+      pbarProject = data.project;
+      pbarConvs = data.convs;
+      pbarFetchedAt = Date.now();
+      pbarMount();
+      pbarPlace();
+      pbarRenderedConv = pbarCurrentConvId();
+      pbarRender();
+    } catch (e) {
+      console.warn('[gpt-craber] 项目条加载失败', e);
+    }
+  }
+
+  /* ============================================================
    * UI：悬浮按钮 + 单条导出按钮注入
    * ========================================================== */
 
@@ -3620,15 +4020,20 @@
       resetNavRail();
       scheduleScan();
       scheduleNavRender(NAV_SWITCH_DELAY);   // 别立刻拉，会和 ChatGPT 自己的首屏请求撞车
+      pbarCloseMenu();
     } else {
       // 路径没变时也轻量重定位：侧边栏收起/展开会改变 main 的左边缘
       updateNavRailPos();
     }
+    // 项目条：位置要跟着 header 高度与窗口变化走，同时判断是否还在项目内对话页
+    pbarTick();
   }, 1000);
 
   mountFab();
   injectSingleButtons();
   // 等 ChatGPT 自己的首屏请求先跑，避免和它的 paginated_conversation 撞车触发 429
   scheduleNavRender(NAV_SWITCH_DELAY);
+  pbarTick();
+  window.addEventListener('resize', () => { pbarPlace(); pbarCloseMenu(); });
   console.log('[gpt-craber] 对话导出脚本已加载');
 })();
