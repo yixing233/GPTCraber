@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.5.1
+// @version      0.5.3
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -1230,6 +1230,14 @@
     .craber-pbar-item-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
       white-space:nowrap}
     .craber-pbar-item-d{flex:none;color:var(--craber-sub);font-size:11px}
+    /* 生成中：条目右侧日期换成环形加载动画（arcs 是 SVG 描边动画，比 border 圆环
+       在小尺寸下更圆）。当前对话正在生成时，列表里该条目和顶栏会话名都会转。 */
+    .craber-pbar-gen{flex:none;width:14px;height:14px;color:var(--craber-accent);
+      animation:craber-spin .9s linear infinite}
+    .craber-pbar-gen svg{display:block;width:100%;height:100%}
+    .craber-pbar-gen circle{stroke:currentColor;fill:none;
+      stroke-width:2.6;stroke-linecap:round;stroke-dasharray:32 12}
+    .craber-pbar-title .craber-pbar-gen{width:12px;height:12px}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
       z-index:var(--craber-z-modal);display:flex;align-items:center;justify-content:center;
@@ -3443,6 +3451,7 @@
   let pbarFetchedAt = 0;
   let pbarForProject = null;  // 上述数据属于哪个项目，换项目要作废
   let pbarRenderedConv = null; // 上一次渲染时的对话 id，用来避免每秒重画
+  let pbarRenderedGen = false; // 上一次渲染时是否在生成中（变化时才重画）
 
   // 建元素的小助手：项目条节点较多，逐个 createElement + className 太啰嗦
   function el(tag, cls, text) {
@@ -3521,6 +3530,32 @@
     return getConvId();
   }
 
+  // 当前会话是否正在生成回复。
+  // 判据：Composer 右下角的"停止生成"按钮（aria-label 停止流式输出/Stop streaming）
+  // 在生成期间才存在，生成结束立即消失。同时检查是否被禁用（某些中间态会禁用）。
+  // 找不到任何判据时视为不在生成 —— 误报会让加载环常转不消。
+  function pbarGenerating() {
+    const stops = document.querySelectorAll(
+      'button[aria-label="停止流式输出"], button[aria-label*="停止"],'
+      + ' button[aria-label="Stop streaming"], button[aria-label*="Stop"],'
+      + ' button[data-testid="stop-button"]');
+    for (const b of stops) {
+      if (!b.disabled && b.offsetParent !== null) return true;
+    }
+    return false;
+  }
+
+  // 生成中的环形加载动画（14px 圆环，描边缺口旋转）。用 currentColor 取色，
+  // 尺寸由使用处的 CSS 决定（列表条目 14px，顶栏会话名 12px）。
+  function pbarGenSpinner() {
+    const s = el('span', 'craber-pbar-gen');
+    s.title = '生成中…';
+    s.setAttribute('role', 'status');
+    s.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true">'
+      + '<circle cx="8" cy="8" r="7"></circle></svg>';
+    return s;
+  }
+
   function pbarRenderMenu() {
     if (!pbarMenuEl) return;
     const cur = pbarCurrentConvId();
@@ -3533,7 +3568,12 @@
       b.type = 'button';
       if (c.id === cur) b.classList.add('current');
       b.append(el('span', 'craber-pbar-item-t', c.title));
-      b.append(el('span', 'craber-pbar-item-d', pbarWhen(c.updated)));
+      // 当前对话正在生成回复时，日期位换成环形加载动画
+      if (c.id === cur && pbarGenerating()) {
+        b.append(pbarGenSpinner());
+      } else {
+        b.append(el('span', 'craber-pbar-item-d', pbarWhen(c.updated)));
+      }
       // 走原生链接点击，ChatGPT 的 router 接管，不整页刷新
       b.addEventListener('click', () => {
         pbarCloseMenu();
@@ -3631,6 +3671,8 @@
     ico.innerHTML = PBAR_ICON.chevron;
     ico.style.display = 'flex';
     t.append(txt, ico);
+    // 当前对话正在生成回复时，会话名旁也挂一个加载环（比列表里的小一号）
+    if (curConv && pbarGenerating()) t.append(pbarGenSpinner());
     t.addEventListener('click', (e) => {
       e.stopPropagation();
       pbarToggleMenu(t);
@@ -3732,6 +3774,7 @@
     if (pbarEl) { pbarEl.remove(); pbarEl = null; }
     if (pbarMenuEl) { pbarMenuEl.remove(); pbarMenuEl = null; }
     pbarRenderedConv = null;
+    pbarRenderedGen = false;
   }
 
   // 主循环：判断当前是否在项目内对话页，是则显示并保证数据最新。
@@ -3757,8 +3800,12 @@
       // 当前对话变了才重画。tick 每秒跑一次，若无条件重建整条 DOM，
       // 展开中的列表会被每秒销毁一次（表现为菜单刚点开就消失、点不动）。
       const curId = pbarCurrentConvId();
-      if (curId !== pbarRenderedConv) {
+      // 生成中状态变化也要重画：加载环要在生成开始时出现、结束时消失。
+      // 状态没变的秒数里什么都不做，展开中的列表不会被打断。
+      const gen = pbarGenerating();
+      if (curId !== pbarRenderedConv || gen !== pbarRenderedGen) {
         pbarRenderedConv = curId;
+        pbarRenderedGen = gen;
         pbarRender();
         if (pbarMenuEl && pbarMenuEl.classList.contains('craber-open')) pbarRenderMenu();
       }
@@ -3783,6 +3830,70 @@
   }
 
   /* ============================================================
+   * 对话完成通知
+   * ========================================================== */
+
+  // ChatGPT 没有"回复生成完成"的浏览器通知 —— 切到别的标签页就只能干等。
+  // 这里复用 pbarGenerating() 的停止按钮检测，每秒看一眼状态，
+  // 在"生成中 → 结束"的下降沿发一条系统通知。
+  //
+  // 会话名读 document.title：普通会话页和项目会话页它都是会话名
+  // （站点格式是"会话名 | ChatGPT"，剥掉后缀），不调后端接口，零限流风险。
+  function notifyCleanTitle() {
+    let t = document.title || '';
+    const sep = t.lastIndexOf('|');
+    if (sep > 0) t = t.slice(0, sep).trim();
+    return t || '当前对话';
+  }
+
+  let notifyWasGenerating = false;  // 上一秒是否在生成（下降沿检测的状态位）
+  let notifyConvId = null;          // 生成开始时的会话 id（防生成期间切走误报）
+
+  function notifyTick() {
+    if (!uiPrefs.notify) {
+      // 开关关闭时复位状态位：否则"生成中打开开关"会被误判成结束沿
+      notifyWasGenerating = false;
+      notifyConvId = null;
+      return;
+    }
+    if (typeof Notification === 'undefined') return;
+    const gen = pbarGenerating();
+    const convId = getConvId();
+    if (gen && !notifyWasGenerating) notifyConvId = convId;   // 生成开始，记下会话
+    // 结束沿：生成期间没切走会话才发 —— 切走说明用户在别的对话里，别打扰
+    if (!gen && notifyWasGenerating && notifyConvId && convId === notifyConvId) {
+      notifyFire(notifyCleanTitle());
+    }
+    notifyWasGenerating = gen;
+    if (!gen) notifyConvId = null;
+  }
+
+  function notifyFire(title) {
+    try {
+      if (Notification.permission !== 'granted') return;
+      const n = new Notification('craber · 回复已生成', {
+        body: title,
+        tag: 'craber-gen-done'   // 同 tag 去重：连发只留一条，不堆积
+      });
+      n.addEventListener('click', () => {
+        try { window.focus(); } catch (e) {}
+        n.close();
+      });
+      // 8 秒后自动关，避免在通知中心留一排过期通知
+      setTimeout(() => { try { n.close(); } catch (e) {} }, 8000);
+    } catch (e) { /* 通知失败不影响主流程 */ }
+  }
+
+  // 权限请求必须在用户点击手势内发出才不会被浏览器拦，所以只挂在
+  // 开关的点击分支里（setUiPref），绝不放 tick 里反复骚扰。
+  function notifyRequestPermission() {
+    try {
+      if (typeof Notification === 'undefined') return;
+      if (Notification.permission === 'default') Notification.requestPermission();
+    } catch (e) {}
+  }
+
+  /* ============================================================
    * UI：悬浮按钮 + 单条导出按钮注入
    * ========================================================== */
 
@@ -3796,7 +3907,7 @@
   // 关掉必须真的卸载（移除已注入的节点 + 停掉后续挂载），而不是只隐藏 ——
   // 否则功能还在后台跑、还会去请求接口。
   const UI_PREFS_KEY = 'gpt_craber_ui_prefs';
-  const UI_PREFS_DEFAULT = { navRail: true, projectUI: true };
+  const UI_PREFS_DEFAULT = { navRail: true, projectUI: true, notify: false };
   let uiPrefs = (() => {
     try {
       const raw = localStorage.getItem(UI_PREFS_KEY);
@@ -3813,6 +3924,10 @@
     } else if (key === 'projectUI') {
       if (on) pbarTick();
       else pbarUnmount();
+    } else if (key === 'notify') {
+      // 借这次点击手势请求通知权限（浏览器只放行用户手势内的权限请求）。
+      // 关闭时无需清理：notifyTick 下一秒自己会复位状态位。
+      if (on) notifyRequestPermission();
     }
   }
 
@@ -4108,7 +4223,8 @@
       };
       panel.append(
         mkToggle('navRail', '节点导航', '在会话左侧显示回合节点轨道，可悬停预览、点击跳转'),
-        mkToggle('projectUI', '项目 UI 优化', '在顶栏里显示项目对话入口与当前对话位置')
+        mkToggle('projectUI', '项目 UI 优化', '在顶栏里显示项目对话入口与当前对话位置'),
+        mkToggle('notify', '完成通知', '回复生成完成后发送浏览器通知（首次开启需允许通知权限）')
       );
 
       panel.append(el('div', 'craber-fab-sep'));
@@ -4358,6 +4474,8 @@
     mountFab();
     // 项目条：位置要跟着 header 高度与窗口变化走，同时判断是否还在项目内对话页
     pbarTick();
+    // 对话完成通知：下降沿检测，见 notifyTick
+    notifyTick();
   }, 1000);
 
   mountFab();
