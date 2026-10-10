@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.5.0
+// @version      0.5.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -1050,8 +1050,25 @@
       /* 项目条底色：比面板再透一点，压在正文上不糊字 */
       --craber-pbar-bg:rgba(255,255,255,.86);
     }
+    /* 深浅色切换：不能只挂 @media (prefers-color-scheme)。
+       ChatGPT 的主题开关改的是 html[data-theme]，与系统偏好可以不一致
+       （站点设深色、系统是浅色时，媒体查询不触发，脚本全是浅色残留）。
+       所以暗色档用 html[data-theme="dark"] 为主、媒体查询兜底，两条路都
+       指向同一组变量；JS 端 isDarkTheme() 也是同样的判定顺序，两边永远同步。 */
+    html[data-theme="dark"], html[data-theme="dark"] body{
+      --craber-bg:#26282c; --craber-fg:#e8eaed; --craber-sub:#9aa0a8;
+      --craber-line:#3a3d43; --craber-hover:#2f3237; --craber-ghost:#34373d;
+      --craber-skeleton:#33363b; --craber-skeleton-hi:#3c4046;
+      --craber-nav-bar:#50555d; --craber-nav-bar-mid:#8e949d; --craber-nav-bar-hi:#e8eaed;
+      --craber-nav-card:#2b2d31; --craber-nav-card-line:#3a3d43;
+      --craber-nav-strong:#e8eaed; --craber-nav-muted:#9aa0a8;
+      --craber-pbar-bg:rgba(38,40,44,.86);
+    }
     @media (prefers-color-scheme:dark){
-      :root{
+      /* 兜底：站点没写 data-theme 时按系统偏好走。
+         有 data-theme 时 ChatGPT 会同时写 light/dark 之一，:root 后面的这条
+         html[data-theme="light"] 会把系统深色压回去，所以不会双跳。 */
+      html:not([data-theme="light"]){
         --craber-bg:#26282c; --craber-fg:#e8eaed; --craber-sub:#9aa0a8;
         --craber-line:#3a3d43; --craber-hover:#2f3237; --craber-ghost:#34373d;
         --craber-skeleton:#33363b; --craber-skeleton-hi:#3c4046;
@@ -1060,6 +1077,16 @@
         --craber-nav-strong:#e8eaed; --craber-nav-muted:#9aa0a8;
         --craber-pbar-bg:rgba(38,40,44,.86);
       }
+    }
+    /* 显式浅色档：防止系统深色 + 站点浅色时上面的 :not(light) 兜底误伤 */
+    html[data-theme="light"], html[data-theme="light"] body{
+      --craber-bg:#ffffff; --craber-fg:#1f2328; --craber-sub:#8a9099;
+      --craber-line:#ececf0; --craber-hover:#f5f6f8; --craber-ghost:#f1f2f4;
+      --craber-skeleton:#eceef1; --craber-skeleton-hi:#f6f7f9;
+      --craber-nav-bar:#c3c8d0; --craber-nav-bar-mid:#8a9099; --craber-nav-bar-hi:#1f2328;
+      --craber-nav-card:#f7f7f8; --craber-nav-card-line:#e3e5e8;
+      --craber-nav-strong:#1f2328; --craber-nav-muted:#8a9099;
+      --craber-pbar-bg:rgba(255,255,255,.86);
     }
     /* 平台页面全局滚动条美化：作用于站点本身（非本插件面板，面板选择器更具体不受影响）。
        中性半透明配色，明暗主题下都协调；hover 加深。 */
@@ -1097,18 +1124,28 @@
     .craber-fab-btn:hover{background:var(--craber-hover)}
     .craber-fab-btn:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
     .craber-fab-btn[aria-expanded="true"]{background:var(--craber-hover)}
+    /* 描边色与主题联动同上：data-theme 为主、媒体查询兜底，避免"站点切到深色、
+       描边还是黑的"这种半同步状态 */
+    html[data-theme="dark"] .craber-fab-btn{--craber-fab-line:rgba(255,255,255,.45)}
     @media (prefers-color-scheme:dark){
-      .craber-fab-btn{--craber-fab-line:rgba(255,255,255,.45)}
+      html:not([data-theme="light"]) .craber-fab-btn{--craber-fab-line:rgba(255,255,255,.45)}
     }
     .craber-fab-btn svg{width:19px;height:19px;pointer-events:none}
 
-    /* 下拉菜单：锚在按钮下方右对齐（按钮在顶栏最右，左对齐会溢出视口） */
-    .craber-fab-menu{position:fixed;z-index:var(--craber-z-fab-menu);display:none}
-    .craber-fab-menu.craber-open{display:block}
+    /* 下拉菜单：锚在按钮下方右对齐（按钮在顶栏最右，左对齐会溢出视口）。
+       开合动画放在容器上：开 = pop-in，关 = 先切 closing 类反向播完再真正 display:none。
+       动画只动 opacity/transform（合成器属性），不触发重排。 */
+    .craber-fab-menu{position:fixed;z-index:var(--craber-z-fab-menu);
+      opacity:0;visibility:hidden;transform:translateY(8px) scale(.98);pointer-events:none}
+    .craber-fab-menu.craber-open{opacity:1;visibility:visible;transform:none;pointer-events:auto;
+      transition:opacity .16s ease,transform .16s cubic-bezier(.2,.8,.25,1)}
+    .craber-fab-menu.craber-closing{opacity:0;visibility:visible;transform:translateY(8px) scale(.98);
+      transition:opacity .12s ease,transform .12s ease}
     .craber-fab-panel{display:flex;flex-direction:column;gap:2px;min-width:170px;padding:6px;
       border-radius:12px;background:var(--craber-bg);border:1px solid var(--craber-line);
       box-shadow:0 12px 34px rgba(0,0,0,.22);font-family:system-ui,sans-serif;
-      animation:craber-pop-in .16s ease}
+      /* 深浅色切换时颜色平滑过渡；只过渡颜色属性，不影响开合的 transform/opacity */
+      transition:background-color .2s ease,border-color .2s ease,color .2s ease}
     .craber-fab-item{display:flex;align-items:center;gap:8px;width:100%;
       padding:9px 10px;border:none;border-radius:8px;
       background:transparent;color:var(--craber-fg);
@@ -1132,13 +1169,18 @@
     /* 原生顶栏是 position:sticky 但背景全透明，正文滚上去会和它叠字
        （实测「MMR 公式」那行直接压到会话名上）。这里给它半透明底色 +
        高斯模糊：滚过的内容被糊化，顶栏文字保持清晰可读。
-       背景色走内联 !important（见 applyHeaderBg）—— header 原生 class 带
-       Tailwind 的 bg-transparent!，那条规则在 CDN 样式表里读不到也盖不住，
-       只有内联 !important 稳赢。
+       底色走「样式表 !important + CSS 变量」而不是内联样式：React 提交时
+       （流式输出时每秒好几次）会重置 header 的内联 background-color，内联
+       写法被抹掉后露出站点的 --codex-titlebar-tint（0.2 的微 tint），模糊
+       就断了；元素选择器的 !important 规则压得过 Tailwind 的 bg-transparent!，
+       React 也动不了它。颜色值由 applyHeaderBg 写进 --craber-hdr-bg 变量——
+       自定义属性不参与 React 对 header 的样式重置，写在根上很稳。
        -webkit- 前缀是 Safari 需要的。
        注意模糊必须与半透明底色搭配：底色不透明时模糊没有可见效果。 */
-    .craber-hdr-glass{-webkit-backdrop-filter:blur(14px) saturate(1.5);
-      backdrop-filter:blur(14px) saturate(1.5)}
+    header.craber-hdr-glass{
+      -webkit-backdrop-filter:blur(14px) saturate(1.5);
+      backdrop-filter:blur(14px) saturate(1.5);
+      background-color:var(--craber-hdr-bg,rgba(0,0,0,0.45)) !important}
 
     /* 项目条：注入原生顶栏内部（面包屑所在的那个可伸缩容器里），
        不新增垂直空间，因此不存在遮挡正文的问题。
@@ -1164,13 +1206,19 @@
     .craber-pbar-title[aria-expanded="true"] svg{transform:rotate(180deg)}
     .craber-pbar-pos{flex:none;color:var(--craber-sub);font-size:11.5px;
       font-variant-numeric:tabular-nums;opacity:.75}
-    /* 展开的本项目对话列表：仍是浮层（它必须盖在正文上，这是下拉菜单的正常行为） */
+    /* 展开的本项目对话列表：仍是浮层（它必须盖在正文上，这是下拉菜单的正常行为）。
+       开合动画同 craber-fab-menu：开 pop-in、关先播反向再摘 display。 */
     .craber-pbar-menu{position:fixed;z-index:var(--craber-z-pbar-menu);min-width:290px;max-width:min(420px,92vw);
       max-height:min(56vh,420px);overflow-y:auto;padding:6px;border-radius:12px;
       background:var(--craber-bg);border:1px solid var(--craber-line);
       box-shadow:0 12px 34px rgba(0,0,0,.22);font-family:system-ui,sans-serif;
-      display:none}
-    .craber-pbar-menu.craber-open{display:block;animation:craber-pop-in .16s ease}
+      /* 深浅色切换时颜色平滑过渡 */
+      transition:background-color .2s ease,border-color .2s ease,color .2s ease;
+      opacity:0;visibility:hidden;transform:translateY(8px) scale(.98);pointer-events:none}
+    .craber-pbar-menu.craber-open{opacity:1;visibility:visible;transform:none;pointer-events:auto;
+      transition:opacity .16s ease,transform .16s cubic-bezier(.2,.8,.25,1)}
+    .craber-pbar-menu.craber-closing{opacity:0;visibility:visible;transform:translateY(8px) scale(.98);
+      transition:opacity .12s ease,transform .12s ease}
     .craber-pbar-menu-hd{padding:6px 8px 8px;color:var(--craber-sub);font-size:11px;
       font-weight:600;letter-spacing:.03em;text-transform:uppercase}
     .craber-pbar-item{display:flex;align-items:center;gap:8px;width:100%;
@@ -1468,8 +1516,10 @@
       font-size:11px;cursor:pointer;color:var(--craber-fg);font-family:system-ui,sans-serif;
       transition:background .15s,color .15s,border-color .15s}
     .craber-single:hover{background:var(--craber-accent);color:#fff;border-color:var(--craber-accent)}
+    /* 单条导出按钮底色：同主题联动规则 */
+    html[data-theme="dark"] .craber-single{background:rgba(40,42,46,.9);color:#ccc}
     @media (prefers-color-scheme:dark){
-      .craber-single{background:rgba(40,42,46,.9);color:#ccc}
+      html:not([data-theme="light"]) .craber-single{background:rgba(40,42,46,.9);color:#ccc}
     }
 
     /* 螃蟹按钮的 tooltip：挂在 body 上的独立元素，不受操作栏 overflow 裁切 */
@@ -3505,6 +3555,38 @@
   }
 
   // 展开状态同步到会话名按钮的 aria-expanded，箭头据此翻转（见 CSS）。
+  // 浮层开合动画的公共件。
+  //
+  // 之前的做法是「display:none + 一次性 keyframes」：开有动画、关是瞬灭，观感生硬；
+  // 且开合互斥靠 display 切换，关掉后紧接着开（快速连点）会因为 display 尚未生效
+  // 量不到尺寸。现在改为 opacity/transform 过渡：关 = 先加 closing 类把反向过渡
+  // 播完（120ms）再真正隐藏，期间元素保持可见但不可交互（pointer-events:none）。
+  // 快速连点时直接重置类名重新进开场——重新触发的开场比残影更自然。
+  //
+  // 测量注意：关着的菜单常驻布局（opacity/visibility 隐藏，不是 display:none），
+  // 所以 open 前后 getBoundingClientRect 都量得到真实尺寸，定位逻辑因此更稳。
+  const MENU_OPEN_MS = 160;
+  const MENU_CLOSE_MS = 120;
+
+  function menuAnimateOpen(menu) {
+    if (!menu) return;
+    if (menu.__craberCloseTimer) { clearTimeout(menu.__craberCloseTimer); menu.__craberCloseTimer = null; }
+    // 从"正在关"直接改开：先强制回放开场（去掉 closing、重加 open 前先脱离过渡态）
+    menu.classList.remove('craber-closing');
+    menu.classList.add('craber-open');
+  }
+
+  function menuAnimateClose(menu) {
+    if (!menu || !menu.classList.contains('craber-open')) return;
+    menu.classList.remove('craber-open');
+    menu.classList.add('craber-closing');
+    if (menu.__craberCloseTimer) clearTimeout(menu.__craberCloseTimer);
+    menu.__craberCloseTimer = setTimeout(() => {
+      menu.classList.remove('craber-closing');
+      menu.__craberCloseTimer = null;
+    }, MENU_CLOSE_MS);
+  }
+
   function pbarSetExpanded(on) {
     const b = pbarEl && pbarEl.querySelector('.craber-pbar-title');
     if (b) b.setAttribute('aria-expanded', on ? 'true' : 'false');
@@ -3514,17 +3596,17 @@
     if (!pbarMenuEl) return;
     if (pbarMenuEl.classList.contains('craber-open')) { pbarCloseMenu(); return; }
     pbarRenderMenu();
-    pbarMenuEl.classList.add('craber-open');
-    pbarSetExpanded(true);
-    // 锚在按钮下方左对齐，超出视口就右移
+    // 先量后开：关着的菜单也常驻布局，这里量到的就是真实宽度，不用等展开
     const r = anchor.getBoundingClientRect();
-    const w = pbarMenuEl.offsetWidth;
+    const w = pbarMenuEl.getBoundingClientRect().width;
     pbarMenuEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
     pbarMenuEl.style.top = (r.bottom + 6) + 'px';
+    menuAnimateOpen(pbarMenuEl);
+    pbarSetExpanded(true);
   }
 
   function pbarCloseMenu() {
-    if (pbarMenuEl) pbarMenuEl.classList.remove('craber-open');
+    menuAnimateClose(pbarMenuEl);
     pbarSetExpanded(false);
   }
 
@@ -3784,9 +3866,11 @@
 
   // 把一个颜色降成半透明，供顶栏毛玻璃用。
   // 站点给的可能是 #rgb / #rrggbb / rgb() / rgba() 各种形式，统一解析成
-  // rgba(r,g,b,a)。解析不了就原样返回（宁可没有模糊，也不要画错颜色）。
+  // rgba(r,g,b,a)。解析不了（oklch / color() 等新格式）就返回 null，
+  // 让调用方退回自己的兜底色 —— 原样返回会把不透明色挂上顶栏，模糊直接失效。
   function toTranslucent(color, alpha) {
     const c = String(color || '').trim();
+    if (!c) return null;
 
     // #rgb / #rrggbb
     const hex = c.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
@@ -3806,7 +3890,43 @@
         + Math.round(+m[3]) + ',' + alpha + ')';
     }
 
-    return c;
+    return null;   // oklch() / color() 等解析不了 —— 交给调用方兜底
+  }
+
+  // 主题变量不一定挂在 :root 上。ChatGPT 把 --main-surface-primary 这组挂在
+  // 比 documentElement 更内层的容器（实测根上读出来是空串），所以按
+  // main -> body -> html 的顺序找，谁有值用谁。
+  function pickVar(name) {
+    for (const n of [document.querySelector('main'), document.body,
+                     document.documentElement]) {
+      if (!n) continue;
+      const v = getComputedStyle(n).getPropertyValue(name).trim();
+      if (v) return v;
+    }
+    return '';
+  }
+
+  // 粗略亮度：解析 rgb()/rgba() 或 #hex 的 r,g,b，按感知加权算 0~1。
+  // 解析不了返回 null（调用方决定怎么办）。
+  function colorLuma(c) {
+    const s = String(c || '').trim();
+    let m = s.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    let r, g, b;
+    if (m) { r = +m[1]; g = +m[2]; b = +m[3]; }
+    else {
+      const hex = s.match(/^#([0-9a-f]{6})$/i);
+      if (!hex) return null;
+      const h = hex[1];
+      r = parseInt(h.slice(0, 2), 16); g = parseInt(h.slice(2, 4), 16); b = parseInt(h.slice(4, 6), 16);
+    }
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  }
+
+  // 毛玻璃顶栏只该出现在"会话页"上（/c/{id} 或 /g/{proj}/c/{id}）。
+  // 设置页、项目列表页、首页这些页面 ChatGPT 自己的顶栏有自己的观感
+  // （设置页甚至是全屏面板），我们再糊一层就是画蛇添足。
+  function isConvPage() {
+    return !!getConvId();
   }
 
   // 原生顶栏背景是全透明的（sticky 但不占视觉），正文滚上去会与它叠字。
@@ -3814,28 +3934,78 @@
   //
   // 底色取页面自身的主题色（--main-surface-primary / --bg-primary）再降到
   // 半透明，不写死深浅两套色值 —— 站点换主题时自动跟随，也和正文底色一致。
-  // 必须用内联 !important：header 的原生 class 带着 Tailwind 的 bg-transparent!，
-  // 那条规则在 CDN 样式表里（读不到 cssRules），普通规则压不过它。
+  // 但这组变量不能盲取：它们按"表面组件"作用域定义，main 上挂的不一定是
+  // 正文表面色（实测深色主题下会读到浅色值，顶栏亮得刺眼）。所以取到后
+  // 按当前主题校验亮度 —— 深色主题配浅色（或反之）一律弃用，走兜底色。
+  //
+  // 落点策略：header 的背景会被两方冲掉 —— React 提交时重置内联样式，站点
+  // CDN 样式表里有后加载的 !important 背景规则。单独内联或单独样式表都会
+  // 出现"毛玻璃先上、过一秒被冲成实色"。所以双保险：
+  //   1) 颜色写进 documentElement 的 --craber-hdr-bg（自定义属性 React 不管）；
+  //   2) 样式表 header.craber-hdr-glass !important 规则作骨架（React 抹掉内联时顶上）；
+  //   3) applyHeaderBg 每 tick 再补写内联 !important（优先级最高，压过站点规则）。
+  // 两层同时被冲的窗口不到 1 秒，下一 tick 自动恢复。
   function applyHeaderBg() {
     const hdr = document.querySelector('header');
     if (!hdr) return;
+    // 非会话页（设置页 / 首页 / 项目列表等）：撤掉我们的毛玻璃与底色，
+    // 让顶栏回到站点原生观感。变量也一并清掉，避免残留到下次会话页。
+    if (!isConvPage()) {
+      if (hdr.classList.contains('craber-hdr-glass')) hdr.classList.remove('craber-hdr-glass');
+      document.documentElement.style.removeProperty('--craber-hdr-bg');
+      return;
+    }
     if (!hdr.classList.contains('craber-hdr-glass')) hdr.classList.add('craber-hdr-glass');
 
-    const rootCs = getComputedStyle(document.documentElement);
-    const pick = (n) => rootCs.getPropertyValue(n).trim();
-    // 先拿到页面自己的"主表面"色（可能是 #000 / #212121 这类不透明值）
-    let solid = pick('--main-surface-primary') || pick('--bg-primary');
-    if (!solid) {
-      const b = getComputedStyle(document.body).backgroundColor;
-      solid = (b && b !== 'rgba(0, 0, 0, 0)') ? b : (isDarkTheme() ? '#000' : '#fff');
-    }
-    // 转成半透明：模糊要有可见效果，底色就不能是全不透明。
-    // 同时留 0.72 的不透明度，保证顶栏文字在糊化背景上依然清楚。
-    const bg = toTranslucent(solid, isDarkTheme() ? 0.72 : 0.76);
+    const dark = isDarkTheme();
+    const fallback = dark ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.5)';
 
-    if (hdr.dataset.craberHdrBg !== bg) {
+    // 先拿到页面自己的"主表面"色（可能是 #000 / #212121 这类不透明值）。
+    // 变量挂内层容器，pickVar 按 main -> body -> html 找。
+    let solid = pickVar('--main-surface-primary') || pickVar('--bg-primary');
+    // 亮度校验：与主题不符的表面色直接弃用（实测深色下读到 #f9f9f9 一类）
+    const luma = colorLuma(solid);
+    if (luma === null || (dark ? luma > 0.5 : luma < 0.5)) solid = '';
+    let bg = '';
+    if (solid) {
+      const t = toTranslucent(solid, dark ? 0.45 : 0.5);
+      bg = t || '';   // oklch 等解析不了 -> 退兜底，不把不透明色挂上去
+    }
+    if (!bg) {
+      const b = getComputedStyle(document.body).backgroundColor;
+      const bl = colorLuma(b);
+      bg = (b && b !== 'rgba(0, 0, 0, 0)' && bl !== null
+            && (dark ? bl <= 0.5 : bl > 0.5))
+        ? toTranslucent(b, dark ? 0.45 : 0.5) : '';
+    }
+    if (!bg) bg = fallback;
+    // 半透明是底线：算出来还是不透明（解析失败等）就强降，否则模糊没得看。
+    // 不透明度刻意取低（0.45/0.5）：底色太实会把糊化内容盖住，只剩一片
+    // 亮色，模糊感全无（实测 0.72 就是这个效果）；取一半左右，底下滚过的
+    // 文字以"模糊色块"的形态透出来，同时顶栏文字仍有足够对比度可读。
+    if (/rgba?\([^)]*,\s*1\)$/.test(bg)) bg = fallback;
+
+    // 变量写在根上：header 的内联样式被 React 重置也不影响这里
+    const root = document.documentElement;
+    if (root.style.getPropertyValue('--craber-hdr-bg') !== bg) {
+      root.style.setProperty('--craber-hdr-bg', bg);
+    }
+    // 类被 React 摘掉后靠这里的补挂恢复（类名比对是廉价的）。
+    //
+    // 但只有样式表规则不够：站点自己的样式表里也有 header 的 !important 背景
+    // 规则（同为 !important 时后加载的胜，站点 CDN 样式表插在我们后面），实测
+    // 表现为"毛玻璃先上，过一秒被冲成实色"。所以这里每 tick 再写一次内联
+    // !important 兜底 —— 内联 !important 优先级最高，谁都压得过；被 React
+    // 抹掉时有样式表规则顶着，下一秒这里再补回，最坏也只有一瞬的实色。
+    const curInline = hdr.style.getPropertyValue('background-color').trim();
+    if (curInline !== bg) {
       hdr.style.setProperty('background-color', bg, 'important');
-      hdr.dataset.craberHdrBg = bg;
+    }
+    if (hdr.style.getPropertyValue('-webkit-backdrop-filter') !== 'blur(14px) saturate(1.5)') {
+      hdr.style.setProperty('-webkit-backdrop-filter', 'blur(14px) saturate(1.5)', 'important');
+    }
+    if (hdr.style.getPropertyValue('backdrop-filter') !== 'blur(14px) saturate(1.5)') {
+      hdr.style.setProperty('backdrop-filter', 'blur(14px) saturate(1.5)', 'important');
     }
 
     // 让正文的吸顶小标题让开顶栏。
@@ -3863,6 +4033,14 @@
   // 导出按钮：固定进顶栏右侧，不再做可拖拽悬浮球。
   // 下载/导出和"分享"是同一类操作，放一起位置固定、可预期。
   function mountFab() {
+    // 非会话页（设置页 / 首页等）：按钮撤下，不留孤儿 —— 导出入口只在
+    // 能导出内容的地方有意义。
+    if (!isConvPage()) {
+      if (fabEl && fabEl.isConnected) fabEl.remove();
+      if (fabMenuEl) fabCloseMenu();
+      applyHeaderBg();   // 顺路把顶栏毛玻璃也撤了（同一处维护）
+      return false;
+    }
     const host = fabHost();
     applyHeaderBg();   // 顶栏底色：和导出按钮同在顶栏，一起维护
     if (!host) return false;
@@ -3953,14 +4131,33 @@
     // !important —— 颜色会被永久锁在起始值（实测）。插进文档再设才落得下来。
     applyFabTheme(fabEl);
 
+    // 主题切换联动：data-theme 或 class 一变，所有"JS 算出来的颜色"都要重刷。
+    // CSS 变量自己会跟（见样式表里的 html[data-theme] 档），但描边、顶栏底色、
+    // 项目条底色是 JS 内联写的，不刷就会残留上一个主题的颜色。
     if (!mountFab.__themed) {
       mountFab.__themed = true;
-      new MutationObserver(() => applyFabTheme(fabEl))
+      // html 的 class 变化非常频繁（滚动状态等都会写），全量重刷浪费；
+      // 只在 data-theme 真的变了时才重刷，系统偏好变化走 matchMedia 那条路。
+      let lastTheme = document.documentElement.dataset.theme || '';
+      const onThemeChange = () => {
+        const t = document.documentElement.dataset.theme || '';
+        if (t === lastTheme) return;   // 只是 class 抖动，不是换主题
+        lastTheme = t;
+        applyFabTheme(fabEl);
+        applyHeaderBg();          // 补挂毛玻璃类 + 刷新 --craber-hdr-bg 变量
+        pbarTick();               // 项目条挂载状态由它自己判断，重复调用安全
+      };
+      new MutationObserver(onThemeChange)
         .observe(document.documentElement,
-          { attributes: true, attributeFilter: ['data-theme', 'class'] });
+          { attributes: true, attributeFilter: ['data-theme'] });
       try {
         window.matchMedia('(prefers-color-scheme: dark)')
-          .addEventListener('change', () => applyFabTheme(fabEl));
+          .addEventListener('change', () => {
+            lastTheme = document.documentElement.dataset.theme || '';
+            applyFabTheme(fabEl);
+            applyHeaderBg();
+            pbarTick();
+          });
       } catch (e) { /* 老浏览器不支持，忽略 */ }
     }
     return true;
@@ -3969,17 +4166,26 @@
   function fabToggleMenu() {
     if (!fabMenuEl || !fabEl) return;
     if (fabMenuEl.classList.contains('craber-open')) { fabCloseMenu(); return; }
-    fabMenuEl.classList.add('craber-open');
-    fabEl.setAttribute('aria-expanded', 'true');
-    // 按钮在顶栏最右，菜单右对齐才不会溢出视口
+    // 按钮在顶栏最右，菜单右对齐才不会溢出视口。
+    //
+    // 不能读 offsetWidth 来算对齐 —— 布局未必已生效，读到的可能是 0，于是 left
+    // 退化成 r.right，菜单整个甩到视口右侧之外被裁掉（实测 left=1349 而视口只有
+    // 1280，菜单完全看不见）。菜单宽度来自 CSS 的 min-width 与内边距，是确定值；
+    // 且现在关着的菜单也常驻布局（opacity 隐藏，非 display:none），开前就能量准。
     const r = fabEl.getBoundingClientRect();
-    const mw = fabMenuEl.offsetWidth;
+    const rect = fabMenuEl.getBoundingClientRect();
+    const mw = Math.round(rect.width) || 170;   // 兜底：CSS 里 min-width 是 170
+    let left = r.right - mw;                              // 右对齐，与按钮右缘齐平
+    left = Math.min(left, window.innerWidth - mw - 8);    // 夹住右边界（关键）
+    left = Math.max(8, left);                             // 再夹住左边界
     fabMenuEl.style.top = (r.bottom + 6) + 'px';
-    fabMenuEl.style.left = Math.max(8, r.right - mw) + 'px';
+    fabMenuEl.style.left = Math.round(left) + 'px';
+    menuAnimateOpen(fabMenuEl);
+    fabEl.setAttribute('aria-expanded', 'true');
   }
 
   function fabCloseMenu() {
-    if (fabMenuEl) fabMenuEl.classList.remove('craber-open');
+    menuAnimateClose(fabMenuEl);
     if (fabEl) fabEl.setAttribute('aria-expanded', 'false');
   }
 
