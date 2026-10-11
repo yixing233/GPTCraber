@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.5.3
+// @version      0.6.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -30,6 +30,10 @@
   // 螃蟹图标（内联 SVG）。fill 用 currentColor，蟹身颜色由容器 color 决定
   // （顶栏导出按钮里设为蟹绿），换平台时也统一走这一处。
   const CRAB_SVG = '<svg viewBox="0 0 71.493 71.493" width="26" height="26" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M69.857,43.299l-10.626-5.432c3.038-3.402,4.707-7.433,4.707-11.651 c0-8.227-6.175-15.503-16.114-18.989c-1.109-0.388-2.342-0.096-3.155,0.751c-0.814,0.846-1.06,2.089-0.628,3.182 c0.338,0.857,0.51,1.734,0.51,2.609c0,0.492-0.052,0.688-0.045,0.69c-0.083,0.105-0.393,0.362-0.643,0.569 c-0.422,0.35-0.947,0.785-1.546,1.386c-0.688,0.692-0.996,1.676-0.826,2.637s0.796,1.78,1.68,2.194 c1.956,0.918,8.324,4.331,8.361,9.76c-2.459-1.79-5.451-3.167-8.78-3.981c0.156-0.366,0.242-0.769,0.242-1.193 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.13,0.023,0.255,0.038,0.381 c-0.39-0.015-0.782-0.023-1.176-0.023c-0.394,0-0.787,0.008-1.176,0.023c0.016-0.126,0.038-0.25,0.038-0.381 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.423,0.086,0.826,0.242,1.193 c-3.785,0.925-7.138,2.576-9.763,4.737c0.216-4.082,4.91-8.435,9.345-10.516c0.884-0.415,1.511-1.233,1.68-2.195 c0.17-0.961-0.139-1.945-0.827-2.637c-0.598-0.601-1.124-1.037-1.546-1.386c-0.255-0.211-0.572-0.474-0.622-0.528 c-0.001-0.001-0.065-0.181-0.065-0.73c0-0.873,0.172-1.751,0.511-2.61c0.432-1.092,0.186-2.335-0.628-3.181 c-0.814-0.848-2.05-1.14-3.154-0.751C13.729,10.71,7.554,17.987,7.554,26.215c0,4.218,1.669,8.249,4.707,11.651L1.635,43.299 C0.16,44.053-0.425,45.86,0.33,47.336c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l8.695-4.445 c0.069,0.981,0.255,1.939,0.536,2.869L2.868,52.551c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635 c0.46,0,0.927-0.106,1.363-0.329l10.888-5.566c0.491,0.589,1.027,1.154,1.607,1.692l-9.282,4.745 c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l11.887-6.077 c0.131-0.067,0.253-0.143,0.369-0.226c3.474,1.623,7.568,2.563,11.949,2.563c4.381,0,8.475-0.94,11.949-2.563 c0.116,0.082,0.238,0.159,0.369,0.226l11.887,6.077c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 c0.755-1.476,0.17-3.283-1.306-4.037L53.4,54.02c0.58-0.538,1.116-1.103,1.606-1.692l10.888,5.566 c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635c0.755-1.476,0.17-3.283-1.306-4.037l-10.729-5.485 c0.281-0.931,0.466-1.888,0.536-2.87l8.695,4.445c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 C71.918,45.86,71.333,44.053,69.857,43.299z M50.472,15.06c4.65,2.828,7.466,6.906,7.466,11.155c0,1.07-0.176,2.131-0.516,3.166 c-0.584-4.354-3.438-8.421-8.006-11.487C49.934,17.163,50.316,16.273,50.472,15.06z M21.02,15.06 c0.158,1.229,0.548,2.126,1.076,2.863c-3.65,2.491-6.962,6.022-8.393,10.004c-0.099-0.566-0.149-1.138-0.149-1.711 C13.554,21.966,16.37,17.888,21.02,15.06z M19.027,43.278c0-6.011,7.656-11.089,16.72-11.089c9.063,0,16.719,5.078,16.719,11.089 s-7.656,11.089-16.719,11.089C26.683,54.368,19.027,49.29,19.027,43.278z"/></svg>';
+
+  // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
+  // 发版时与头部 @version 同步改。
+  const CRABER_VERSION = '0.6.0';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -1153,6 +1157,10 @@
       transition:background-color .12s ease}
     .craber-fab-item:hover{background:var(--craber-hover)}
     .craber-fab-collapse{color:var(--craber-sub)}
+    /* 版本脚注：只读展示，居右、弱化，不抢菜单项的视觉 */
+    .craber-fab-ver{padding:4px 10px 2px;text-align:right;
+      color:var(--craber-sub);font-size:11px;opacity:.7;cursor:default;
+      font-variant-numeric:tabular-nums;user-select:none}
     .craber-fab-sep{height:1px;background:var(--craber-line);margin:5px 6px}
     /* 开关行：文字靠左、拨动件靠右，拨动件同时用颜色和位移表达状态 */
     .craber-fab-toggle{cursor:pointer}
@@ -1166,22 +1174,6 @@
     .craber-fab-toggle.on .craber-fab-switch{background:var(--craber-accent)}
     .craber-fab-toggle.on .craber-fab-switch::after{transform:translateX(14px)}
 
-    /* 原生顶栏是 position:sticky 但背景全透明，正文滚上去会和它叠字
-       （实测「MMR 公式」那行直接压到会话名上）。这里给它半透明底色 +
-       高斯模糊：滚过的内容被糊化，顶栏文字保持清晰可读。
-       底色走「样式表 !important + CSS 变量」而不是内联样式：React 提交时
-       （流式输出时每秒好几次）会重置 header 的内联 background-color，内联
-       写法被抹掉后露出站点的 --codex-titlebar-tint（0.2 的微 tint），模糊
-       就断了；元素选择器的 !important 规则压得过 Tailwind 的 bg-transparent!，
-       React 也动不了它。颜色值由 applyHeaderBg 写进 --craber-hdr-bg 变量——
-       自定义属性不参与 React 对 header 的样式重置，写在根上很稳。
-       -webkit- 前缀是 Safari 需要的。
-       注意模糊必须与半透明底色搭配：底色不透明时模糊没有可见效果。 */
-    header.craber-hdr-glass{
-      -webkit-backdrop-filter:blur(14px) saturate(1.5);
-      backdrop-filter:blur(14px) saturate(1.5);
-      background-color:var(--craber-hdr-bg,rgba(0,0,0,0.45)) !important}
-
     /* 项目条：注入原生顶栏内部（面包屑所在的那个可伸缩容器里），
        不新增垂直空间，因此不存在遮挡正文的问题。
        可点击的是"会话名"本身 —— 用户本来就在读它，直接让它可以点开
@@ -1189,14 +1181,16 @@
     .craber-pbar{display:flex;align-items:center;gap:8px;
       min-width:0;margin-left:10px;padding-left:10px;
       border-left:1px solid var(--craber-line);
-      font-family:system-ui,sans-serif;font-size:13px;color:var(--craber-fg);
+      font-family:system-ui,sans-serif;font-size:14px;color:var(--craber-fg);
       pointer-events:auto}
-    /* 会话名按钮：常态读起来就是一行标题，悬停才显出可点的样子 */
-    .craber-pbar-title{flex:0 1 auto;display:inline-flex;align-items:center;gap:5px;
-      min-width:0;max-width:44ch;height:28px;padding:0 8px;
-      border:1px solid transparent;border-radius:8px;
+    /* 会话名按钮：常态读起来就是一行标题，悬停才显出可点的样子。
+       尺寸对齐原生顶栏：原生面包屑/按钮高 36px、字号 14-16px ——
+       我们的高度 36、字号 14，视觉上与"分享"等原生按钮同排同大。 */
+    .craber-pbar-title{flex:0 1 auto;display:inline-flex;align-items:center;gap:6px;
+      min-width:0;max-width:44ch;height:36px;padding:0 10px;
+      border:1px solid transparent;border-radius:10px;
       background:transparent;color:var(--craber-fg);
-      font:inherit;font-size:13px;font-weight:500;
+      font:inherit;font-size:14px;font-weight:500;
       cursor:pointer;transition:background-color .14s ease,border-color .14s ease}
     .craber-pbar-title:hover{background:var(--craber-hover);border-color:var(--craber-line)}
     .craber-pbar-title:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
@@ -1237,7 +1231,7 @@
     .craber-pbar-gen svg{display:block;width:100%;height:100%}
     .craber-pbar-gen circle{stroke:currentColor;fill:none;
       stroke-width:2.6;stroke-linecap:round;stroke-dasharray:32 12}
-    .craber-pbar-title .craber-pbar-gen{width:12px;height:12px}
+    .craber-pbar-title .craber-pbar-gen{width:14px;height:14px}
 
     .craber-mask{position:fixed;inset:0;background:rgba(15,18,20,.55);
       z-index:var(--craber-z-modal);display:flex;align-items:center;justify-content:center;
@@ -3438,6 +3432,9 @@
    * ========================================================== */
 
   // 项目 id：URL 里 /g/g-p-xxx/… 中的那一段。后面可能跟可读 slug，只取 id 本身。
+  // id 是 32 位十六进制（如 g-p-6ac99c86d0688191911f14e1a42723bd），
+  // 之后站点会拼可读 slug（如 -pang-xie-de-ke-ti）——[0-9a-f]+ 贪婪匹配
+  // 正好在 slug 的第一个非十六进制字符处停下，天然只吃 id 段。
   function getProjectId() {
     const m = location.pathname.match(/\/g\/(g-p-[0-9a-f]+)/);
     return m ? m[1] : null;
@@ -3452,6 +3449,7 @@
   let pbarForProject = null;  // 上述数据属于哪个项目，换项目要作废
   let pbarRenderedConv = null; // 上一次渲染时的对话 id，用来避免每秒重画
   let pbarRenderedGen = false; // 上一次渲染时是否在生成中（变化时才重画）
+  let pbarRenderedGenSet = ''; // 上次菜单渲染时"生成中的会话 id 集合"（跨会话加载环用）
 
   // 建元素的小助手：项目条节点较多，逐个 createElement + className 太啰嗦
   function el(tag, cls, text) {
@@ -3545,6 +3543,66 @@
     return false;
   }
 
+  // —— 项目内其他会话的生成状态 ——
+  //
+  // DOM 只能反映"当前打开的会话"（停止按钮在 Composer 里）。其他会话在
+  // 浏览器里没有对应的 DOM，只能问后端：ChatGPT 自己刷新页面恢复生成
+  // 跟踪用的就是这个端点 ——
+  //   GET /backend-api/conversation/{id}/stream_status
+  // 返回 { is_streaming: true/false }（或 IS_STREAMING/NOT_STREAMING 字样）。
+  // 注意 NOT_STREAMING 只表示"此刻没有流"，不区分"完成"和"已停止"，
+  // 对加载环这个用途刚好够。
+  //
+  // 成本控制：只查"菜单开着时可见的那几条"，不做全项目扫描。轮询节流：
+  // 每 4 秒一批、单条间隔 300ms、走全局限流通道（429 退避 + Retry-After）。
+  const PGEN_POLL_MS = 4000;
+  const PGEN_BATCH_GAP_MS = 300;
+  const pgenState = new Map();   // convId -> bool（最后已知状态）
+  let pgenLastPoll = 0;
+  let pgenPolling = false;
+
+  function pgenIsGenerating(convId) {
+    // 当前打开的会话以 DOM 为准（实时、准确）；其余会话用轮询缓存
+    if (convId === pbarCurrentConvId()) return pbarGenerating();
+    return pgenState.get(convId) === true;
+  }
+
+  // 菜单打开时才轮询：要查询的 id 列表由调用方传入（当前可见条目）
+  async function pgenPoll(ids) {
+    if (pgenPolling) return;
+    const now = Date.now();
+    if (now - pgenLastPoll < PGEN_POLL_MS) return;
+    pgenLastPoll = now;
+    pgenPolling = true;
+    try {
+      const tok = await API.getToken();
+      for (const id of ids) {
+        if (id === pbarCurrentConvId()) continue;   // 当前会话走 DOM，不浪费请求
+        // 静默期（429 退避）内直接放弃本轮，下轮再看
+        if (apiBackoffUntil > Date.now()) break;
+        try {
+          const r = await fetch('/backend-api/conversation/' + id + '/stream_status',
+            { headers: { Authorization: 'Bearer ' + tok }, credentials: 'include' });
+          if (r.status === 429) { noteRateLimit(r); break; }
+          if (!r.ok) { pgenState.delete(id); continue; }
+          const j = await r.json();
+          // 实测（2026-10，内置浏览器抓包）：空闲会话返回 {"status":"COMPLETE"}。
+          // 社区逆向记录里还有 IS_STREAMING/NOT_STREAMING 字样、is_streaming 布尔
+          // 字段的形态，全部兼容：状态值明确落在"生成中集合"才算 true，
+          // 其余（COMPLETE/NOT_STREAMING/未知）一律视为不在生成 —— 宁可漏显
+          // 加载环，也不能常转不消。
+          const v = String(j.is_streaming === true ? 'IS_STREAMING'
+            : (j.status || j.stream_status || '')).toUpperCase();
+          const on = v === 'IS_STREAMING' || v === 'IN_PROGRESS' || v === 'STREAMING'
+            || v === 'INPROGRESS' || v === 'RUNNING';
+          pgenState.set(id, on);
+        } catch (e) { /* 单条失败不影响其余 */ }
+        await new Promise((res) => setTimeout(res, PGEN_BATCH_GAP_MS));
+      }
+    } catch (e) { /* token 拿不到就整轮放弃 */ }
+    finally { pgenPolling = false; }
+  }
+
   // 生成中的环形加载动画（14px 圆环，描边缺口旋转）。用 currentColor 取色，
   // 尺寸由使用处的 CSS 决定（列表条目 14px，顶栏会话名 12px）。
   function pbarGenSpinner() {
@@ -3563,13 +3621,16 @@
     const hd = el('div', 'craber-pbar-menu-hd');
     hd.textContent = pbarProject.name + ' · ' + pbarConvs.length + ' 个对话';
     pbarMenuEl.append(hd);
+    // 菜单展开的这一刻顺路发起一轮其他会话的生成状态轮询（节流在 pgenPoll 内部）
+    pgenPoll(pbarConvs.map((c) => c.id));
     pbarConvs.forEach((c) => {
       const b = el('button', 'craber-pbar-item');
       b.type = 'button';
       if (c.id === cur) b.classList.add('current');
       b.append(el('span', 'craber-pbar-item-t', c.title));
-      // 当前对话正在生成回复时，日期位换成环形加载动画
-      if (c.id === cur && pbarGenerating()) {
+      // 生成中的条目日期位换成环形加载动画：当前会话走 DOM 检测，
+      // 其他会话走 stream_status 轮询缓存（菜单开着才轮询，每 4 秒一轮）
+      if (pgenIsGenerating(c.id)) {
         b.append(pbarGenSpinner());
       } else {
         b.append(el('span', 'craber-pbar-item-d', pbarWhen(c.updated)));
@@ -3775,6 +3836,7 @@
     if (pbarMenuEl) { pbarMenuEl.remove(); pbarMenuEl = null; }
     pbarRenderedConv = null;
     pbarRenderedGen = false;
+    pbarRenderedGenSet = '';
   }
 
   // 主循环：判断当前是否在项目内对话页，是则显示并保证数据最新。
@@ -3808,6 +3870,20 @@
         pbarRenderedGen = gen;
         pbarRender();
         if (pbarMenuEl && pbarMenuEl.classList.contains('craber-open')) pbarRenderMenu();
+      } else if (pbarMenuEl && pbarMenuEl.classList.contains('craber-open')) {
+        // 菜单开着时持续轮询其他会话的 stream_status（pgenPoll 内部有 4s 节流），
+        // 且仅当状态缓存真的有变化时才重画列表——否则又是每秒销毁一次的老坑。
+        pgenPoll(pbarConvs.map((c) => c.id)).then(() => {
+          if (!pbarMenuEl || !pbarMenuEl.classList.contains('craber-open')) return;
+          // 重画条件：任一缓存条目与当前菜单显示不一致。菜单条目里生成中的
+          // 会带 .craber-pbar-gen，用"生成中集合"是否变化来判。
+          const genSet = pbarConvs.filter((c) => pgenIsGenerating(c.id))
+            .map((c) => c.id).join(',');
+          if (genSet !== pbarRenderedGenSet) {
+            pbarRenderedGenSet = genSet;
+            pbarRenderMenu();
+          }
+        });
       }
       return;
     }
@@ -3979,64 +4055,6 @@
     return groups[0];
   }
 
-  // 把一个颜色降成半透明，供顶栏毛玻璃用。
-  // 站点给的可能是 #rgb / #rrggbb / rgb() / rgba() 各种形式，统一解析成
-  // rgba(r,g,b,a)。解析不了（oklch / color() 等新格式）就返回 null，
-  // 让调用方退回自己的兜底色 —— 原样返回会把不透明色挂上顶栏，模糊直接失效。
-  function toTranslucent(color, alpha) {
-    const c = String(color || '').trim();
-    if (!c) return null;
-
-    // #rgb / #rrggbb
-    const hex = c.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-    if (hex) {
-      let h = hex[1];
-      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-      const r = parseInt(h.slice(0, 2), 16);
-      const g = parseInt(h.slice(2, 4), 16);
-      const b = parseInt(h.slice(4, 6), 16);
-      return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
-    }
-
-    // rgb() / rgba()
-    const m = c.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
-    if (m) {
-      return 'rgba(' + Math.round(+m[1]) + ',' + Math.round(+m[2]) + ','
-        + Math.round(+m[3]) + ',' + alpha + ')';
-    }
-
-    return null;   // oklch() / color() 等解析不了 —— 交给调用方兜底
-  }
-
-  // 主题变量不一定挂在 :root 上。ChatGPT 把 --main-surface-primary 这组挂在
-  // 比 documentElement 更内层的容器（实测根上读出来是空串），所以按
-  // main -> body -> html 的顺序找，谁有值用谁。
-  function pickVar(name) {
-    for (const n of [document.querySelector('main'), document.body,
-                     document.documentElement]) {
-      if (!n) continue;
-      const v = getComputedStyle(n).getPropertyValue(name).trim();
-      if (v) return v;
-    }
-    return '';
-  }
-
-  // 粗略亮度：解析 rgb()/rgba() 或 #hex 的 r,g,b，按感知加权算 0~1。
-  // 解析不了返回 null（调用方决定怎么办）。
-  function colorLuma(c) {
-    const s = String(c || '').trim();
-    let m = s.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
-    let r, g, b;
-    if (m) { r = +m[1]; g = +m[2]; b = +m[3]; }
-    else {
-      const hex = s.match(/^#([0-9a-f]{6})$/i);
-      if (!hex) return null;
-      const h = hex[1];
-      r = parseInt(h.slice(0, 2), 16); g = parseInt(h.slice(2, 4), 16); b = parseInt(h.slice(4, 6), 16);
-    }
-    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  }
-
   // 毛玻璃顶栏只该出现在"会话页"上（/c/{id} 或 /g/{proj}/c/{id}）。
   // 设置页、项目列表页、首页这些页面 ChatGPT 自己的顶栏有自己的观感
   // （设置页甚至是全屏面板），我们再糊一层就是画蛇添足。
@@ -4044,97 +4062,20 @@
     return !!getConvId();
   }
 
-  // 原生顶栏背景是全透明的（sticky 但不占视觉），正文滚上去会与它叠字。
-  // 这里补上半透明底色 + 高斯模糊：滚过的内容被糊化，顶栏文字保持清晰。
+  // 正文吸顶小标题给顶栏让位。
   //
-  // 底色取页面自身的主题色（--main-surface-primary / --bg-primary）再降到
-  // 半透明，不写死深浅两套色值 —— 站点换主题时自动跟随，也和正文底色一致。
-  // 但这组变量不能盲取：它们按"表面组件"作用域定义，main 上挂的不一定是
-  // 正文表面色（实测深色主题下会读到浅色值，顶栏亮得刺眼）。所以取到后
-  // 按当前主题校验亮度 —— 深色主题配浅色（或反之）一律弃用，走兜底色。
+  // 正文块顶部那条吸顶标题用的是 md:top-(--sticky-padding-top)，而该变量在
+  // 当前页面解析为 0px —— 也就是"贴在滚动容器最顶端"。顶栏背景全透明时
+  // 两者叠着看不出来；脚本注入项目条后顶栏不再透明，这条吸顶标题就会钻到
+  // 顶栏底下被切掉。该变量的本意就是"顶栏下面留多少空间"，设成顶栏高度即可。
   //
-  // 落点策略：header 的背景会被两方冲掉 —— React 提交时重置内联样式，站点
-  // CDN 样式表里有后加载的 !important 背景规则。单独内联或单独样式表都会
-  // 出现"毛玻璃先上、过一秒被冲成实色"。所以双保险：
-  //   1) 颜色写进 documentElement 的 --craber-hdr-bg（自定义属性 React 不管）；
-  //   2) 样式表 header.craber-hdr-glass !important 规则作骨架（React 抹掉内联时顶上）；
-  //   3) applyHeaderBg 每 tick 再补写内联 !important（优先级最高，压过站点规则）。
-  // 两层同时被冲的窗口不到 1 秒，下一 tick 自动恢复。
-  function applyHeaderBg() {
+  // 落点必须选 main：实测设在 documentElement 上不生效（该变量在更靠内的层级
+  // 被重新定义为 0px，根的赋值传不到目标元素）；设在滚动容器上也能生效，但
+  // 滚动容器要等内容渲染出来才存在，首屏那几秒会漏设。main 始终在、且是这些
+  // 吸顶条的共同祖先，设一处即可覆盖全部。
+  function applyHeaderSpacing() {
     const hdr = document.querySelector('header');
     if (!hdr) return;
-    // 非会话页（设置页 / 首页 / 项目列表等）：撤掉我们的毛玻璃与底色，
-    // 让顶栏回到站点原生观感。变量也一并清掉，避免残留到下次会话页。
-    if (!isConvPage()) {
-      if (hdr.classList.contains('craber-hdr-glass')) hdr.classList.remove('craber-hdr-glass');
-      document.documentElement.style.removeProperty('--craber-hdr-bg');
-      return;
-    }
-    if (!hdr.classList.contains('craber-hdr-glass')) hdr.classList.add('craber-hdr-glass');
-
-    const dark = isDarkTheme();
-    const fallback = dark ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.5)';
-
-    // 先拿到页面自己的"主表面"色（可能是 #000 / #212121 这类不透明值）。
-    // 变量挂内层容器，pickVar 按 main -> body -> html 找。
-    let solid = pickVar('--main-surface-primary') || pickVar('--bg-primary');
-    // 亮度校验：与主题不符的表面色直接弃用（实测深色下读到 #f9f9f9 一类）
-    const luma = colorLuma(solid);
-    if (luma === null || (dark ? luma > 0.5 : luma < 0.5)) solid = '';
-    let bg = '';
-    if (solid) {
-      const t = toTranslucent(solid, dark ? 0.45 : 0.5);
-      bg = t || '';   // oklch 等解析不了 -> 退兜底，不把不透明色挂上去
-    }
-    if (!bg) {
-      const b = getComputedStyle(document.body).backgroundColor;
-      const bl = colorLuma(b);
-      bg = (b && b !== 'rgba(0, 0, 0, 0)' && bl !== null
-            && (dark ? bl <= 0.5 : bl > 0.5))
-        ? toTranslucent(b, dark ? 0.45 : 0.5) : '';
-    }
-    if (!bg) bg = fallback;
-    // 半透明是底线：算出来还是不透明（解析失败等）就强降，否则模糊没得看。
-    // 不透明度刻意取低（0.45/0.5）：底色太实会把糊化内容盖住，只剩一片
-    // 亮色，模糊感全无（实测 0.72 就是这个效果）；取一半左右，底下滚过的
-    // 文字以"模糊色块"的形态透出来，同时顶栏文字仍有足够对比度可读。
-    if (/rgba?\([^)]*,\s*1\)$/.test(bg)) bg = fallback;
-
-    // 变量写在根上：header 的内联样式被 React 重置也不影响这里
-    const root = document.documentElement;
-    if (root.style.getPropertyValue('--craber-hdr-bg') !== bg) {
-      root.style.setProperty('--craber-hdr-bg', bg);
-    }
-    // 类被 React 摘掉后靠这里的补挂恢复（类名比对是廉价的）。
-    //
-    // 但只有样式表规则不够：站点自己的样式表里也有 header 的 !important 背景
-    // 规则（同为 !important 时后加载的胜，站点 CDN 样式表插在我们后面），实测
-    // 表现为"毛玻璃先上，过一秒被冲成实色"。所以这里每 tick 再写一次内联
-    // !important 兜底 —— 内联 !important 优先级最高，谁都压得过；被 React
-    // 抹掉时有样式表规则顶着，下一秒这里再补回，最坏也只有一瞬的实色。
-    const curInline = hdr.style.getPropertyValue('background-color').trim();
-    if (curInline !== bg) {
-      hdr.style.setProperty('background-color', bg, 'important');
-    }
-    if (hdr.style.getPropertyValue('-webkit-backdrop-filter') !== 'blur(14px) saturate(1.5)') {
-      hdr.style.setProperty('-webkit-backdrop-filter', 'blur(14px) saturate(1.5)', 'important');
-    }
-    if (hdr.style.getPropertyValue('backdrop-filter') !== 'blur(14px) saturate(1.5)') {
-      hdr.style.setProperty('backdrop-filter', 'blur(14px) saturate(1.5)', 'important');
-    }
-
-    // 让正文的吸顶小标题让开顶栏。
-    //
-    // 正文块顶部那条吸顶标题用的是 md:top-(--sticky-padding-top)，而该变量在
-    // 当前页面解析为 0px —— 也就是"贴在滚动容器最顶端"。顶栏原本全透明，
-    // 两者叠着看不出来；一旦给顶栏加了底色，这条吸顶标题就会钻到顶栏底下被切掉。
-    //
-    // 该变量的本意就是"顶栏下面留多少空间"，把它设成顶栏高度即可。
-    //
-    // 落点必须选 main：实测设在 documentElement 上不生效（该变量在更靠内的层级
-    // 被重新定义为 0px，根的赋值传不到目标元素）；设在滚动容器上也能生效，但
-    // 滚动容器要等内容渲染出来才存在，首屏那几秒会漏设。main 始终在、且是这些
-    // 吸顶条的共同祖先，设一处即可覆盖全部。
     const h = Math.round(hdr.getBoundingClientRect().height);
     const main = document.querySelector('main');
     if (main && h > 0) {
@@ -4153,11 +4094,11 @@
     if (!isConvPage()) {
       if (fabEl && fabEl.isConnected) fabEl.remove();
       if (fabMenuEl) fabCloseMenu();
-      applyHeaderBg();   // 顺路把顶栏毛玻璃也撤了（同一处维护）
+      applyHeaderSpacing();   // 顺路保持吸顶条让位（同一处维护）
       return false;
     }
     const host = fabHost();
-    applyHeaderBg();   // 顶栏底色：和导出按钮同在顶栏，一起维护
+    applyHeaderSpacing();   // 顶栏高度变化时吸顶条跟着让位
     if (!host) return false;
 
     if (fabEl && fabEl.parentElement === host) { applyFabTheme(fabEl); return true; }
@@ -4229,6 +4170,17 @@
 
       panel.append(el('div', 'craber-fab-sep'));
       panel.append(mk('收起', '收起菜单', () => {}, 'craber-fab-collapse'));
+      // 版本脚注：一眼确认装的是哪版，省得"改了没生效"时来回猜。
+      // 优先取 GM_info（脚本管理器登记的真实版本），拿不到退回头部常量。
+      let ver = '';
+      try {
+        const info = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script : null;
+        ver = info ? (info.version || '') : '';
+      } catch (e) { /* GM_info 不可用 */ }
+      if (!ver) ver = CRABER_VERSION;
+      const foot = el('div', 'craber-fab-ver', 'craber v' + ver);
+      foot.title = '脚本版本';
+      panel.append(foot);
       fabMenuEl.append(panel);
       document.body.appendChild(fabMenuEl);
 
@@ -4260,7 +4212,6 @@
         if (t === lastTheme) return;   // 只是 class 抖动，不是换主题
         lastTheme = t;
         applyFabTheme(fabEl);
-        applyHeaderBg();          // 补挂毛玻璃类 + 刷新 --craber-hdr-bg 变量
         pbarTick();               // 项目条挂载状态由它自己判断，重复调用安全
       };
       new MutationObserver(onThemeChange)
@@ -4271,7 +4222,6 @@
           .addEventListener('change', () => {
             lastTheme = document.documentElement.dataset.theme || '';
             applyFabTheme(fabEl);
-            applyHeaderBg();
             pbarTick();
           });
       } catch (e) { /* 老浏览器不支持，忽略 */ }
