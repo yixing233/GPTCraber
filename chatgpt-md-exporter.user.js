@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.6.0
+// @version      0.13.8
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.6.0';
+  const CRABER_VERSION = '0.13.8';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -244,8 +244,9 @@
       } catch (e) {
         console.warn('[gpt-craber] 项目名获取失败', gizmoId, e);
       }
-      this._gizmoCache[gizmoId] = name;
-      return name;
+      // 只在成功时缓存。失败（403/限流/网络）也缓存的话，这个项目名会永久
+      // 是 null，后面再问也永远拿不到 —— 表现为"项目列表里没有项目"（实测）。
+      if (name) this._gizmoCache[gizmoId] = name;
     }
   };
 
@@ -1567,6 +1568,337 @@
     .craber-preview-body a:hover{text-decoration:underline}
     .craber-preview-loading{padding:48px 18px;text-align:center;color:var(--craber-sub);font-size:13px;
       display:flex;flex-direction:column;align-items:center;gap:12px}
+
+    /* ── 侧栏文件夹 ────────────────────────────────────────────
+       整块插在原生「项目」区块之下、原生「最近」区块之上，作为原生 nav 的子元素
+       参与正常文档流，因此会跟着侧栏一起滚动，不需要自己算定位。
+       行内样式一律用 em/craber 变量，宿主改字号时不会错位。 */
+    /* 左右外边距对齐原生：原生行左沿 16px、右沿留 12px（实测 nav 内边距 16/12） */
+    .craber-folders{margin:2px 6px}
+    /* 标题行与原生「项目 / 最近」同基线：左沿 16、14px、字重 500 */
+    .craber-folders-hd{display:flex;align-items:center;gap:6px;padding:4px 10px;min-height:28px}
+    .craber-folders-label{flex:1;min-width:0;font-size:14px;font-weight:500;color:var(--craber-sub);
+      letter-spacing:0;user-select:none}
+    .craber-folders-add{border:none;background:none;color:var(--craber-sub);cursor:pointer;
+      width:20px;height:20px;border-radius:6px;padding:0;display:flex;align-items:center;
+      justify-content:center;font-size:15px;line-height:1;opacity:0;transition:opacity .15s,background .15s,color .15s}
+    .craber-folders:hover .craber-folders-add,.craber-folders-add:focus-visible{opacity:1}
+    .craber-folders-add:hover{background:var(--craber-hover);color:var(--craber-fg)}
+
+    .craber-folder{display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:8px;
+      min-height:38px;box-sizing:border-box;
+      cursor:pointer;color:var(--craber-fg);font-size:14px;line-height:1.4;user-select:none}
+    .craber-folder:hover{background:var(--craber-hover)}
+    /* 含当前浏览会话的文件夹：左侧竖条 + 名字加粗，一眼看出"你在哪" */
+    .craber-folder.has-current{position:relative}
+    .craber-folder.has-current::before{content:'';position:absolute;left:2px;top:50%;
+      transform:translateY(-50%);width:2.5px;height:16px;border-radius:2px;
+      background:var(--craber-accent)}
+    .craber-folder.has-current .craber-folder-name{font-weight:600;color:var(--craber-fg)}
+    .craber-folder.has-current .craber-folder-ico{color:var(--craber-accent)}
+    /* 手动拖拽（项目行）进行中：光标提示 + 可放置区域反馈 */
+    body.craber-dragging{cursor:grabbing !important;user-select:none}
+    body.craber-dragging .craber-folder.drag-over{background:var(--craber-hover);
+      box-shadow:inset 0 0 0 1.5px var(--craber-accent)}
+    /* 条目拖动排序时的反馈：源行半透明，目标位置显示插入线 */
+    .craber-folder-kid.craber-sorting{opacity:.45}
+    /* 插入位置指示线：用伪元素画直条。
+       不能用 box-shadow —— 它会沿着行的 border-radius 弯成弧形（实测很难看）。 */
+    .craber-folder-kid{position:relative}
+    .craber-folder-kid.sort-over-top::after,
+    .craber-folder-kid.sort-over-bottom::after{
+      content:'';position:absolute;left:10px;right:10px;height:2px;
+      background:var(--craber-accent);border-radius:1px;pointer-events:none;z-index:2}
+    .craber-folder-kid.sort-over-top::after{top:-1px}
+    .craber-folder-kid.sort-over-bottom::after{bottom:-1px}
+    .craber-folder.drag-over{background:var(--craber-hover);
+      box-shadow:inset 0 0 0 1.5px var(--craber-accent)}
+    .craber-folder-chev{flex:none;width:14px;height:14px;display:flex;align-items:center;
+      justify-content:center;color:var(--craber-sub);
+      transition:transform .22s cubic-bezier(.2,.8,.25,1);
+      margin-right:-1px}
+    .craber-folder-chev svg{width:12px;height:12px;display:block}
+    .craber-folder.open .craber-folder-chev{transform:rotate(90deg)}
+    .craber-folder-ico{flex:none;width:18px;height:18px;color:var(--craber-sub)}
+    .craber-folder-ico svg{width:18px;height:18px;display:block}
+    .craber-folder.open .craber-folder-ico{color:var(--craber-accent)}
+    .craber-folder-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-folder-more{flex:none;width:20px;height:20px;border:none;background:none;padding:0;
+      border-radius:6px;color:var(--craber-sub);cursor:pointer;opacity:0;
+      line-height:1;font-size:14px;display:flex;align-items:center;justify-content:center}
+    .craber-folder-more svg{width:16px;height:16px;display:block}
+    .craber-folder-add{opacity:0}
+    .craber-folder:hover .craber-folder-add{opacity:1}
+    .craber-folder:hover .craber-folder-more{opacity:1}
+    .craber-folder-more:hover{background:var(--craber-ghost);color:var(--craber-fg)}
+
+    /* 展开/收起动画：用 grid-template-rows 0fr ↔ 1fr 过渡。
+       这样不需要预先知道内容高度（height:auto 无法过渡），
+       而且内容会跟着被裁切，展开时有从"挤出来"到"铺开"的观感，
+       接近原生侧栏的展开手感。 */
+    .craber-folder-kids{display:grid;grid-template-rows:1fr;
+      transition:grid-template-rows .22s cubic-bezier(.2,.8,.25,1),
+      opacity .18s ease;opacity:1;min-height:0;overflow:hidden}
+    .craber-folder-kids > .craber-folder-kids-in{padding-left:20px;
+      display:flex;flex-direction:column;min-height:0;overflow:hidden}
+    .craber-folder-kids.craber-collapsed{grid-template-rows:0fr;opacity:0}
+    .craber-folder-kids[hidden]{display:none}
+    .craber-folder-kid{display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:8px;
+      min-height:34px;box-sizing:border-box;
+      cursor:pointer;color:var(--craber-fg);font-size:13.5px;line-height:1.4;min-width:0}
+    .craber-folder-kid:hover{background:var(--craber-hover)}
+    .craber-folder-kid.active{background:var(--craber-hover);color:var(--craber-fg);
+      font-weight:600;position:relative}
+    .craber-folder-kid.active::before{content:'';position:absolute;left:0;top:50%;
+      transform:translateY(-50%);width:2px;height:14px;border-radius:2px;
+      background:var(--craber-accent)}
+    .craber-folder-kid.active .craber-folder-kid-ico{color:var(--craber-accent)}
+    .craber-folder-kid-ico{flex:none;width:16px;height:16px;color:var(--craber-sub)}
+    .craber-folder-kid-ico svg{width:16px;height:16px;display:block}
+    .craber-folder-kid-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-folder-kid-chev{flex:none;width:14px;height:14px;display:flex;align-items:center;
+      justify-content:center;color:var(--craber-sub);cursor:pointer;
+      transition:transform .22s cubic-bezier(.2,.8,.25,1);
+      margin-right:-1px}
+    .craber-folder-kid-chev svg{width:11px;height:11px;display:block}
+    .craber-folder-kid.open > .craber-folder-kid-chev{transform:rotate(90deg)}
+    /* 项目子会话列表的展开/收起。
+       要点：
+       1) 内边距由内层包裹元素承担，不放在 grid 容器上 —— 否则折叠时
+          padding 仍然占据高度，留下一段空白（实测）。
+       2) 折叠到 0fr 后行高为 0，配合 overflow:hidden 才彻底不占位。 */
+    .craber-folder-kid-sub{display:grid;grid-template-rows:1fr;
+      transition:grid-template-rows .22s cubic-bezier(.2,.8,.25,1),opacity .18s ease;
+      opacity:1;min-height:0;overflow:hidden}
+    .craber-folder-kid-sub > .craber-folder-kid-sub-in{padding-left:22px;
+      display:flex;flex-direction:column;min-height:0;overflow:hidden}
+    .craber-folder-kid-sub.craber-collapsed{grid-template-rows:0fr;opacity:0}
+    /* 项目下嵌套的会话行：更紧凑，但保留 hover 出 ⋯ */
+    .craber-folder-kid-nested{min-height:30px;font-size:13px}
+    .craber-folder-kid-sub[hidden]{display:none}
+    .craber-folder-kid-more{flex:none;width:20px;height:20px;border:none;background:none;padding:0;
+      border-radius:5px;color:var(--craber-sub);cursor:pointer;opacity:0;font-size:15px;line-height:1;
+      display:flex;align-items:center;justify-content:center}
+    .craber-folder-kid:hover .craber-folder-kid-more{opacity:1}
+    .craber-folder-kid-more:hover{background:var(--craber-ghost);color:var(--craber-fg)}
+    /* 空状态说明：缩进到与行内文字一致（行 10px 内边距 + 图标位 16px） */
+    .craber-folder-empty{padding:4px 12px 6px 10px;font-size:12.5px;color:var(--craber-sub);
+      line-height:1.5;word-break:keep-all;overflow-wrap:break-word}
+    .craber-folder-stale{opacity:.55}
+
+    /* 原生列表行上的"归入文件夹"小按钮：只在 hover / 键盘聚焦时出现 */
+    /* 位置：行内文字右端。原生行右侧有一组操作按钮（⋯/归档），
+       贴着 inset-inline-end 会被它们盖住、点了等于点原生菜单（实测）。
+       所以用 flex 顺序把它插在原生按钮之前，而不是绝对定位去抢右缘。 */
+    .craber-pj-btn{position:relative;flex:none;margin-inline-start:auto;margin-inline-end:4px;
+      width:20px;height:20px;border:none;border-radius:6px;padding:0;display:flex;
+      align-items:center;justify-content:center;background:var(--craber-bg);color:var(--craber-sub);
+      cursor:pointer;opacity:0;pointer-events:none;z-index:2;
+      box-shadow:0 0 0 1px var(--craber-line);transition:opacity .12s ease,color .12s ease}
+    .craber-pj-btn svg{width:13px;height:13px;display:block}
+    /* 原生行右侧操作区通常只有 hover 才显示；我们把按钮排在它前面，避免遮挡 */
+    .craber-pj-host:hover > .craber-pj-btn,
+    .craber-pj-host:focus-within > .craber-pj-btn{opacity:1;pointer-events:auto}
+    .craber-pj-btn:hover{color:var(--craber-accent);box-shadow:0 0 0 1px var(--craber-accent)}
+    /* 原生行自带 flex，加定位上下文不能让子元素乱飞 */
+    .craber-pj-host{position:relative}
+
+    /* 加载动画：小圆环旋转，用于"读取会话与项目…" */
+    .craber-dlg-loading{display:flex;align-items:center;gap:9px;padding:16px 6px;
+      font-size:13.5px;color:var(--craber-sub)}
+    .craber-dlg-spin{flex:none;width:15px;height:15px;border-radius:50%;
+      border:2px solid var(--craber-line);border-top-color:var(--craber-sub);
+      animation:craber-spin .7s linear infinite}
+    @keyframes craber-spin{to{transform:rotate(360deg)}}
+
+    /* 仿原生的对话框：居中卡片、12px 圆角、柔和投影。
+       按钮沿用原版配色：浅底取消 + 黑色实心确认；危险操作用红色。 */
+    .craber-dlg-mask{position:fixed;inset:0;z-index:var(--craber-z-modal);
+      background:rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center;
+      font-family:system-ui,sans-serif;animation:craber-fade-in .12s ease}
+    .craber-dlg{width:min(520px,calc(100vw - 40px));max-width:100%;max-height:min(78vh,720px);
+      display:flex;flex-direction:column;background:var(--craber-bg);min-width:0;overflow:hidden;
+      border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.24);
+      padding:20px 20px 14px;box-sizing:border-box;
+      animation:craber-pop-in .16s cubic-bezier(.2,.8,.25,1)}
+    .craber-dlg-hd{display:flex;align-items:flex-start;gap:12px}
+    .craber-dlg-title{flex:1;font-size:18px;font-weight:650;color:var(--craber-fg);
+      line-height:1.35;letter-spacing:-.01em}
+    .craber-dlg-x{flex:none;width:28px;height:28px;border:none;background:none;
+      border-radius:7px;color:var(--craber-sub);cursor:pointer;font-size:19px;line-height:1;
+      display:flex;align-items:center;justify-content:center;margin:-2px -4px 0 0}
+    .craber-dlg-x:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-dlg-sub{margin-top:5px;font-size:13.5px;color:var(--craber-sub);line-height:1.5}
+    /* 只纵向溢出：横向一律 hidden。
+       之前这里是 overflow:auto，横向滚动条落在这个外层容器上，
+       即使列表自己写了 overflow-x:hidden 也压不住（实测）。 */
+    .craber-dlg-body{margin-top:14px;min-height:0;overflow-x:hidden;
+      overflow-y:auto;flex:1;min-width:0;box-sizing:border-box}
+    .craber-dlg-text{font-size:14px;color:var(--craber-fg);line-height:1.6;white-space:pre-wrap}
+    .craber-dlg-hint{margin-top:8px;font-size:12.5px;color:var(--craber-sub);line-height:1.5}
+    .craber-dlg-input{width:100%;box-sizing:border-box;padding:10px 12px;
+      border:1px solid var(--craber-line);border-radius:10px;
+      background:var(--craber-bg);color:var(--craber-fg);
+      font-size:14px;font-family:inherit;outline:none}
+    .craber-dlg-input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+    .craber-dlg-ft{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex:none}
+    .craber-dlg-btn{height:36px;padding:0 16px;border-radius:18px;border:1px solid transparent;
+      background:var(--craber-ghost);color:var(--craber-fg);font-size:14px;font-weight:500;
+      cursor:pointer;font-family:inherit;transition:background .12s ease}
+    .craber-dlg-btn:hover{background:var(--craber-hover)}
+    .craber-dlg-primary{background:#0d0d0d;color:#fff;border-color:#0d0d0d}
+    .craber-dlg-primary:hover{background:#000}
+    .craber-dlg-danger{background:#e02e2a;border-color:#e02e2a;color:#fff}
+    .craber-dlg-danger:hover{background:#c82622}
+
+    /* 对话框内的候选列表（选择要添加的项目/会话） */
+    /* 搜索 + 日期筛选（添加对话框内，仅会话页签显示） */
+    .craber-dlg-filter{display:flex;flex-direction:column;gap:7px;
+      padding:8px 0 4px;min-width:0}
+    .craber-dlg-filter[hidden]{display:none}
+    .craber-dlg-search{width:100%;box-sizing:border-box;padding:7px 11px;
+      border:1px solid var(--craber-line);border-radius:9px;
+      background:var(--craber-bg);color:var(--craber-fg);
+      font-size:13.5px;font-family:inherit;outline:none}
+    .craber-dlg-search:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+    .craber-dlg-chips{display:flex;flex-wrap:wrap;gap:6px}
+    .craber-dlg-chip{display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+      padding:4px 9px;border:1px solid var(--craber-line);border-radius:999px;
+      font-size:12.5px;color:var(--craber-sub);user-select:none;
+      transition:background .12s ease,border-color .12s ease,color .12s ease}
+    .craber-dlg-chip:hover{background:var(--craber-hover)}
+    .craber-dlg-chip input{display:none}
+    .craber-dlg-chip:has(input:checked){background:var(--craber-fg);
+      border-color:var(--craber-fg);color:var(--craber-bg)}
+    .craber-dlg-custom{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .craber-dlg-custom[hidden]{display:none}
+    .craber-dlg-date{padding:5px 8px;border:1px solid var(--craber-line);
+      border-radius:8px;background:var(--craber-bg);color:var(--craber-fg);
+      font-size:12.5px;font-family:inherit;outline:none}
+    .craber-dlg-date:focus{border-color:#2563eb}
+    .craber-dlg-datesep{font-size:12.5px;color:var(--craber-sub)}
+
+    /* 页签：会话 / 项目。选中项用底部横线标记，风格贴原生。 */
+    .craber-dlg-tabs{display:flex;gap:2px;margin:12px 0 0;
+      border-bottom:1px solid var(--craber-line)}
+    .craber-dlg-tab{border:none;background:none;padding:8px 12px 9px;cursor:pointer;
+      font-size:14px;font-family:inherit;color:var(--craber-sub);font-weight:500;
+      position:relative;border-radius:8px 8px 0 0}
+    .craber-dlg-tab:hover{color:var(--craber-fg);background:var(--craber-hover)}
+    .craber-dlg-tab.on{color:var(--craber-fg);font-weight:600}
+    .craber-dlg-tab.on::after{content:'';position:absolute;left:8px;right:8px;
+      bottom:-1px;height:2px;border-radius:2px;background:var(--craber-fg)}
+    .craber-dlg-pane{display:flex;flex-direction:column;min-width:0;min-height:0}
+    .craber-dlg-pane[hidden]{display:none}
+    .craber-dlg-count{font-size:12.5px;color:var(--craber-sub);margin-left:2px;
+      font-variant-numeric:tabular-nums}
+
+    /* 只允许纵向滚动：横向用 overflow-x:hidden + min-width:0 彻底压掉，
+       否则长标题会把内容撑宽，出现意外的横向滚动条（实测踩到过）。 */
+    /* 不能用负的左右外边距：那会把内容推出卡片右缘，
+       滚动条被裁到框外只剩一条缝（实测）。
+       改为正常的 0 外边距 + 右侧留出滚动条宽度的内边距。 */
+    .craber-dlg-list{display:flex;flex-direction:column;gap:2px;
+      max-height:min(52vh,440px);overflow-y:auto;overflow-x:hidden;
+      margin:0;padding:0 10px 0 0;min-width:0;
+      box-sizing:border-box;scrollbar-width:thin}
+    /* 滚动条本身：加一点圆角内缩，不被卡片内边距压到边缘外 */
+    .craber-dlg-list::-webkit-scrollbar{width:8px}
+    .craber-dlg-list::-webkit-scrollbar-thumb{background:var(--craber-line);
+      border-radius:4px;border:2px solid transparent;background-clip:content-box}
+    .craber-dlg-list::-webkit-scrollbar-thumb:hover{background:var(--craber-sub);
+      background-clip:content-box}
+    .craber-dlg-list::-webkit-scrollbar-track{background:transparent}
+    .craber-dlg-list > *{min-width:0;max-width:100%}
+    .craber-dlg-group{font-size:12px;color:var(--craber-sub);padding:10px 4px 5px;
+      line-height:1.3;user-select:none;font-weight:600}
+    .craber-dlg-item{display:flex;align-items:center;gap:10px;padding:9px 10px;
+      border-radius:9px;cursor:pointer;font-size:14px;color:var(--craber-fg);line-height:1.35;
+      min-width:0;box-sizing:border-box}
+    .craber-dlg-item:hover{background:var(--craber-hover)}
+    .craber-dlg-item.is-added{cursor:default;opacity:.45}
+    .craber-dlg-item.is-added:hover{background:none}
+    .craber-dlg-item .craber-dlg-item-ico{flex:none;width:16px;height:16px;
+      display:flex;align-items:center;justify-content:center;color:var(--craber-sub)}
+    .craber-dlg-item .craber-dlg-item-ico svg{width:16px;height:16px;display:block}
+    .craber-dlg-item-name{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap}
+    .craber-dlg-check{flex:none;width:18px;height:18px;border:1.5px solid var(--craber-line);
+      border-radius:5px;display:flex;align-items:center;justify-content:center;
+      color:#fff;transition:background .12s ease,border-color .12s ease}
+    .craber-dlg-check.on{background:#0d0d0d;border-color:#0d0d0d}
+    .craber-dlg-check svg{width:12px;height:12px;display:block}
+    .craber-dlg-check.locked{background:var(--craber-ghost);border-color:var(--craber-ghost);
+      color:var(--craber-sub)}
+    /* 工具条：上方与页签留出间距，右侧复选框与列表行对齐 */
+    /* 右侧 10px 与列表的 padding-right 对齐；再留 8px 给滚动条，
+       这样"全选"的复选框和列表里各行的复选框在同一条竖线上。 */
+    .craber-dlg-toolbar{display:flex;align-items:center;gap:8px;
+      padding:10px 18px 8px 0;flex-wrap:wrap;min-width:0}
+    /* 「全选」：文字在左、复选框在右，整块可点。
+       右内边距 10px 与列表的 padding-right 一致，复选框才能竖向对齐。 */
+    .craber-dlg-all{display:flex;align-items:center;gap:8px;cursor:pointer;
+      margin-left:auto;padding:3px 10px 3px 8px;border-radius:7px;user-select:none}
+    .craber-dlg-all:hover{background:var(--craber-hover)}
+    .craber-dlg-all-label{font-size:13px;color:var(--craber-sub)}
+    .craber-dlg-all .craber-dlg-check.partial{background:#0d0d0d;border-color:#0d0d0d;color:#fff}
+    .craber-dlg-all .craber-dlg-check.locked{opacity:.4;cursor:default}
+    .craber-dlg-toolbar button{border:none;background:none;color:#2563eb;
+      font-size:13px;cursor:pointer;padding:2px 0;font-family:inherit}
+    .craber-dlg-toolbar button:hover{text-decoration:underline}
+
+    /* 与原版视觉对齐的弹出菜单（文件夹条目 ⋯）：圆角 12、分组分隔线、
+       左侧 16px 图标槽、危险项红字。 */
+    /* 弹出菜单：按原生规格还原
+       - 宽 190px、圆角 12px、1px 细边、无横向分隔线（原版靠分组间距分段）
+       - 项高 36px、字号 14px、图标 16px、图标与文字间距 12px
+       - 分组标题 12px 灰色；危险项红色（图标同色） */
+    .craber-menu{position:fixed;z-index:var(--craber-z-fab-menu);width:190px;
+      padding:6px 4px;box-sizing:border-box;background:var(--craber-bg);
+      border:1px solid var(--craber-line);border-radius:12px;
+      box-shadow:0 8px 24px rgba(0,0,0,.14),0 1px 3px rgba(0,0,0,.08);
+      font-family:system-ui,sans-serif;
+      animation:craber-pop-in .14s cubic-bezier(.2,.8,.25,1)}
+    .craber-menu-item{display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;
+      border:none;background:none;text-align:left;padding:0 10px;height:36px;
+      border-radius:8px;cursor:pointer;font-size:14px;color:var(--craber-fg);line-height:1}
+    .craber-menu-item:hover{background:var(--craber-hover)}
+    .craber-menu-ico{flex:none;width:16px;height:16px;display:flex;align-items:center;
+      justify-content:center;color:var(--craber-fg)}
+    .craber-menu-ico svg{width:16px;height:16px;display:block}
+    .craber-menu-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    /* 分组长间距（替代原版的横线）：原版是"组间留白 + 组标题" */
+    .craber-menu-sep{height:6px;background:none;margin:0}
+    .craber-menu-group{font-size:12px;color:var(--craber-sub);padding:8px 10px 4px;
+      line-height:1.3;user-select:none}
+    .craber-menu-arrow{flex:none;color:var(--craber-sub);display:flex;align-items:center}
+    .craber-menu-arrow svg{width:12px;height:12px;display:block}
+    .craber-menu-danger{color:#e02e2a}
+    .craber-menu-danger .craber-menu-ico{color:#e02e2a}
+    .craber-menu-danger:hover{background:rgba(224,46,42,.08)}
+
+    /* 归入文件夹的上下文菜单：贴着按钮弹出 */
+    .craber-pjify{position:fixed;z-index:var(--craber-z-fab-menu);min-width:200px;max-width:260px;
+      max-height:min(60vh,420px);overflow-y:auto;padding:5px;box-sizing:border-box;
+      background:var(--craber-bg);border:1px solid var(--craber-line);border-radius:12px;
+      box-shadow:0 12px 34px rgba(0,0,0,.22);font-family:system-ui,sans-serif;
+      animation:craber-pop-in .14s cubic-bezier(.2,.8,.25,1)}
+    .craber-pjify-hd{padding:6px 10px 8px;font-size:11.5px;color:var(--craber-sub);line-height:1.4;
+      border-bottom:1px solid var(--craber-line);margin-bottom:4px}
+    .craber-pjify-row{display:flex;align-items:center;gap:4px;width:100%;box-sizing:border-box;
+      border:none;background:none;text-align:left;padding:7px 10px;border-radius:8px;cursor:pointer;
+      font-size:12.5px;color:var(--craber-fg);line-height:1.3}
+    .craber-pjify-row:hover{background:var(--craber-hover)}
+    .craber-pjify-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-pjify-row .craber-pjify-check{flex:none;color:var(--craber-accent);width:13px;height:13px}
+    /* 目标文件夹名称：不加图标，纯文字左对齐，右侧放勾选状态 */
+    .craber-pjify-sep{height:1px;background:var(--craber-line);margin:4px 6px}
+    .craber-pjify-new{color:var(--craber-accent)}
+    .craber-folders.drag-over{background:var(--craber-hover);border-radius:8px;
+      box-shadow:inset 0 0 0 1.5px var(--craber-accent)}
+    @media (prefers-reduced-motion:reduce){
+      .craber-folder-chev,.craber-pjify,.craber-pj-btn{transition:none;animation:none}
+    }
   `;
   document.head.appendChild(style);
 
@@ -3510,13 +3842,23 @@
       name = await API.getGizmoName(projectId);
     } catch (e) { /* 名字拿不到就退回"项目" */ }
 
+    const convs = all.map((c) => ({
+      id: c.id,
+      title: c.title || '未命名对话',
+      updated: c.update_time || c.create_time || null
+    }));
+
+    // 把结果顺手喂给「侧栏文件夹」模块，避免它再单独发一次同样的请求
+    // （同一个接口请求两次既慢又更容易被 Cloudflare 限流）。
+    try {
+      if (typeof folderAbsorbProjectConvs === 'function') {
+        folderAbsorbProjectConvs(projectId, convs);
+      }
+    } catch (e) { /* 文件夹模块未启用时忽略 */ }
+
     return {
       project: { id: projectId, name: name || '项目' },
-      convs: all.map((c) => ({
-        id: c.id,
-        title: c.title || '未命名对话',
-        updated: c.update_time || c.create_time || null
-      }))
+      convs
     };
   }
 
@@ -3905,6 +4247,3343 @@
     }
   }
 
+
+  /* ============================================================
+   * 侧栏文件夹
+   * ==========================================================
+   * ChatGPT 原生侧栏只有「项目 / 最近」两个区块：不进项目的会话全挤在「最近」
+   * 一条长列表里，项目本身也不能再分组。这里在原生「项目」区块下方补一个
+   * 文件夹区块，把项目与会话按自己的分类放进去。
+   *
+   * 为什么不复用原生「项目」：原生项目是后端实体（会话只能属于一个 gizmo），
+   * 建项目要打后端接口，还会把会话真的搬过去。文件夹只是本地视图分组 ——
+   * 会话在原生列表里的位置、打开方式、URL 全都不变，文件夹只是多一个入口。
+   *
+   * 数据存 localStorage（键 'gpt_craber_folders'）。一个条目可以同时放进
+   * 多个文件夹：用户常按"课题 / 阶段"两个维度看同一批对话，强行一对一反而
+   * 逼人先决定删哪边。项目记作 'proj:g-p-xxx'，会话记裸 id。
+   */
+
+  const FOLDERS_KEY = 'gpt_craber_folders';
+  const FOLDERS_VER = 1;
+  const FOLDER_KID_MAX = 200;   // 单个文件夹最多展示的条目数，超出的只显示计数
+
+  let folderData = null;        // { ver, folders: [{ id, name, open, items: [] }] }
+  let foldersEl = null;         // 区块根节点（挂在原生 nav 里）
+  let foldersHostNav = null;    // 当前挂在哪个 nav 上，换了要重挂
+  let folderRenderedSig = '';   // 上次渲染的数据指纹，原生重渲染时不重复重建
+  let folderPjifyEl = null;     // 「归入文件夹」弹出菜单
+  let folderDndKind = null;     // 拖拽中的条目类型（'conv' | 'proj'）
+  let folderDndId = null;
+  let folderDndKey = null;    // 拖拽源的完整 key（含 kind 前缀）
+  let folderDndLabel = null;  // 拖拽源的显示名（项目需要它来记录名字）
+  let folderPjScanAt = 0;       // 原生行按钮扫描的节流时间戳
+
+  // 条目显示名与真实 href 的内存缓存：建条目时从原生行读到什么就先用什么，
+  // 之后每轮从原生列表补齐真名。不落盘 —— 原生列表一出现就能刷回来。
+  const folderTitleCache = Object.create(null);
+  const folderHrefCache = Object.create(null);
+
+  function folderUid() {
+    return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  function loadFolders() {
+    try {
+      const raw = localStorage.getItem(FOLDERS_KEY);
+      if (!raw) return { ver: FOLDERS_VER, projNames: {}, folders: [] };
+      const j = JSON.parse(raw);
+      const list = Array.isArray(j && j.folders) ? j.folders : [];
+      // projNames: "proj:<id>" -> 项目名。项目进文件夹时连名字一起存，
+      // 之后显示与"是否已添加"都靠它，不必再反查接口。
+      const projNames = (j && j.projNames && typeof j.projNames === 'object') ? j.projNames : {};
+      return {
+        ver: FOLDERS_VER,
+        projNames: projNames,
+        folders: list.filter((f) => f && typeof f.id === 'string').map((f) => ({
+          id: f.id,
+          name: typeof f.name === 'string' && f.name ? f.name : '文件夹',
+          open: f.open !== false,
+          items: Array.isArray(f.items) ? f.items.filter((x) => typeof x === 'string') : []
+        }))
+      };
+    } catch (e) {
+      console.warn('[gpt-craber] 文件夹数据损坏，已重置', e);
+      return { ver: FOLDERS_VER, projNames: {}, folders: [] };
+    }
+  }
+
+  function saveFolders() {
+    try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(folderData)); } catch (e) {}
+    folderRenderedSig = '';   // 数据变了，下一轮必须重画
+  }
+
+  function folderKeyOf(kind, id) {
+    return kind === 'proj' ? 'proj:' + id : String(id || '');
+  }
+
+  // 原生行链接 -> 条目。
+  //   项目内会话 /g/g-p-xxx/c/<conv>  -> 会话
+  //   项目主页   /g/g-p-xxx          -> 项目
+  //   普通会话   /c/<conv>           -> 会话
+  // 顺序很重要：项目内会话也匹配 /g/，必须先判 /c/，否则会被当成项目。
+  function folderEntryFromHref(href) {
+    if (!href) return null;
+    const cm = String(href).match(/\/c\/([^/?#]+)/);
+    if (cm) return { kind: 'conv', id: cm[1], key: folderKeyOf('conv', cm[1]) };
+    const pm = String(href).match(/^\/g\/(g-p-[0-9a-f]+)\/?$/);
+    if (pm) return { kind: 'proj', id: pm[1], key: folderKeyOf('proj', pm[1]) };
+    return null;
+  }
+
+  // 侧栏「项目」行不是链接（实测是 role="button" 的 div，没有 href），
+  // 拿不到 gizmo id，只能用项目名做键。同名项目在侧栏本就不允许，够用。
+  // 名字里可能出现分隔符，统一做一次可逆编码，避免和 conv 的裸 id 撞车。
+  function folderProjKeyByName(name) {
+    return 'projname:' + encodeURIComponent(String(name || '').trim());
+  }
+
+  function folderProjNameFromKey(key) {
+    const k = String(key || '');
+    // proj:<id>：名字存在 folderData.projNames 里
+    if (k.indexOf('proj:') === 0) {
+      const byId = folderData && folderData.projNames && folderData.projNames[k];
+      if (byId) return byId;
+      // 兜底：接口名称缓存
+      const gid = k.slice(5);
+      if (API._gizmoCache && API._gizmoCache[gid]) {
+        // 顺手补写进本地表，下次不再依赖接口缓存
+        folderRememberProjName(gid, API._gizmoCache[gid]);
+        return API._gizmoCache[gid];
+      }
+      // 都没有：异步补一次（不阻塞渲染）
+      folderEnsureProjName(gid, k);
+      return '';
+    }
+    if (k.indexOf('projname:') !== 0) return '';
+    try { return decodeURIComponent(k.slice(9)); } catch (e) { return ''; }
+  }
+
+  // 记录"项目 id -> 名字"，供以后显示使用（纯本地，不发请求）
+  // 统一的"把某项加入文件夹"入口。
+  // 所有路径（对话框、拖拽、菜单）都必须走这里：
+  // 项目键是 proj:<id>，名字必须同时记进 projNames，否则只能显示出 ID。
+  function folderAddItem(f, key, label) {
+    if (!f || !key) return false;
+    const nm = String(label || '').trim();
+
+    // proj:<id>：把名字记进 projNames（界面靠它显示，否则只剩 ID）
+    if (key.indexOf('proj:') === 0) {
+      const gid = key.slice(5);
+      const finalName = nm || (API._gizmoCache && API._gizmoCache[gid])
+        || folderProjNameFromKey(key);
+      if (finalName) folderRememberProjName(gid, finalName);
+    } else if (key.indexOf('projname:') === 0) {
+      // projname:<名字>：名字就在键里，顺手建立 id 映射（如果已知）
+      const name = folderProjNameFromKey(key);
+      const gid = folderProjIdByName[name];
+      if (gid && name) folderRememberProjName(gid, name);
+    }
+
+    if (f.items.indexOf(key) >= 0) return false;
+    f.items.push(key);
+    return true;
+  }
+
+  // 已知 ID 但缺名字时，异步补上并重绘（修复"显示出 g-p-xxxx"的旧数据）
+  const folderProjNameFetching = Object.create(null);
+  function folderEnsureProjName(gid, key) {
+    if (!gid || folderProjNameFetching[gid]) return;
+    folderProjNameFetching[gid] = true;
+    Promise.resolve()
+      .then(() => API.getGizmoName(gid))
+      .then((nm) => (nm ? nm : folderFetchProjNameCookie(gid)))
+      .then((nm) => {
+        folderProjNameFetching[gid] = false;
+        if (!nm) return;
+        folderRememberProjName(gid, nm);
+        folderRenderedSig = '';
+        renderFolders();
+      })
+      .catch(() => { folderProjNameFetching[gid] = false; });
+  }
+
+  function folderRememberProjName(gid, name) {
+    if (!gid || !name) return;
+    if (!folderData) return;
+    if (!folderData.projNames) folderData.projNames = Object.create(null);
+    const k = folderKeyOf('proj', gid);
+    if (folderData.projNames[k] === name) return;
+    folderData.projNames[k] = name;
+    saveFolders();
+  }
+
+  // 找侧栏里"项目行"：role=button、无 href、位于「项目」标题之后、「最近」标题之前。
+  function folderIsProjectRow(el) {
+    if (!el || el.getAttribute('role') !== 'button') return false;
+    if (el.querySelector('a[href]')) return false;      // 含链接的是容器不是行
+    // 排除我们自己的文件夹行/子项：它们也是 role=button，不加这条会被当成项目行，
+    // 于是标题取到文件夹名+计数、点开又把文件夹塞进文件夹（实测）。
+    if (el.closest('.craber-folders') || el.classList.contains('craber-folder')
+      || el.classList.contains('craber-folder-kid')) return false;
+    const h = el.getBoundingClientRect().height;
+    return h >= 20 && h <= 60;
+  }
+
+  function folderEntryTitle(a) {
+    const t = (a.getAttribute('aria-label') || a.textContent || '').trim();
+    return t.replace(/\s+/g, ' ').slice(0, 80) || '未命名';
+  }
+
+  function folderItemHref(kind, id) {
+    if (kind === 'proj') return '/g/' + id;
+    return folderHrefCache[id] || ('/c/' + id);
+  }
+
+  // 条目的可点击目标。项目按名字存的没有 URL，只能"回侧栏点同名项目行"。
+  function folderItemKindOf(key) {
+    if (String(key).indexOf('projname:') === 0) return 'projname';
+    if (String(key).indexOf('proj:') === 0) return 'proj';
+    return 'conv';
+  }
+
+  function folderRememberHref(entry, href) {
+    if (!entry || !href) return;
+    if (entry.kind === 'conv') folderHrefCache[entry.id] = href;
+  }
+
+  function folderFind(id) {
+    return folderData ? folderData.folders.find((f) => f.id === id) || null : null;
+  }
+
+  function folderToggleItem(folderId, key) {
+    const f = folderFind(folderId);
+    if (!f) return false;
+    const i = f.items.indexOf(key);
+    if (i >= 0) f.items.splice(i, 1);
+    else f.items.push(key);
+    saveFolders();
+    renderFolders();
+    return i < 0;   // true = 刚加进去
+  }
+
+  function folderCreate(name, key) {
+    const f = { id: folderUid(), name: name || '新建文件夹', open: true, items: key ? [key] : [] };
+    folderData.folders.push(f);
+    saveFolders();
+    renderFolders();
+    return f;
+  }
+
+  function folderRename(id) {
+    const f = folderFind(id);
+    if (!f) return;
+    craberPromptDialog({
+      title: '重命名文件夹',
+      subtitle: '保持简短且易于识别',
+      value: f.name,
+      confirmText: '保存',
+      onOk: (v) => {
+        f.name = v;
+        saveFolders();
+        renderFolders();
+        navToast('已重命名为「' + v + '」');
+      }
+    });
+  }
+
+  function folderDelete(id) {
+    const f = folderFind(id);
+    if (!f) return;
+    craberConfirmDialog({
+      title: '删除「' + f.name + '」？',
+      message: '只是取消这个分类，里面的会话与项目本身不会被删除。',
+      confirmText: '删除',
+      danger: true,
+      onOk: () => folderDeleteConfirmed(id)
+    });
+  }
+
+  function folderDeleteConfirmed(id) {
+    folderData.folders = folderData.folders.filter((x) => x.id !== id);
+    saveFolders();
+    renderFolders();
+  }
+
+  // 项目条目下的子会话列表：原地切换类名播放过渡（不重建 DOM）
+  function folderToggleProjOpen(key, row) {
+    folderProjOpen[key] = !folderProjOpen[key];
+    const open = !!folderProjOpen[key];
+    if (row) row.classList.toggle('open', open);
+    const host = row ? row.parentElement : null;
+    const sub = host && host.querySelector('.craber-folder-kid-sub[data-for="' + key + '"]');
+    if (sub) sub.classList.toggle('craber-collapsed', !open);
+    return open;
+  }
+
+  // 展开/收起：先原地加类触发过渡动画，再落盘。
+  // 不能直接 renderFolders()——整体重建 DOM 会让过渡失效（节点被换成新的），
+  // 看起来永远是瞬时切换。
+  function folderSetOpen(id, open) {
+    const f = folderFind(id);
+    if (!f) return;
+    const next = !!open;
+    f.open = next;
+    saveFolders();
+
+    // 1) 原地改类：animation 立刻开始
+    if (foldersEl) {
+      const row = foldersEl.querySelector('.craber-folder[data-folder-id="' + id + '"]');
+      if (row) row.classList.toggle('open', next);
+      const kids = row && row.nextElementSibling;
+      if (kids && kids.classList.contains('craber-folder-kids')) {
+        kids.classList.toggle('craber-collapsed', !next);
+      }
+    }
+    // 2) 箭头/高亮等其它视觉同步（不重建结构）
+    folderRenderedSig = '';
+
+    // 3) 动画结束后再让整体渲染接管（此时状态已一致，不会跳）
+    setTimeout(() => {
+      folderRenderedSig = '';
+      renderFolders();
+    }, 240);
+  }
+
+  // 项目行没有 href，只能"在侧栏找到同名行并点它"，让 ChatGPT 自己路由。
+  function folderOpenProjectByName(name) {
+    if (!name) return;
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (nav) {
+      const row = [...nav.querySelectorAll('[role="button"]')].find((el) => {
+        if (!folderIsProjectRow(el)) return false;
+        return (el.textContent || '').trim() === name;
+      });
+      if (row) { row.click(); return; }
+    }
+    // 侧栏没渲染这一行（折叠/滚出视口）：退回项目列表页
+    folderNavigate('/projects');
+  }
+
+  function folderNavigate(href) {
+    folderClosePjify();
+    const a = document.createElement('a');
+    a.href = href;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 0);
+  }
+
+  /* ---------- 图标 ---------- */
+
+  // 图标统一 stroke-width 1.7、viewBox 24，尺寸靠 CSS 控制（文件夹行 14px / 子项 13px）。
+  const FOLDER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"'
+    + ' stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a1.5 1.5 0 0 1 1.5-1.5H9l2 2h7.5A1.5 1.5 0 0 1 21 9v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17z"/></svg>';
+  const FOLDER_CHEV = '<svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor"'
+    + ' stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
+  // 会话 = 对话气泡
+  const FOLDER_CONV_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"'
+    + ' stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H8l-4 2.5V12a7 7 0 0 1 7-7h2a7 7 0 0 1 7 7z"/></svg>';
+  // 项目 = 公文包（和文件夹图标明显不同）
+  const FOLDER_PROJ_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"'
+    + ' stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.5" width="18" height="11.5" rx="2"/>'
+    + '<path d="M8.5 7.5V6a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v1.5"/><path d="M3 12h18"/></svg>';
+  const FOLDER_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"'
+    + ' stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.5 5.5L20 6.5"/></svg>';
+
+  // 文件夹行上的"添加"图标（+）
+  const FOLDER_PLUS = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
+
+  // 菜单图标：与原生菜单同风格（1.7 描边、16px）
+  const mi = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"'
+    + ' stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+  // 图标全部按原版菜单的样式与尺寸（16px、1.7 描边）
+  const MENU_ICON = {
+    // 打开（外链箭头）
+    open: mi('<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>'),
+    // 展开/收起
+    expand: mi('<path d="M6 9l6 6 6-6"/>'),
+    // 重命名（铅笔，与原版一致）
+    rename: mi('<path d="M16.5 4.5a2.12 2.12 0 0 1 3 3L8 19l-4 1 1-4z"/>'),
+    // 置顶（图钉）
+    pin: mi('<path d="M12 17v5"/><path d="M9 3h6l-1 7 3 3v2H7v-2l3-3z"/>'),
+    // 分享
+    share: mi('<path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>'),
+    // 归档（盒子）
+    archive: mi('<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/>'),
+    // 删除（垃圾桶，原版样式）
+    remove: mi('<path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12"/>'),
+    // 移入文件夹
+    move: mi('<path d="M3 7a1.5 1.5 0 0 1 1.5-1.5H9l2 2h7.5A1.5 1.5 0 0 1 20 9v8a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 17z"/><path d="M12 11v5"/><path d="M9.5 13.5L12 16l2.5-2.5"/>'),
+    // 从文件夹移除
+    unmove: mi('<path d="M3 7a1.5 1.5 0 0 1 1.5-1.5H9l2 2h7.5A1.5 1.5 0 0 1 20 9v8a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 17z"/><path d="M10 11l4 4M14 11l-4 4"/>'),
+    // 更多（三个点，用于"打开原生菜单"）
+    more: mi('<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/>'
+      + '<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>'
+      + '<circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>'),
+    // 右侧子菜单箭头
+    chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+      + ' stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>'
+  };
+
+  function folderEl(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  /* ---------- 挂载点 ---------- */
+
+  // 原生「项目」区块的边界。
+  // 实测侧栏是 nav > 滚动容器 > (contents)> [项目区块][最近区块]，
+  // 而项目区块里的行既有项目本身（/g/g-p-xxx），也有最近打开的项目内会话
+  // （/g/g-p-xxx/c/yyy），两者都是 /g/ 开头。所以"是否越界"就看父节点里
+  // 有没有以 /c/ 开头的普通会话链接 —— 有就说明把「最近」区块也包进来了。
+  // 找最深的那个"文本正好等于 text"的元素当区块标题。
+  // 用最深（children 最少）避免命中包裹了整个侧栏的大容器。
+  function folderSectionHead(nav, text) {
+    let best = null;
+    for (const d of nav.querySelectorAll('*')) {
+      if ((d.textContent || '').trim() !== text) continue;
+      if (!best || d.children.length < best.children.length) best = d;
+    }
+    return best;
+  }
+
+  function folderMountPoint(nav) {
+    // 目标：插在「项目」区块之前（文件夹在项目上方）。
+    //
+    // 曾经的坑：靠"往上爬直到遇到 /c/ 链接"来定位区块级容器。
+    // 项目折叠时区块里没有 /c/ 链接，条件永不成立，于是爬到侧栏最外层，
+    // 结果文件夹被插到了「图像」下面（顶部功能区之间）。实测踩到过。
+    //
+    // 现在改用稳定特征：原生「项目」区块与「最近」区块是**兄弟**。
+    // 向上爬到"父级里出现了「最近」标题、而自己内部还没有"为止，那一层就是项目区块。
+    const projHead = folderSectionHead(nav, '项目');
+    const recHead = folderSectionHead(nav, '最近');
+
+    if (projHead) {
+      let node = projHead;
+      for (let i = 0; i < 12 && node.parentElement && node.parentElement !== nav; i++) {
+        const p = node.parentElement;
+        if (recHead) {
+          const recInParent = p.contains(recHead);
+          const recInNode = node.contains(recHead);
+          if (recInParent && !recInNode) break;   // 这一层已是项目区块（与最近同级）
+        } else {
+          // 没有「最近」区块可对照：停在"父级有多个孩子"的那层（区块级列表）
+          if (p.children.length > 1) break;
+        }
+        node = p;
+      }
+      if (node.parentElement) return { parent: node.parentElement, before: node };
+    }
+
+    // 退路：没有「项目」标题时，挂在「最近」区块之前
+    if (recHead) {
+      let node = recHead;
+      for (let i = 0; i < 12 && node.parentElement && node.parentElement !== nav; i++) {
+        const p = node.parentElement;
+        if (p.children.length > 1) break;
+        node = p;
+      }
+      if (node.parentElement) return { parent: node.parentElement, before: node };
+    }
+    return { parent: nav, before: null };
+  }
+
+  /* ---------- 区块渲染 ---------- */
+
+  // 数据指纹：只有内容真的变了才重建 DOM。原生侧栏会频繁重渲染，
+  // 无条件重建会把展开动画和 hover 状态一直打断。
+  function folderSignature() {
+    if (!folderData) return '';
+
+    // 条目的显示标题（重命名后会变）也必须进指纹，
+    // 否则改完名字界面不刷新 —— 和项目展开状态是同一类问题。
+    const titleOf = (k) => {
+      const kind = folderItemKindOf(k);
+      if (kind === 'projname') return folderProjNameFromKey(k);
+      return folderTitleCache[k] || '';
+    };
+
+    const parts = folderData.folders.map((f) => f.id + '|' + f.name + '|' + (f.open ? 1 : 0)
+      + '|' + f.items.map((k) => k + '=' + titleOf(k)).join(',')
+      + '|' + (folderHasCurrent(f) ? 1 : 0));
+
+    // 项目条目：展开状态 + 该项目的会话列表内容，都必须进签名。
+    // 否则"展开项目 / 拉到会话"时签名不变，renderFolders 直接 return，
+    // 界面就不会更新（这是前端看起来卡住的根因）。
+    const projParts = [];
+    const seenProj = new Set();
+    for (const f of folderData.folders) {
+      for (const k of f.items) {
+        const kind = folderItemKindOf(k);
+        if (kind !== 'proj' && kind !== 'projname') continue;
+        if (seenProj.has(k)) continue;
+        seenProj.add(k);
+        const convs = folderProjConvs(k) || [];
+        const st = folderProjConvState[k] || folderProjConvState[folderKeyOf('proj', folderProjGizmoId(k) || '')] || '';
+        projParts.push(k + ':' + (folderProjOpen[k] ? 1 : 0) + ':' + st
+          + ':' + convs.map((c) => c.key + (craberIsPinned ? (craberIsPinned(String(c.key).replace(/^conv:/, '')) ? '+' : '') : '')).join(','));
+      }
+    }
+
+    // 带上当前会话 id / 项目，路径变化时高亮要重算
+    return parts.join(';')
+      + '||' + projParts.join(';')
+      + '|' + location.pathname
+      + '|' + (folderCurrentConvId() || '');
+  }
+
+  function renderFolders() {
+    if (!uiPrefs.folders) { folderUnmount(); return; }
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (!nav) { folderUnmount(); return; }
+
+    const sig = folderSignature();
+    if (foldersEl && foldersEl.isConnected && foldersHostNav === nav
+      && sig === folderRenderedSig) return;   // 与上一帧一致，不动
+
+    const root = folderEl('div', 'craber-folders');
+
+    const hd = folderEl('div', 'craber-folders-hd');
+    hd.append(folderEl('span', 'craber-folders-label', '文件夹'));
+    const add = folderEl('button', 'craber-folders-add', '+');
+    add.type = 'button';
+    add.title = '新建文件夹';
+    add.setAttribute('aria-label', '新建文件夹');
+    add.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      craberPromptDialog({
+        title: '新建文件夹',
+        subtitle: '用来给项目和会话分类',
+        value: '',
+        placeholder: '文件夹名称',
+        confirmText: '创建',
+        onOk: (v) => { folderCreate(v); }
+      });
+    });
+    hd.append(add);
+    root.append(hd);
+
+    if (!folderData.folders.length) {
+      root.append(folderEl('div', 'craber-folder-empty', '还没有文件夹。点 + 新建，再把项目或会话拖进来。'));
+    }
+
+    for (const f of folderData.folders) {
+      root.append(folderBuildRow(f));
+      // 始终渲染子项：只有节点在 DOM 里，收起才能播高度过渡动画。
+      // 收起态由 .craber-collapsed（grid-template-rows: 0fr）表达，不占空间。
+      root.append(folderBuildKids(f));
+    }
+
+    // 拖到区块空白处 = 放进第一个文件夹
+    root.addEventListener('dragover', (e) => {
+      if (!folderDndId) return;
+      e.preventDefault();
+      root.classList.add('drag-over');
+    });
+    root.addEventListener('dragleave', () => root.classList.remove('drag-over'));
+    root.addEventListener('drop', (e) => {
+      root.classList.remove('drag-over');
+      if (!folderDndId) return;
+      e.preventDefault();
+      if (!folderData.folders.length) { navToast('先新建一个文件夹'); return; }
+      const f0 = folderData.folders[0];
+      const key = folderDndKey || folderKeyOf(folderDndKind, folderDndId);
+      folderAddItem(f0, key, folderDndLabel);
+      saveFolders();
+      renderFolders();
+      navToast('已加入「' + f0.name + '」');
+      folderDndId = null;
+      folderDndKey = null;
+    });
+
+    const mp = folderMountPoint(nav);
+    try { mp.parent.insertBefore(root, mp.before || null); } catch (e) { mp.parent.appendChild(root); }
+
+    if (foldersEl && foldersEl !== root && foldersEl.parentElement) foldersEl.remove();
+    foldersEl = root;
+    foldersHostNav = nav;
+    folderRenderedSig = sig;
+  }
+
+  // 自动展开：进入某个会话时，把它所在的文件夹展开一次。
+  // 用户手动收起过的不再强开（用 folderAutoOpened 记住已自动开过）。
+  const folderAutoOpened = Object.create(null);
+  // 项目行（文件夹内的项目条目）展开状态：key -> boolean。存内存，刷新回到收起。
+  const folderProjOpen = Object.create(null);
+  function folderAutoExpand() {
+    if (!folderData) return false;
+    let changed = false;
+
+    // 1) 文件夹层：当前会话所在的文件夹自动展开一次
+    for (const f of folderData.folders) {
+      if (f.open) continue;
+      if (!folderHasCurrent(f)) continue;
+      if (folderAutoOpened[f.id]) continue;   // 已经自动开过，尊重用户手动收起
+      f.open = true;
+      folderAutoOpened[f.id] = true;
+      changed = true;
+    }
+
+    // 2) 项目层：文件夹里"装着当前会话所属项目"的那一项，也要自动展开，
+    //    这样一进会话就能直接看到它在文件夹里的位置，不用手点箭头。
+    const conv = folderCurrentConvId();
+    if (conv) {
+      const href = folderCurrentConvHref();
+      // 先从链接取 gid；侧栏没渲染该项目（未展开）时链接里没有 /g/，
+      // 这时退回当前 URL —— 用户此刻就在这个项目里，一定对。
+      let gid = href ? (String(href).match(/\/g\/(g-p-[0-9a-f]+)/) || [])[1] : null;
+      if (!gid) {
+        const cur = location.pathname.match(/\/g\/(g-p-[0-9a-f]+)/);
+        if (cur) gid = cur[1];
+      }
+      const pname = folderCurrentProjName();
+      const cand = [];
+      if (gid) cand.push(folderKeyOf('proj', gid));
+      if (pname) cand.push(folderProjKeyByName(pname));
+      // 兜底：文件夹里实际存在的项目键，只要"该项目名/ID 与当前会话匹配"也算
+      // （projname 与 proj: 两种形式常常只有一个能算出来）
+      for (const f of folderData.folders) {
+        for (const k of f.items) {
+          if (folderItemKindOf(k) !== 'projname') continue;
+          if (gid && folderProjIdByName[folderProjNameFromKey(k)] === gid) cand.push(k);
+          if (pname && folderProjNameFromKey(k) === pname) cand.push(k);
+        }
+      }
+
+      for (const key of cand) {
+        if (!key) continue;
+        if (folderProjOpen[key] === true) continue;
+        if (folderAutoOpened['proj:' + key]) continue;   // 已经自动开过，尊重手动收起
+        // 只有这个项目确实出现在某个文件夹里才展开（否则没意义）
+        const inAny = folderData.folders.some((f) => f.items.indexOf(key) >= 0);
+        if (!inAny) continue;
+        folderProjOpen[key] = true;
+        folderAutoOpened['proj:' + key] = true;
+        // 展开后立刻把 DOM 上的类切过来（不然要等整轮 render 才有动画）
+        const subEl = foldersEl
+          && foldersEl.querySelector('.craber-folder-kid-sub[data-for="' + key + '"]');
+        if (subEl) {
+          subEl.classList.remove('craber-collapsed');
+          const rowEl = subEl.parentElement
+            && subEl.parentElement.querySelector('.craber-folder-kid');
+          if (rowEl) rowEl.classList.add('open');
+        }
+        changed = true;
+      }
+    }
+
+    if (changed) saveFolders();
+    return changed;
+  }
+
+  // 当前正在浏览的会话 id（会话页才有）
+  function folderCurrentConvId() {
+    return getConvId();
+  }
+
+  // 某个条目是不是"当前正在看的会话"。
+  // 不能比整条路径：真实 URL 常带项目 slug（/g/g-p-xxx-可读名/c/id），
+  // 而缓存里的 href 是不带 slug 的标准形式，直接比会永远不相等。
+  function folderIsActiveConv(c) {
+    const cur = folderCurrentConvId();
+    if (!cur || !c) return false;
+    if (c.key === folderKeyOf('conv', cur)) return true;
+    if (c.id === cur) return true;
+    return false;
+  }
+
+  // 侧栏里"当前会话"那条链接的 href；侧栏没渲染时退回 location.pathname
+  function folderCurrentConvHref() {
+    const conv = folderCurrentConvId();
+    if (!conv) return null;
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (nav) {
+      const a = [...nav.querySelectorAll('a[href]')].find((el) => {
+        const e = folderEntryFromHref(el.getAttribute('href'));
+        return e && e.kind === 'conv' && e.id === conv;
+      });
+      if (a) return a.getAttribute('href');
+    }
+    return location.pathname;
+  }
+
+  // 当前会话所属项目的 key 列表（项目内会话才有）。
+  // 两种键形式都试：proj:<gizmoId> 和 projname:<名字>。
+  function folderCurrentProjKeys() {
+    const href = folderCurrentConvHref();
+    const out = [];
+    if (!href) return out;
+    const gm = String(href).match(/\/g\/(g-p-[0-9a-f]+)/);
+    if (gm) out.push(folderKeyOf('proj', gm[1]));
+    // 名字形式：项目行与会话行在原生侧栏里是"兄弟"（同属一个项目块），
+    // 所以不能从会话往上找项目行，而要找到包住两者的那个块，再取块里的项目行文本。
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (nav) {
+      const a = [...nav.querySelectorAll('a[href]')].find((el) => el.getAttribute('href') === href);
+      if (a) {
+        let n = a;
+        for (let i = 0; i < 8 && n && n.tagName !== 'NAV'; i++) {
+          n = n.parentElement;
+          if (!n || n.tagName === 'NAV') break;
+          // 这个祖先里若有一个"项目行"按钮，就说明找到项目块了
+          const projRow = [...n.querySelectorAll('[role="button"]')]
+            .find((el) => folderIsProjectRow(el) && (el.textContent || '').trim());
+          if (projRow) {
+            out.push(folderProjKeyByName((projRow.textContent || '').trim()));
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  // 文件夹里是否包含"我现在正在看的东西"：当前会话本身，或它所属的项目。
+  // 项目有两种键（proj:<gizmoId> / projname:<名字>），同一项目的两种形式要能互相匹配。
+  function folderHasCurrent(f) {
+    const conv = folderCurrentConvId();
+    if (conv && f.items.indexOf(folderKeyOf('conv', conv)) >= 0) return true;
+    const pkeys = folderCurrentProjKeys();
+    if (pkeys.some((k) => f.items.indexOf(k) >= 0)) return true;
+    // 桥接：把当前项目的名字取出来，和文件夹里的 projname:<名字> 比
+    const name = folderCurrentProjName();
+    if (name && f.items.indexOf(folderProjKeyByName(name)) >= 0) return true;
+    return false;
+  }
+
+  // 当前会话所属项目的"名字"。
+  // 实测：项目行与会话行在原生侧栏里不在同一条祖先链上（上溯 6 层都碰不到），
+  // 所以不能靠 DOM 结构推断。改为按 gizmo id 查缓存名（API.getGizmoName 已带缓存），
+  // 缓存里没有就先返回 null，并异步预热，下一轮 tick 就能命中。
+  const folderGizmoNameCache = Object.create(null);
+  function folderCurrentProjName() {
+    const href = folderCurrentConvHref();
+    // 侧栏未渲染该项目时链接里没有 /g/，退回当前 URL
+    let gid = href ? (String(href).match(/\/g\/(g-p-[0-9a-f]+)/) || [])[1] : null;
+    if (!gid) {
+      const cur = location.pathname.match(/\/g\/(g-p-[0-9a-f]+)/);
+      if (cur) gid = cur[1];
+    }
+    if (!gid) return null;
+    if (folderGizmoNameCache[gid]) return folderGizmoNameCache[gid];
+    // 同步拿不到：异步取一次，取到后清签名触发重绘
+    if (!folderGizmoNameCache['pending:' + gid]) {
+      folderGizmoNameCache['pending:' + gid] = true;
+      Promise.resolve().then(() => API.getGizmoName(gid)).then((name) => {
+        if (!name) return;
+        folderGizmoNameCache[gid] = name;
+        folderRenderedSig = '';   // 让下一轮 tick 重画（高亮/自动展开跟上）
+      }).catch(() => {});
+    }
+    return null;
+  }
+
+  function folderBuildRow(f) {
+    const cur = folderHasCurrent(f);
+    const row = folderEl('div', 'craber-folder' + (f.open ? ' open' : '')
+      + (cur ? ' has-current' : ''));
+    row.dataset.folderId = f.id;
+    row.setAttribute('role', 'button');
+    row.setAttribute('tabindex', '0');
+    row.setAttribute('aria-expanded', f.open ? 'true' : 'false');
+
+    const chev = folderEl('span', 'craber-folder-chev');
+    chev.innerHTML = FOLDER_CHEV;
+    const ico = folderEl('span', 'craber-folder-ico');
+    ico.innerHTML = FOLDER_ICON;
+    const name = folderEl('span', 'craber-folder-name', f.name);
+    name.title = f.name + '（双击重命名）';
+    const add = folderEl('button', 'craber-folder-more craber-folder-add');
+    add.type = 'button';
+    add.innerHTML = FOLDER_PLUS;
+    add.title = '添加会话或项目到此文件夹';
+    add.setAttribute('aria-label', '添加会话或项目');
+    add.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      folderOpenAddPicker(add, f);
+    });
+    const more = folderEl('button', 'craber-folder-more', '⋯');
+    more.type = 'button';
+    more.title = '文件夹操作';
+    more.setAttribute('aria-label', '文件夹操作');
+
+    more.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      folderMoreMenu(more, f);
+    });
+    name.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      folderRename(f.id);
+    });
+    row.addEventListener('click', (e) => {
+      if (more.contains(e.target)) return;
+      folderSetOpen(f.id, !f.open);
+    });
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); folderSetOpen(f.id, !f.open); }
+      else if (e.key === 'F2') { e.preventDefault(); folderRename(f.id); }
+      else if (e.key === 'Delete') { e.preventDefault(); folderDelete(f.id); }
+    });
+    // 行本身也是落点：拖到文件夹头上直接加入
+    row.addEventListener('dragover', (e) => {
+      if (!folderDndId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      row.classList.add('drag-over');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+    row.addEventListener('drop', (e) => {
+      if (!folderDndId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      row.classList.remove('drag-over');
+      const key = folderDndKey || folderKeyOf(folderDndKind, folderDndId);
+      if (f.items.indexOf(key) >= 0) navToast('已经在「' + f.name + '」里了');
+      else {
+        // 走统一入口：项目会顺带记下名字
+        folderAddItem(f, key, folderDndLabel);
+        saveFolders();
+        renderFolders();
+        navToast('已加入「' + f.name + '」');
+      }
+      folderDndId = null;
+      folderDndKey = null;
+    });
+
+    row.append(chev, ico, name, add, more);
+    return row;
+  }
+
+  function folderBuildKids(f) {
+    const box = folderEl('div', 'craber-folder-kids');
+    // 渲染前就带好收起态：避免先展开再收起闪一下
+    if (!f.open) box.classList.add('craber-collapsed');
+
+    // 内层包裹：缩进放在这里，折叠时才能完全不留空白
+    const inner = folderEl('div', 'craber-folder-kids-in');
+    box.append(inner);
+
+    if (!f.items.length) {
+      inner.append(folderEl('div', 'craber-folder-empty', '空文件夹 · 把会话或项目拖进来'));
+      return box;
+    }
+    for (const key of f.items.slice(0, FOLDER_KID_MAX)) {
+      inner.append(folderBuildKid(f, key));
+      // 项目行后面挂子会话列表（展开/收起由 folderProjOpen 控制）
+      const kind = folderItemKindOf(key);
+      if (kind === 'proj' || kind === 'projname') inner.append(folderBuildKidSub(key));
+    }
+    if (f.items.length > FOLDER_KID_MAX) {
+      inner.append(folderEl('div', 'craber-folder-empty',
+        '还有 ' + (f.items.length - FOLDER_KID_MAX) + ' 项未显示'));
+    }
+    return box;
+  }
+
+  // 从侧栏 DOM 找某项目下的会话行（/g/g-p-xxx/c/yyy 形式的链接）。
+  // 只找当前侧栏已渲染的，虚拟滚动没加载出来的不强求。
+  // 项目会话缓存：key -> [{id,title}]。来自后端接口，不再依赖侧栏是否渲染。
+  const folderProjConvCache = Object.create(null);   // key -> array
+  const folderProjConvState = Object.create(null);   // key -> 'idle'|'loading'|'done'|'error'
+  const folderProjConvRetryAt = Object.create(null); // key -> 允许重试的时间戳
+
+  // 解析出项目的 gizmo id。proj:<id> 直接可读；projname:<名字> 需要反查：
+  //   1) 当前 URL 里的 g-p（最可靠）
+  //   2) 侧栏同名项目块里的 /g/ 链接
+  //   3) 异步用项目名反查 gizmo 列表（见 folderResolveProjIdByName）
+  // 正在异步反查中的项目名（防止同一名字被反复触发请求）
+  const folderProjResolvePending = Object.create(null);
+
+  function folderProjGizmoId(key) {
+    const kind = folderItemKindOf(key);
+    if (kind === 'proj') {
+      const id = key.slice(5);
+      return /^g-p-/.test(id) ? id : null;      // 防止 proj: 后跟空串
+    }
+    const name = folderProjNameFromKey(key);
+    if (!name) return null;
+    const cached = folderProjIdByName[name];
+    if (cached) return cached;
+
+    // 1) 当前页就是这个项目（URL 里有 /g/g-p-xxx/）。
+    // 若名字缓存命中且一致，直接采用；名字拿不到（接口 403）时也采用 URL 的 id，
+    // 因为用户此刻就在这个项目里，几乎不可能错——拿不到 id 反而整个功能瘫痪。
+    const m = location.pathname.match(/\/g\/(g-p-[0-9a-f]+)/);
+    if (m) {
+      const known = API._gizmoCache && API._gizmoCache[m[1]];
+      if (known == null || String(known).trim() === String(name).trim()) return m[1];
+    }
+
+    // 2) 纯接口：触发一次名字反查（异步），本轮先返回 null。
+    // 不再读侧栏 —— 侧栏只是"已渲染的部分"，不适合当 ID 来源。
+    if (!folderProjResolvePending[name]) {
+      folderProjResolvePending[name] = true;
+      folderResolveProjIdByName(name).then((id) => {
+        folderProjResolvePending[name] = false;
+        if (id) {
+          // 拿到 id 后，把文件夹里的名字键迁移成 id 键，之后永久不用再反查。
+          // 关键：迁移时必须把名字一并记进 projNames，
+          // 否则 id 键没有对应名字，界面就只剩 "项目 g-p-xxxx"（实测踩到）。
+          if (folderData) {
+            let changed = false;
+            const oldKey = folderProjKeyByName(name);
+            const newKey = folderKeyOf('proj', id);
+            folderRememberProjName(id, name);
+            for (const f of folderData.folders) {
+              const i = f.items.indexOf(oldKey);
+              if (i >= 0 && f.items.indexOf(newKey) < 0) {
+                f.items[i] = newKey;
+                changed = true;
+              }
+            }
+            if (changed) saveFolders();
+          }
+          folderRenderedSig = '';
+          renderFolders();
+        }
+      }).catch(() => { folderProjResolvePending[name] = false; });
+    }
+    return null;
+  }
+
+  // 判断某个 gizmo id 对应的项目名是否等于 name（用 API.getGizmoName 的缓存）。
+  // 缓存里没有就返回"未知"，此时保守地认为不匹配，交给其它路径去找。
+  function folderNativeProjectNameIs(gid, name) {
+    if (!gid || !name) return false;
+    const known = API._gizmoCache && API._gizmoCache[gid];
+    if (known == null) {
+      // 顺手预热缓存
+      Promise.resolve().then(() => API.getGizmoName(gid)).catch(() => {});
+      return false;
+    }
+    return String(known).trim() === String(name).trim();
+  }
+
+  // 项目名 -> gizmo id 的解析结果缓存
+  const folderProjIdByName = Object.create(null);
+
+  // 用项目名在用户的 gizmo 列表里反查 id（只查一次，结果进缓存）
+  // 把侧栏里出现过的 gizmo id 都收集起来（含项目内会话链接 /g/g-p-xxx/c/yyy）
+  // 收集已知的 gizmo id（纯接口 + URL）。
+  // 侧栏不参与：它只包含已渲染的部分，不该被当作数据源。
+  function folderCollectGizmoIds() {
+    const ids = new Set();
+    // 已知映射里的 id
+    for (const k of Object.keys(folderProjIdByName)) {
+      const id = folderProjIdByName[k];
+      if (id) ids.add(id);
+    }
+    // 当前页面所在项目
+    const cur = location.pathname.match(/\/g\/(g-p-[0-9a-f]+)/);
+    if (cur) ids.add(cur[1]);
+    // 已缓存的项目会话
+    for (const k of Object.keys(folderProjConvCache)) {
+      const m = String(k).match(/^proj:(g-p-[0-9a-f]+)$/);
+      if (m) ids.add(m[1]);
+    }
+    return [...ids];
+  }
+
+  // 用项目名反查 gizmo id：拿侧栏里的候选 id 逐个问名字，命中即返回。
+  // 这比猜接口路径稳妥，且 API.getGizmoName 自带缓存，不会重复请求。
+  // 用项目名反查 gizmo id（纯接口）。
+  // 先问项目列表（一次拿全量，最省）；不行再从候选 id 里逐个问名字。
+  async function folderResolveProjIdByName(name) {
+    if (!name) return null;
+    if (folderProjIdByName[name]) return folderProjIdByName[name];
+
+    // 1) 项目列表接口：一次就能建立"名字 -> id"的全量映射
+    try {
+      const list = await craberListProjects();
+      for (const p of list) {
+        if (!p.name || !p.id) continue;
+        folderProjIdByName[p.name] = p.id;
+      }
+      if (folderProjIdByName[name]) {
+        folderRenderedSig = '';
+        return folderProjIdByName[name];
+      }
+    } catch (e) { /* 继续走候选 */ }
+
+    // 2) 候选 id 逐个问名字
+    const cands = folderCollectGizmoIds();
+    for (const gid of cands) {
+      try {
+        let gn = await API.getGizmoName(gid);
+        if (!gn) gn = await folderFetchProjNameCookie(gid);
+        if (gn) folderProjIdByName[String(gn).trim()] = gid;
+        if (gn && String(gn).trim() === String(name).trim()) {
+          folderRenderedSig = '';
+          return gid;
+        }
+      } catch (e) { /* 单个失败不影响其它候选 */ }
+    }
+    return null;
+  }
+
+  // 同步读缓存（渲染用）。缓存空则触发一次异步拉取，拉完清签名重画。
+  // 关键：接口返回为空时，仍要保留侧栏已渲染的会话，不能直接显示"没有会话"。
+  function folderProjConvs(key) {
+    const kind = folderItemKindOf(key);
+    const gid = folderProjGizmoId(key);
+    const cacheKey = kind === 'proj' ? key : (gid ? folderKeyOf('proj', gid) : key);
+
+    // 已缓存：直接用。
+    // 注意：项目有 proj:<id> 与 projname:<名字> 两种键，任一种命中都算有数据。
+    if (folderProjConvCache[cacheKey]) return folderProjConvCache[cacheKey];
+    if (gid) {
+      const byId = folderProjConvCache[folderKeyOf('proj', gid)];
+      if (byId) {
+        folderProjConvCache[cacheKey] = byId;
+        folderProjConvState[cacheKey] = 'done';
+        return byId;
+      }
+    }
+    // 反向：只有 projname 键有数据时，proj:<id> 也认它
+    if (kind === 'proj' && folderProjConvCache[cacheKey]) {
+      folderProjConvState[cacheKey] = 'done';
+    }
+
+    // 没缓存：侧栏兜底（当前已渲染的部分先顶上），同时后台拉全量
+    const fallback = folderProjConvsFromSidebar(gid);
+    // error 状态到点后允许重试（Cloudflare 限流过去就好了）
+    if (folderProjConvState[cacheKey] === 'error') {
+      const at = folderProjConvRetryAt[cacheKey] || 0;
+      if (Date.now() >= at) {
+        delete folderProjConvState[cacheKey];
+        delete folderProjConvRetryAt[cacheKey];
+      }
+    }
+    if (folderProjConvState[cacheKey] !== 'loading' && folderProjConvState[cacheKey] !== 'done') {
+      folderProjConvState[cacheKey] = 'loading';
+      if (gid) {
+        // 项目条通常也在拉同一个项目：先等一下它，能省掉一次重复请求
+        const waitPbar = (pbarForProject === gid && pbarConvs && pbarConvs.length)
+          ? Promise.resolve()
+          : new Promise((r) => setTimeout(r, 600));
+        waitPbar.then(() => {
+          // 等的这一会儿项目条可能已经把数据喂过来了
+          if (folderProjConvCache[cacheKey] || folderProjConvCache[folderKeyOf('proj', gid)]) {
+            folderProjConvState[cacheKey] = 'done';
+            folderRenderedSig = '';
+            return null;
+          }
+          return folderLoadProjConvs(key, gid);
+        }).catch(() => {
+          // 失败：先把侧栏已有的顶上，标记 error 但允许 30 秒后自动重试
+          if (fallback.length) {
+            folderProjConvCache[cacheKey] = fallback;
+            folderProjConvState[cacheKey] = 'done';
+          } else {
+            folderProjConvState[cacheKey] = 'error';
+            folderProjConvRetryAt[cacheKey] = Date.now() + 30000;
+          }
+          folderRenderedSig = '';
+        });
+      } else if (kind === 'projname') {
+        // 没有 gizmo id：先按名字反查，拿到 id 后再拉会话
+        const nm = folderProjNameFromKey(key);
+        folderResolveProjIdByName(nm).then((id) => {
+          if (!id) {
+            folderProjConvState[cacheKey] = 'done';
+            folderRenderedSig = '';
+            return;
+          }
+          folderProjIdByName[nm] = id;
+          return folderLoadProjConvs(key, id);
+        }).catch(() => { folderProjConvState[cacheKey] = 'error'; });
+      } else {
+        folderProjConvState[cacheKey] = 'done';
+      }
+    }
+    return fallback;
+  }
+
+  // 从侧栏 DOM 兜底（首屏先有东西可看）
+  function folderProjConvsFromSidebar(gid) {
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (!nav || !gid) return [];
+    const out = [];
+    const seen = new Set();
+    nav.querySelectorAll('a[href]').forEach((a) => {
+      const entry = folderEntryFromHref(a.getAttribute('href'));
+      if (!entry || entry.kind !== 'conv') return;
+      const href = a.getAttribute('href') || '';
+      const gm = href.match(/\/g\/(g-p-[0-9a-f]+)\//);
+      if (!gm || gm[1] !== gid) return;
+      if (seen.has(entry.id)) return;
+      seen.add(entry.id);
+      folderRememberHref(entry, href);
+      out.push({ key: entry.key, label: folderEntryTitle(a), href });
+    });
+    return out;
+  }
+
+  // 吸收「项目条」已经拉到的会话列表，直接写进文件夹缓存。
+  // 项目条与文件夹用的是同一个接口，没必要各请求一次。
+  function folderAbsorbProjectConvs(gid, convs) {
+    if (!gid || !Array.isArray(convs) || !convs.length) return;
+    const list = convs.map((c) => {
+      const id = c.id;
+      if (!id) return null;
+      const title = c.title || '未命名对话';
+      const k = folderKeyOf('conv', id);
+      folderTitleCache[k] = title;
+      folderHrefCache[id] = '/g/' + gid + '/c/' + id;
+      return { key: k, label: title, href: folderHrefCache[id] };
+    }).filter(Boolean);
+    if (!list.length) return;
+    const pk = folderKeyOf('proj', gid);
+    folderProjConvCache[pk] = list;
+    folderProjConvState[pk] = 'done';
+    // 这个项目名与 id 的对应关系也记住：之后 projname 键直接能查到数据
+    try {
+      API.getGizmoName(gid).then((nm) => {
+        if (!nm) return;
+        folderProjIdByName[String(nm).trim()] = gid;
+        const nk = folderProjKeyByName(String(nm).trim());
+        folderProjConvCache[nk] = list;
+        folderProjConvState[nk] = 'done';
+        folderRenderedSig = '';
+      }).catch(() => {});
+    } catch (e) { /* 忽略 */ }
+    // projname 形式的键也指同一份：既查反查表，也扫一遍文件夹里实际出现的项目键
+    const nameKeys = [];
+    for (const nm of Object.keys(folderProjIdByName)) {
+      if (folderProjIdByName[nm] === gid) nameKeys.push(nm);
+    }
+    // 文件夹里可能已经存了 projname 形式的键（名字反查还没跑过时）
+    if (folderData) {
+      for (const f of folderData.folders) {
+        for (const k of f.items) {
+          if (k.indexOf('projname:') === 0) nameKeys.push(folderProjNameFromKey(k));
+        }
+      }
+    }
+    for (const nm of nameKeys) {
+      if (!nm) continue;
+      const nk = folderProjKeyByName(nm);
+      folderProjConvCache[nk] = list;
+      folderProjConvState[nk] = 'done';
+      folderProjIdByName[nm] = gid;      // 顺手记住映射，后续不用再反查
+    }
+    folderRenderedSig = '';
+  }
+
+  // 拉项目会话的真实请求：带退避重试。
+  // 403/429 多是 Cloudflare 限流（连开多个标签、刷新过快都会触发），
+  // 等一会儿再试基本就好了，所以这里不一次失败就放弃。
+  async function folderFetchProjConvs(gid) {
+    const delays = [0, 900, 2200];        // 三次机会
+    let lastErr = null;
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      if (delays[attempt]) await new Promise((r) => setTimeout(r, delays[attempt]));
+      try {
+        let tok = null;
+        try { tok = await API.getToken(); } catch (e) { tok = null; }
+        const headers = tok ? { Authorization: 'Bearer ' + tok } : {};
+        const all = [];
+        let offset = 0;
+        let total = Infinity;
+        while (offset < total && offset < 500) {
+          const r = await fetch('/backend-api/gizmos/' + gid
+            + '/conversations?offset=' + offset + '&limit=50',
+            { headers, credentials: 'include' });
+          // 5xx / 429：值得重试
+          if (r.status === 429 || r.status >= 500) {
+            throw new Error('项目对话获取失败 ' + r.status);
+          }
+          if (!r.ok) {
+            const e = new Error('项目对话获取失败 ' + r.status);
+            e.permanent = true;             // 401/403/404 重试没意义
+            throw e;
+          }
+          const j = await r.json();
+          const items = j.items || [];
+          total = j.total != null ? j.total : all.length + items.length;
+          for (const c of items) all.push(c);
+          if (!items.length) break;
+          offset += 50;
+        }
+        return all;
+      } catch (e) {
+        lastErr = e;
+        if (e.permanent) break;             // 权限/不存在：不再重试
+        console.warn('[gpt-craber] 项目会话第 ' + (attempt + 1) + ' 次失败，稍后重试', e.message);
+      }
+    }
+    throw lastErr || new Error('项目对话获取失败');
+  }
+
+  // 走后端接口拉该项目全部会话（与「项目条」同一个接口，已按 50 分页）
+  async function folderLoadProjConvs(key, gid) {
+    // 防呆：gid 为空会拼出 /gizmos//conversations → 404，直接判错
+    if (!gid || String(gid).indexOf('g-p-') !== 0) {
+      throw new Error('无效的项目 ID: ' + gid);
+    }
+    const all = await folderFetchProjConvs(gid);
+    // 接口字段名不完全统一：主键可能是 id / conversation_id，标题可能是 title / name
+    const list = all.map((c) => {
+      const id = c.id || c.conversation_id || (c.conversation && c.conversation.id);
+      if (!id) return null;                    // 没有 id 的条目直接丢弃，别塞空壳
+      const title = c.title || c.name
+        || (c.conversation && c.conversation.title) || '未命名对话';
+      const k = folderKeyOf('conv', id);
+      folderTitleCache[k] = title;
+      folderHrefCache[id] = '/g/' + gid + '/c/' + id;
+      // 带上更新时间：添加对话框要按日期筛选
+      const updated = c.update_time || c.create_time || null;
+      return { key: k, label: title, href: folderHrefCache[id], updated: updated };
+    }).filter(Boolean);
+    console.log('[gpt-craber] 项目会话拉取', gid, '原始条目', all.length, '有效', list.length,
+      all.length ? '示例字段: ' + Object.keys(all[0]).slice(0, 8).join(',') : '');
+    folderProjConvCache[folderKeyOf('proj', gid)] = list;
+    folderProjConvCache[key] = list;      // projname 键也指同一份
+    folderProjConvState[key] = 'done';
+    folderProjConvState[folderKeyOf('proj', gid)] = 'done';
+    folderRenderedSig = '';               // 让下一轮 tick 重画
+    return list;
+  }
+
+  function folderBuildKid(f, key) {
+    const kind = folderItemKindOf(key);
+    const isProj = kind === 'proj' || kind === 'projname';
+    const id = kind === 'proj' ? key.slice(5) : (kind === 'projname' ? key : key);
+    const href = kind === 'conv' ? folderItemHref('conv', id) : null;
+    const active = href ? folderIsActiveConv({ key, id }) : false;
+    const row = folderEl('div', 'craber-folder-kid' + (active ? ' active' : ''));
+
+    // 项目行前加展开箭头（会话行没有）
+    let chev = null;
+    if (isProj) {
+      chev = folderEl('span', 'craber-folder-kid-chev');
+      chev.innerHTML = FOLDER_CHEV;
+      if (folderProjOpen[key]) row.classList.add('open');
+    }
+
+    const ico = folderEl('span', 'craber-folder-kid-ico');
+    ico.innerHTML = isProj ? FOLDER_PROJ_ICON : FOLDER_CONV_ICON;
+    // 标题优先用从原生行读到的真名；拿不到就先用 id 占位，等原生列表出现后刷新。
+    // 注意：项目有 proj:<id> 和 projname:<名字> 两种键，
+    // 前者的名字在 projNames 里，必须走 folderProjNameFromKey 才取得到。
+    const known = isProj
+      ? (folderTitleCache[key] || folderProjNameFromKey(key))
+      : (folderTitleCache[key] || '');
+    const name = folderEl('span', 'craber-folder-kid-name',
+      known || (isProj ? '项目 ' + id.slice(0, 8) : '会话 ' + id.slice(0, 8)));
+    name.title = known || href || '';
+    if (!known) row.classList.add('craber-folder-stale');
+
+    // 拖动排序：给行打上 key 标记，并接管按下/移动/抬手
+    row.dataset.sortKey = key;
+    row.dataset.sortFolder = f.id;
+    folderBindSort(row, key, f);
+
+    // 条目的"更多"菜单：移除等操作都收进菜单，避免行内误点（与原版一致的 ⋯ + 弹出菜单）
+    const more = folderEl('button', 'craber-folder-kid-more', '⋯');
+    more.type = 'button';
+    more.title = '更多操作';
+    more.setAttribute('aria-label', '更多操作');
+    more.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      folderKidMenu(more, f, key, known || '', href);
+    });
+
+    // 点箭头 = 展开/收起子会话；点行本体 = 跳转项目/会话
+    if (chev) {
+      chev.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        folderToggleProjOpen(key, row);
+      });
+    }
+
+    row.addEventListener('click', (e) => {
+      if (more.contains(e.target)) return;
+      if (folderJustSorted()) { e.preventDefault(); return; }   // 刚拖完排序，不要跳转
+      if (href) { folderNavigate(href); return; }
+      // 项目行：切换子会话展开/收起，不触发原生侧栏项目展开
+      if (chev) {
+        folderToggleProjOpen(key, row);
+      }
+    });
+
+    if (chev) row.append(chev);
+    row.append(ico, name, more);
+    return row;
+  }
+
+  // 项目展开后渲染其子会话（紧跟在项目行之后）
+  // 找某条会话归属的文件夹（菜单需要它做"从文件夹中移除"）。
+  // 优先选第一个包含它的文件夹；都没有就返回一个占位对象，
+  // 让菜单仍可显示会话操作（打开/重命名/归档…），只是没有文件夹相关项。
+  function folderOwnerOfConv(key) {
+    if (folderData) {
+      for (const f of folderData.folders) {
+        if (f.items.indexOf(key) >= 0) return f;
+      }
+    }
+    return { id: '__none__', name: '未归入文件夹', open: true, items: [] };
+  }
+
+  function folderBuildKidSub(key) {
+    const box = folderEl('div', 'craber-folder-kid-sub');
+    box.dataset.for = key;
+    // 用类控制而非 hidden：hidden 是瞬间切换，没法过渡
+    box.classList.toggle('craber-collapsed', !folderProjOpen[key]);
+    // 内层包裹：缩进放这里，折叠时才不留空白
+    const inner = folderEl('div', 'craber-folder-kid-sub-in');
+    box.append(inner);
+    const convs = folderProjConvs(key);
+    if (!convs.length) {
+      const kind = folderItemKindOf(key);
+      const gid = folderProjGizmoId(key);
+      const st = folderProjConvState[key] || folderProjConvState[folderKeyOf('proj', gid || '')];
+      let msg;
+      if (!gid) msg = kind === 'projname' ? '（找不到该项目的 ID，无法读取会话）' : '（没有会话）';
+      else if (st === 'loading') msg = '正在读取项目会话…';
+      else if (st === 'error') msg = '（读取失败，可能被限流，30 秒后自动重试）';
+      else msg = '（该项目没有会话）';
+      inner.append(folderEl('div', 'craber-folder-empty', msg));
+      return box;
+    }
+    for (const c of convs) {
+      // 项目下的会话行：默认不展开到 34px（子层级更紧凑），但同样带 ⋯ 菜单
+      const active = folderIsActiveConv(c);
+      const r = folderEl('div', 'craber-folder-kid craber-folder-kid-nested' + (active ? ' active' : ''));
+      const i = folderEl('span', 'craber-folder-kid-ico');
+      i.innerHTML = FOLDER_CONV_ICON;
+      const n = folderEl('span', 'craber-folder-kid-name', c.label);
+      n.title = c.label;
+
+      // 这条会话属于哪个文件夹：优先当前打开的文件夹（box 的上级），
+      // 找不到就用第一个包含它的文件夹（菜单里的"从文件夹中移除"要落到具体文件夹）
+      const ownerF = folderOwnerOfConv(c.key);
+      const more = folderEl('button', 'craber-folder-kid-more', '⋯');
+      more.type = 'button';
+      more.title = '更多操作';
+      more.setAttribute('aria-label', '更多操作');
+      more.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        folderKidMenu(more, ownerF, c.key, c.label, c.href);
+      });
+
+      r.append(i, n, more);
+      r.addEventListener('click', (e) => {
+        if (more.contains(e.target)) return;
+        if (folderJustSorted()) { e.preventDefault(); return; }   // 刚拖完排序，不要跳转
+        folderNavigate(c.href);
+      });
+      inner.append(r);
+    }
+    return box;
+  }
+
+  // 从原生侧栏补齐已收藏条目的真名与真实 href，有变化就重画一次
+  // 刚在本地改过名的条目：在原生侧栏追上之前，不允许被它的旧标题覆盖。
+  // 结构是 key -> { title, until }。
+  const folderTitleLock = Object.create(null);
+
+  // 本地点改名后调用：把标题设为权威值并锁一段时间
+  function folderSetTitleLocal(key, title, ttlMs) {
+    folderTitleCache[key] = title;
+    folderTitleLock[key] = { title: title, until: Date.now() + (ttlMs || 120000) };
+    folderRenderedSig = '';
+    renderFolders();
+  }
+
+  function folderHydrateTitles() {
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (!nav) return;
+    let dirty = false;
+    const now = Date.now();
+    nav.querySelectorAll('a[href]').forEach((a) => {
+      const entry = folderEntryFromHref(a.getAttribute('href'));
+      if (!entry) return;
+      folderRememberHref(entry, a.getAttribute('href'));
+      const title = folderEntryTitle(a);
+
+      // 本地刚改过名：等原生侧栏回显新名字之前，忽略它的旧标题
+      const lock = folderTitleLock[entry.key];
+      if (lock) {
+        if (now < lock.until) {
+          if (title !== lock.title) return;    // 侧栏还是旧名，跳过
+          delete folderTitleLock[entry.key];   // 侧栏已同步，解锁
+        } else {
+          delete folderTitleLock[entry.key];
+        }
+      }
+
+      if (folderTitleCache[entry.key] !== title) {
+        folderTitleCache[entry.key] = title;
+        dirty = true;
+      }
+    });
+    if (dirty && foldersEl) {
+      folderRenderedSig = '';
+      renderFolders();
+    }
+  }
+
+  /* ---------- 「添加会话/项目到文件夹」选择器 ---------- */
+  // 扫描侧栏里所有可见的会话和项目，弹出勾选列表，一次加入多个。
+  // 从接口收集候选：不受侧栏是否渲染影响（项目收起了也能看到它的会话）
+  // 分步收集候选，每有点进展就回调一次，让列表尽快出现内容。
+  // 之前的写法是"项目 → 逐个项目拉会话 → 最近会话"全串行，全部拿完才渲染，
+  // 项目一多就要等很久，期间一直显示"没有可添加的会话或项目"。
+  // 候选列表的本地快照：下次打开先拿它秒开，后台再刷新
+  let folderPickerSnapshot = null;
+  let folderPickerLastError = '';   // 最近一次取候选失败的原因（供界面如实提示）
+
+  async function folderPickerItemsFromApi(onProgress) {
+    const items = [];
+    const seen = new Set();
+    const emit = () => { try { onProgress(items.slice()); } catch (e) { /* 渲染失败不影响取数 */ } };
+
+    const push = (it) => {
+      if (seen.has(it.key)) return;
+      seen.add(it.key);
+      items.push(it);
+    };
+
+    // 1) 项目与最近会话：两者互不依赖，并行发出去
+    const projectsP = craberListProjects().catch(() => []);
+
+    // 最近会话：失败时把原因记下来，界面要如实提示，
+    // 不能一律显示"没有可添加的"（那是把错误伪装成空结果）。
+    let recentErr = null;
+    const recentP = craberApi('/backend-api/conversations?offset=0&limit=100&order=updated')
+      .catch((e) => { recentErr = e && e.message ? e.message : '请求失败'; return null; });
+
+    // 先到先显示：最近会话通常最快
+    recentP.then((j) => {
+      for (const c of (j && j.items) || []) {
+        const id = c.id;
+        if (!id) continue;
+        const title = c.title || '未命名对话';
+        folderTitleCache[folderKeyOf('conv', id)] = title;
+        // 带上更新时间：对话框要按日期筛选
+        push({ key: folderKeyOf('conv', id), label: title, kind: 'conv',
+          updated: c.update_time || c.create_time || null });
+      }
+      if (recentErr && !(j && j.items && j.items.length)) {
+        folderPickerLastError = '读取会话列表失败：' + recentErr;
+      }
+      emit();
+    });
+
+    const projects = await projectsP;
+    for (const p of projects) {
+      if (p.id) folderProjIdByName[p.name] = p.id;   // 有 id 才记，便于直接拉会话
+      // 有 id 就用 proj:<id> 作为键 —— 这样加入文件夹后不需要反查，
+      // 直接就能拉会话。只有拿不到 id 时才退回名字键。
+      const hasId = p.id && /^g-p-[0-9a-f]+$/.test(String(p.id));
+      push({
+        key: hasId ? folderKeyOf('proj', p.id) : folderProjKeyByName(p.name),
+        label: p.name,
+        kind: hasId ? 'proj' : 'projname',
+        gid: p.id || null
+      });
+    }
+    emit();
+
+    // 2) 各项目内的会话：并行拉，谁先回来谁先显示。
+    // 没有 id 的项目（只从侧栏拿到名字）先用名字反查一次 id。
+    await Promise.all(projects.map(async (p) => {
+      let gid = p.id;
+      if (!gid) {
+        gid = await folderResolveProjIdByName(p.name).catch(() => null);
+        if (gid) folderProjIdByName[p.name] = gid;
+      }
+      if (!gid) return;                     // 实在解析不出来，就只显示项目本身
+      const cached = folderProjConvCache[folderKeyOf('proj', gid)];
+      const list = cached || await folderLoadProjConvs(folderProjKeyByName(p.name), gid)
+        .catch(() => []);
+      for (const c of list || []) {
+        push({ key: c.key, label: c.label, kind: 'conv', inProj: p.name,
+          updated: c.updated || null });
+      }
+      emit();
+    }));
+
+    if (items.length) folderPickerSnapshot = items.slice();   // 存快照给下次秒开
+    return items;
+  }
+
+  // 添加到文件夹：用对话框展示全部项目与会话。
+  // - 已在文件夹里的条目会打勾并置灰（不可点）
+  // - 支持批量勾选后一次确认
+  // - 读取过程中先显示已有快照/DOM 结果，接口回来再增量刷新
+  function folderOpenAddPicker(anchor, f) {
+    folderClosePjify();
+
+    const body = folderEl('div', 'craber-dlg-body');
+
+    // 两个页签：会话 / 项目。各自独立列表，但共享同一个"已选"集合。
+    // 混在一个列表里时项目常被会话挤到很下面，找项目要滚半天。
+    const TABS = [
+      { id: 'conv', label: '会话' },
+      { id: 'proj', label: '项目' }
+    ];
+    let activeTab = 'conv';
+
+    // 搜索 + 日期筛选（只在"会话"页签有意义，切到项目页签时隐藏）
+    const filterBar = folderEl('div', 'craber-dlg-filter');
+    const searchEl = document.createElement('input');
+    searchEl.type = 'text';
+    searchEl.className = 'craber-dlg-search';
+    searchEl.placeholder = '搜索标题…';
+    const chips = folderEl('div', 'craber-dlg-chips');
+    const DATE_OPTS = [
+      { v: 'all', t: '全部' }, { v: '7', t: '近7天' },
+      { v: '15', t: '近15天' }, { v: '30', t: '近30天' },
+      { v: 'custom', t: '自定义' }
+    ];
+    let dateRange = 'all';
+    const radios = {};
+    for (const o of DATE_OPTS) {
+      const lab = folderEl('label', 'craber-dlg-chip');
+      const r = document.createElement('input');
+      r.type = 'radio';
+      r.name = 'craber-dlg-date';
+      r.value = o.v;
+      if (o.v === 'all') r.checked = true;
+      const sp = folderEl('span', null, o.t);
+      lab.append(r, sp);
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        dateRange = o.v;
+        customRow.hidden = o.v !== 'custom';
+        renderAll();
+      });
+      radios[o.v] = r;
+      chips.append(lab);
+    }
+    const customRow = folderEl('div', 'craber-dlg-custom');
+    const fromEl = document.createElement('input');
+    fromEl.type = 'date';
+    fromEl.className = 'craber-dlg-date';
+    const sep = folderEl('span', 'craber-dlg-datesep', '至');
+    const toEl = document.createElement('input');
+    toEl.type = 'date';
+    toEl.className = 'craber-dlg-date';
+    customRow.append(fromEl, sep, toEl);
+    customRow.hidden = true;
+    fromEl.addEventListener('change', () => renderAll());
+    toEl.addEventListener('change', () => renderAll());
+    searchEl.addEventListener('input', () => renderAll());
+    filterBar.append(searchEl, chips, customRow);
+
+    const tabBar = folderEl('div', 'craber-dlg-tabs');
+    const tabBtns = {};
+    for (const t of TABS) {
+      const b = folderEl('button', 'craber-dlg-tab', t.label);
+      b.type = 'button';
+      b.dataset.tab = t.id;
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (activeTab === t.id) return;
+        activeTab = t.id;
+        syncTabs();
+        renderAll();
+      });
+      tabBtns[t.id] = b;
+      tabBar.append(b);
+    }
+    body.append(tabBar, filterBar);
+
+    // 每个页签的工具条 + 列表 + 加载提示
+    const panes = {};
+    for (const t of TABS) {
+      const pane = folderEl('div', 'craber-dlg-pane');
+      pane.dataset.tab = t.id;
+
+      // 「全选」复选框放在右侧，和下面每一行的复选框对齐成一条竖线；
+      // 左侧只留文字，右侧是复选框列，视觉上更像原生多选列表。
+      const toolbar = folderEl('div', 'craber-dlg-toolbar');
+      const cnt = folderEl('span', 'craber-dlg-count', '');
+      const allWrap = folderEl('label', 'craber-dlg-all');
+      const allLabel = folderEl('span', 'craber-dlg-all-label', '全选');
+      const allBox = document.createElement('span');
+      allBox.className = 'craber-dlg-check';
+      allWrap.append(allLabel, allBox);
+      toolbar.append(cnt, allWrap);
+
+      const listBox = folderEl('div', 'craber-dlg-list');
+      const tip = folderEl('div', 'craber-dlg-loading');
+      const spin = folderEl('span', 'craber-dlg-spin');
+      const tipTxt = folderEl('span', null, '正在读取…');
+      tip.append(spin, tipTxt);
+      tip.hidden = true;
+
+      pane.append(toolbar, listBox, tip);
+      body.append(pane);
+      panes[t.id] = { pane, allWrap, allBox, cnt, listBox, tip, spin, tipTxt };
+    }
+
+    // 已选集合（两个页签共享，确认时一次提交）
+    const picked = new Set();
+    let allItems = [];
+    let pickerLoading = true;      // 接口还没回来时，空列表显示"读取中"
+
+    const dlg = craberDialog({
+      title: '添加到「' + f.name + '」',
+      subtitle: '选择要放进这个文件夹的项目或会话',
+      body,
+      confirmText: '添加',
+      cancelText: '取消',
+      onConfirm: (close) => {
+        if (!picked.size) { close(); return; }
+        let added = 0;
+        for (const key of picked) {
+          const it0 = allItems.find((x) => x.key === key);
+          if (folderAddItem(f, key, it0 && it0.label)) added++;
+          else if (f.items.indexOf(key) < 0) { f.items.push(key); added++; }
+          // 项目：把名字一并存下来（key 里只有 id，光靠 id 显示不出名字，
+          // 每次再反查接口既慢又可能失败）
+          if (key.indexOf('proj:') === 0) {
+            const it = allItems.find((x) => x.key === key);
+            const gid = key.slice(5);
+            const nm = (it && it.label) || folderProjNameFromKey(key);
+            if (nm) folderRememberProjName(gid, nm);
+          }
+        }
+        saveFolders();
+        close();
+        renderFolders();
+        if (added) navToast('已添加 ' + added + ' 项到「' + f.name + '」');
+      }
+    });
+
+    // 确认按钮随选择数量变化
+    const okBtn = dlg.root.querySelector('.craber-dlg-primary');
+    const syncOk = () => {
+      if (!okBtn) return;
+      okBtn.textContent = picked.size ? ('添加 ' + picked.size + ' 项') : '添加';
+      okBtn.disabled = picked.size === 0;
+      okBtn.style.opacity = picked.size === 0 ? '.45' : '1';
+      okBtn.style.cursor = picked.size === 0 ? 'default' : 'pointer';
+    };
+    syncOk();
+
+    const syncTabs = () => {
+      for (const t of TABS) {
+        const on = activeTab === t.id;
+        tabBtns[t.id].classList.toggle('on', on);
+        panes[t.id].pane.hidden = !on;
+      }
+      // 搜索与日期筛选只对会话有效，项目页签隐藏这一栏
+      filterBar.hidden = activeTab !== 'conv';
+    };
+
+    // 某个页签对应的条目。
+    // 项目有两种 kind：proj（有 id 的 proj:<id> 键）与 projname（只有名字）。
+    // 只判断 projname 会把项目的 id 形式错分到"会话"页签里（实测踩到）。
+    const isProjItem = (it) => it.kind === 'proj' || it.kind === 'projname';
+    const itemsOf = (tab) => (tab === 'proj'
+      ? allItems.filter(isProjItem)
+      : allItems.filter((it) => !isProjItem(it)));
+
+    // 渲染单个页签
+    // 会话的日期范围判断（与"多会话导出"面板同一套语义）
+    const inDateRange = (it) => {
+      if (dateRange === 'all') return true;
+      const ts = it.updated ? new Date(it.updated).getTime() : 0;
+      if (!ts) return false;                  // 没有时间的条目在筛选时不显示
+      if (dateRange === 'custom') {
+        if (fromEl.value) {
+          const f = new Date(fromEl.value + 'T00:00:00').getTime();
+          if (ts < f) return false;
+        }
+        if (toEl.value) {
+          const t = new Date(toEl.value + 'T23:59:59').getTime();
+          if (ts > t) return false;
+        }
+        return true;
+      }
+      const days = parseInt(dateRange, 10);
+      if (!days) return true;
+      return ts >= Date.now() - days * 24 * 60 * 60 * 1000;
+    };
+
+    const paintTab = (tab) => {
+      const P = panes[tab];
+      // 会话页签：搜索 + 日期筛选；项目页签不筛选
+      const kw = (searchEl.value || '').trim().toLowerCase();
+      const list = itemsOf(tab).filter((it) => {
+        if (tab !== 'conv') return true;
+        if (kw && String(it.label || '').toLowerCase().indexOf(kw) < 0) return false;
+        return inDateRange(it);
+      });
+
+      P.listBox.innerHTML = '';
+
+      // 计数：已在此文件夹中的数量 / 总数
+      const inCount = list.filter((it) => f.items.indexOf(it.key) >= 0).length;
+      P.cnt.textContent = list.length
+        ? (inCount ? inCount + ' / ' + list.length + ' 已添加' : list.length + ' 项')
+        : '';
+
+      // 「全选」复选框状态：全选 / 部分（用减号表示）/ 未选
+      const selectable = list.filter((it) => f.items.indexOf(it.key) < 0);
+      const pickedCount = selectable.filter((it) => picked.has(it.key)).length;
+      const allOn = selectable.length > 0 && pickedCount === selectable.length;
+      const someOn = pickedCount > 0 && !allOn;
+      P.allBox.classList.toggle('on', allOn);
+      P.allBox.classList.toggle('partial', someOn);
+      P.allBox.classList.toggle('locked', selectable.length === 0);
+      P.allBox.innerHTML = allOn ? FOLDER_CHECK
+        : (someOn ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"'
+          + ' stroke-linecap="round"><path d="M6 12h12"/></svg>' : '');
+
+      if (!list.length) {
+        // 读取中才显示转圈；读取完成后仍为空则显示空文案
+        P.tip.hidden = false;
+        P.spin.hidden = !pickerLoading;
+        const filtered = tab === 'conv' && (kw || dateRange !== 'all');
+        P.tipTxt.textContent = pickerLoading
+          ? '正在读取' + (tab === 'proj' ? '项目' : '会话') + '…'
+          : (folderPickerLastError && tab === 'conv'
+            ? folderPickerLastError
+            : (filtered ? '没有匹配的会话' : '没有可添加的' + (tab === 'proj' ? '项目' : '会话')));
+        return;
+      }
+      P.tip.hidden = true;
+
+      for (const item of list) {
+        const inFolder = f.items.indexOf(item.key) >= 0;
+        const on = picked.has(item.key);
+        const row = folderEl('div', 'craber-dlg-item' + (inFolder ? ' is-added' : ''));
+        row.dataset.key = item.key;
+
+        const ic = folderEl('span', 'craber-dlg-item-ico');
+        ic.innerHTML = isProjItem(item) ? FOLDER_PROJ_ICON : FOLDER_CONV_ICON;
+
+        const nm = folderEl('span', 'craber-dlg-item-name', item.label);
+        nm.title = isProjItem(item)
+          ? ('项目 · ' + item.label)
+          : (item.inProj ? ('项目内会话 · ' + item.inProj) : '最近会话');
+
+        const ck = folderEl('span', 'craber-dlg-check' + (inFolder ? ' on locked' : (on ? ' on' : '')));
+        if (inFolder || on) ck.innerHTML = FOLDER_CHECK;
+
+        row.append(ic, nm, ck);
+
+        if (inFolder) {
+          row.title = '已在此文件夹中';
+        } else {
+          row.addEventListener('click', () => {
+            if (picked.has(item.key)) picked.delete(item.key);
+            else picked.add(item.key);
+            paintTab(tab);      // 重画这一页（勾选态即时反映）
+            syncOk();
+          });
+        }
+        P.listBox.append(row);
+      }
+    };
+
+    const renderAll = () => { paintTab('conv'); paintTab('proj'); };
+
+    // 「全选」复选框：点击在"全选"与"全不选"之间切换，只作用于当前页签
+    for (const t of TABS) {
+      const tab = t.id;
+      panes[tab].allWrap.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const list = itemsOf(tab).filter((it) => f.items.indexOf(it.key) < 0);
+        const allOn = list.length > 0 && list.every((it) => picked.has(it.key));
+        if (allOn) for (const it of list) picked.delete(it.key);
+        else for (const it of list) picked.add(it.key);
+        paintTab(tab);
+        syncOk();
+      });
+    }
+
+    // 只用接口数据：上次的快照先顶上（秒开），随后接口增量刷新。
+    // 不再读侧栏 DOM —— DOM 里只有已渲染的部分，拿它当数据源会误导。
+    allItems = (folderPickerSnapshot && folderPickerSnapshot.length)
+      ? folderPickerSnapshot.slice()
+      : [];
+    syncTabs();
+    renderAll();
+
+    const mergeIn = (incoming) => {
+      // 增量合并（按 key 去重），保留已有顺序
+      const seen = new Set(allItems.map((x) => x.key));
+      for (const it of incoming) {
+        if (seen.has(it.key)) continue;
+        seen.add(it.key);
+        allItems.push(it);
+      }
+      renderAll();
+    };
+
+    folderPickerLastError = '';
+    folderPickerItemsFromApi((items) => {
+      if (!craberDialogEl) return;
+      if (!items.length) return;
+      pickerLoading = false;
+      mergeIn(items);
+    }).then((items) => {
+      if (!craberDialogEl) return;
+      pickerLoading = false;
+      if (items.length) mergeIn(items);
+      renderAll();
+    }).catch((e) => {
+      pickerLoading = false;
+      // 只用接口数据：失败就如实报错，不拿侧栏 DOM 凑数
+      if (!allItems.length) {
+        folderPickerLastError = '读取失败：' + (e && e.message ? e.message : '未知错误');
+      }
+      renderAll();
+    });
+  }
+
+  /* ---------- 仿原生的对话框组件 ---------- */
+  // 原版对话框特征（按截图还原）：居中、白色圆角卡片、大标题 + 灰色副标题、
+  // 输入框蓝框聚焦、右下角「取消」（浅底）+「保存」（黑色实心）按钮。
+  // 统一在这里实现，替换掉 window.prompt / window.confirm，避免丑陋的原生弹窗。
+
+  let craberDialogEl = null;
+
+  function craberDialogClose() {
+    if (craberDialogEl && craberDialogEl.parentElement) craberDialogEl.remove();
+    craberDialogEl = null;
+    document.removeEventListener('keydown', craberDialogKeydown, true);
+  }
+
+  function craberDialogKeydown(e) {
+    if (e.key === 'Escape') { e.preventDefault(); craberDialogClose(); }
+  }
+
+  // opts: { title, subtitle, body(el), confirmText, cancelText, onConfirm(close), danger }
+  function craberDialog(opts) {
+    craberDialogClose();
+    const o = opts || {};
+
+    const mask = folderEl('div', 'craber-dlg-mask');
+    const dlg = folderEl('div', 'craber-dlg');
+    mask.append(dlg);
+
+    const hd = folderEl('div', 'craber-dlg-hd');
+    hd.append(folderEl('div', 'craber-dlg-title', o.title || ''));
+    const x = folderEl('button', 'craber-dlg-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', '关闭');
+    x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); craberDialogClose(); });
+    hd.append(x);
+    dlg.append(hd);
+
+    if (o.subtitle) dlg.append(folderEl('div', 'craber-dlg-sub', o.subtitle));
+
+    if (o.body) dlg.append(o.body);
+
+    const ft = folderEl('div', 'craber-dlg-ft');
+    const cancel = folderEl('button', 'craber-dlg-btn', o.cancelText || '取消');
+    cancel.type = 'button';
+    cancel.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); craberDialogClose(); });
+    const ok = folderEl('button', 'craber-dlg-btn craber-dlg-primary' + (o.danger ? ' craber-dlg-danger' : ''),
+      o.confirmText || '保存');
+    ok.type = 'button';
+    ok.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (o.onConfirm) o.onConfirm(craberDialogClose);
+      else craberDialogClose();
+    });
+    ft.append(cancel, ok);
+    dlg.append(ft);
+
+    // 点遮罩关闭，点卡片内部不关闭
+    mask.addEventListener('click', (e) => {
+      if (e.target === mask) craberDialogClose();
+    });
+
+    document.body.appendChild(mask);
+    craberDialogEl = mask;
+    document.addEventListener('keydown', craberDialogKeydown, true);
+
+    // 自动聚焦输入框
+    const input = dlg.querySelector('input, textarea');
+    if (input) setTimeout(() => { try { input.focus(); input.select && input.select(); } catch (e) {} }, 30);
+
+    return { el: mask, root: dlg, close: craberDialogClose };
+  }
+
+  // 单行输入对话框（替代 window.prompt）
+  function craberPromptDialog(opts) {
+    const o = opts || {};
+    const wrap = folderEl('div', 'craber-dlg-body');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'craber-dlg-input';
+    input.value = o.value || '';
+    input.placeholder = o.placeholder || '';
+    wrap.append(input);
+
+    if (o.hint) wrap.append(folderEl('div', 'craber-dlg-hint', o.hint));
+
+    const submit = () => {
+      const v = String(input.value || '').trim();
+      if (!v) { input.focus(); return; }
+      craberDialogClose();
+      if (o.onOk) o.onOk(v);
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    });
+
+    craberDialog({
+      title: o.title,
+      subtitle: o.subtitle,
+      body: wrap,
+      confirmText: o.confirmText || '保存',
+      cancelText: o.cancelText || '取消',
+      onConfirm: submit
+    });
+  }
+
+  // 确认对话框（替代 window.confirm）
+  function craberConfirmDialog(opts) {
+    const o = opts || {};
+    const wrap = folderEl('div', 'craber-dlg-body');
+    if (o.message) wrap.append(folderEl('div', 'craber-dlg-text', o.message));
+    craberDialog({
+      title: o.title,
+      subtitle: o.subtitle,
+      body: wrap,
+      confirmText: o.confirmText || '确认',
+      cancelText: o.cancelText || '取消',
+      danger: !!o.danger,
+      onConfirm: () => { craberDialogClose(); if (o.onOk) o.onOk(); }
+    });
+  }
+
+  /* ---------- 与原版对齐的会话操作（真实接口） ---------- */
+
+  // 统一的 backend-api 请求：token 拿不到时退回纯 cookie
+  async function craberApi(path, opts) {
+    opts = opts || {};
+    let tok = null;
+    try { tok = await API.getToken(); } catch (e) { tok = null; }
+    const headers = Object.assign({}, opts.headers || {});
+    if (tok) headers.Authorization = 'Bearer ' + tok;
+    if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+    const r = await fetch(path, {
+      method: opts.method || 'GET',
+      headers,
+      credentials: 'include',
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    if (!r.ok) throw new Error('请求失败 ' + r.status);
+    try { return await r.json(); } catch (e) { return null; }
+  }
+
+  // 重命名会话
+  async function craberRenameConv(convId, newTitle) {
+    return craberApi('/backend-api/conversation/' + convId, {
+      method: 'PATCH',
+      body: { title: newTitle }
+    });
+  }
+
+  // 删除会话
+  async function craberDeleteConv(convId) {
+    return craberApi('/backend-api/conversation/' + convId, { method: 'DELETE' });
+  }
+
+  // 归档 / 取消归档
+  async function craberArchiveConv(convId, archived) {
+    return craberApi('/backend-api/conversation/' + convId, {
+      method: 'PATCH',
+      body: { is_archived: !!archived }
+    });
+  }
+
+  // 置顶 / 取消置顶
+  // 实测确认：PATCH /backend-api/conversation/{id}
+  //   body { pinned_time: <秒级时间戳> | null, is_pinned: bool }
+  //   → 200 {"success":true}
+  async function craberPinConv(convId, pinned) {
+    return craberApi('/backend-api/conversation/' + convId, {
+      method: 'PATCH',
+      body: {
+        pinned_time: pinned ? Date.now() / 1000 : null,
+        is_pinned: !!pinned
+      }
+    });
+  }
+
+
+  // 置顶状态缓存：本地立刻反映 UI，不必等接口回包或页面重载
+  const craberPinnedCache = (() => {
+    try {
+      const raw = localStorage.getItem('gpt_craber_pinned');
+      return raw ? JSON.parse(raw) : Object.create(null);
+    } catch (e) { return Object.create(null); }
+  })();
+  function craberSavePinned() {
+    try { localStorage.setItem('gpt_craber_pinned', JSON.stringify(craberPinnedCache)); } catch (e) {}
+  }
+
+  // 把置顶的会话在文件夹条目里挪到最前面（置顶的就该在前面），取消则移除标记。
+  function craberRepinInFolders(convId, pinned) {
+    if (!folderData) return;
+    const key = folderKeyOf('conv', convId);
+    for (const f of folderData.folders) {
+      const i = f.items.indexOf(key);
+      if (i < 0) continue;
+      if (pinned && i > 0) {
+        f.items.splice(i, 1);
+        f.items.unshift(key);
+      }
+    }
+    saveFolders();
+  }
+
+  // 同步项目会话缓存里的置顶标记，并让该项目的会话列表重新排序。
+  // 接口置顶成功后调用：这样文件夹里"项目下的会话"也会立刻把置顶项排到前面。
+  function craberApplyPinToConvCache(convId, pinned, pinnedAt) {
+    const apply = (list) => {
+      if (!Array.isArray(list)) return false;
+      let hit = false;
+      for (const c of list) {
+        if (c.key !== folderKeyOf('conv', convId)) continue;
+        c.pinned = !!pinned;
+        c.pinnedAt = pinned ? pinnedAt : 0;
+        hit = true;
+      }
+      if (hit) {
+        // 置顶优先，其余保持原有顺序
+        list.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+      }
+      return hit;
+    };
+    let changed = false;
+    for (const k of Object.keys(folderProjConvCache)) {
+      if (apply(folderProjConvCache[k])) changed = true;
+    }
+    if (changed) {
+      folderRenderedSig = '';
+      renderFolders();
+    }
+    return changed;
+  }
+
+  // 让原生侧栏重新拉会话列表，使置顶在原生区域也立刻体现。
+  //
+  // ChatGPT 是 SPA，没有公开的"刷新侧栏"接口，React 自己也不会因为我们改了
+  // 数据就重取。可靠做法是触发一次 React Query 的失效：它的缓存挂在 window 上，
+  // 找到 queryClient 后 invalidate 会话列表相关 key 即可，无需整页刷新。
+  let craberRefreshTimer = null;
+  function craberInvalidateConvQueries() {
+    // 常见挂载点（不同版本位置不同，逐个探测）
+    const roots = [window, window.__NEXT_DATA__, window.__REACT_QUERY_STATE__];
+    for (const r of roots) {
+      if (!r) continue;
+      try {
+        const qc = r.queryClient || r.__queryClient || (r.props && r.props.queryClient);
+        if (qc && typeof qc.invalidateQueries === 'function') {
+          qc.invalidateQueries();
+          return true;
+        }
+      } catch (e) { /* 换下一个 */ }
+    }
+    return false;
+  }
+
+  function craberRefreshSidebarSoon() {
+    if (craberRefreshTimer) return;
+    craberRefreshTimer = setTimeout(() => {
+      craberRefreshTimer = null;
+      if (craberInvalidateConvQueries()) return;
+      // 拿不到 queryClient：退一步让页面重新获得焦点，多数版本会顺带重取一次
+      try { window.dispatchEvent(new Event('focus')); } catch (e) { /* 忽略 */ }
+    }, 300);
+  }
+
+  function craberIsPinned(convId) {
+    return !!craberPinnedCache[convId];
+  }
+
+  // 把会话移入/移出项目（gizmo）。projectId 为空表示移出项目。
+  async function craberMoveConvToProject(convId, projectId) {
+    return craberApi('/backend-api/conversation/' + convId, {
+      method: 'PATCH',
+      body: { gizmo_id: projectId || null }
+    });
+  }
+
+  // 重命名项目。
+  // 项目（gizmo）的名字在 gizmo.display.name 里，所以 PATCH 要按这个结构提交。
+  // 依次尝试几种已知载荷格式，第一个成功的就用它，避免因字段猜测错而整体失败。
+  async function craberRenameProject(gid, newName) {
+    const name = String(newName || '').trim();
+    if (!gid || !name) throw new Error('参数不完整');
+    const payloads = [
+      { gizmo: { display: { name } } },
+      { display: { name } },
+      { name }
+    ];
+    let lastErr = null;
+    for (const body of payloads) {
+      try {
+        await craberApi('/backend-api/gizmos/' + gid, { method: 'PATCH', body });
+        API._gizmoCache[gid] = name;          // 立即更新本地缓存
+        folderProjIdByName[name] = gid;
+        return true;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('重命名失败');
+  }
+
+  // 分享项目：先向接口申请一个分享链接，拿不到就返回 null 由调用方给出手动路径。
+  async function craberShareProject(gid) {
+    if (!gid) return null;
+    const tries = [
+      { path: '/backend-api/gizmos/' + gid + '/share', method: 'POST', body: {} },
+      { path: '/backend-api/share/create', method: 'POST', body: { resource_id: gid, resource_type: 'gizmo' } }
+    ];
+    for (const t of tries) {
+      try {
+        const j = await craberApi(t.path, { method: t.method, body: t.body });
+        const link = j && (j.share_url || j.url || j.link
+          || (j.share && (j.share.url || j.share.link)));
+        if (link) return link;
+        // 有些接口只返回 id/token
+        const id = j && (j.share_id || j.id || j.token);
+        if (id) return location.origin + '/share/' + id;
+      } catch (e) { /* 换下一个 */ }
+    }
+    return null;
+  }
+
+  // 用纯 cookie（不带 Authorization）查项目名。
+  // /api/auth/session 偶发 403 时 token 拿不到，但同源请求带 cookie 仍然有效，
+  // 这条路径能让项目名照样解析出来。
+  async function folderFetchProjNameCookie(gid) {
+    if (!gid) return null;
+    try {
+      const r = await fetch('/backend-api/gizmos/' + gid, { credentials: 'include' });
+      if (!r.ok) return null;
+      const j = await r.json();
+      const nm = (j && j.gizmo && j.gizmo.display && j.gizmo.display.name)
+        || (j && j.display && j.display.name) || null;
+      if (nm) {
+        API._gizmoCache[gid] = nm;      // 回填，避免下次再请求
+        folderProjIdByName[nm] = gid;
+      }
+      return nm;
+    } catch (e) { return null; }
+  }
+
+  // 拉当前用户的项目列表（供"移至项目"子菜单用）
+  const craberProjectsCache = { at: 0, list: [] };
+  async function craberListProjects() {
+    if (Date.now() - craberProjectsCache.at < 5 * 60 * 1000 && craberProjectsCache.list.length) {
+      return craberProjectsCache.list;
+    }
+    const out = [];
+    const seenName = new Set();
+    const add = (id, name) => {
+      const nm = String(name || '').trim();
+      if (!nm || seenName.has(nm)) return;
+      seenName.add(nm);
+      out.push({ id: id || null, name: nm });
+      if (id) folderProjIdByName[nm] = id;
+    };
+
+    // 主路径：从会话列表反推项目。
+    //
+    // 实测结论（诊断日志）：ChatGPT 没有可用的"项目列表"接口 ——
+    //   /gizmos/discovery、/gizmos/mine 返回 200 但没有数组；
+    //   GET /gizmos、/projects 是 405；/gizmos/snorlax、/projects/mine 是 404。
+    // 但会话对象里带 gizmo_id（属于项目的会话），所以改为：
+    //   会话列表 → 收集 gizmo_id → 逐个 /gizmos/{id} 查名字
+    // 这也正好满足"只走接口"的要求。
+    const candIds = new Set();
+
+    // 当前页面就在某个项目里（URL 里带着它）
+    const cur = location.pathname.match(/\/g\/(g-p-[0-9a-f]+)/);
+    if (cur) candIds.add(cur[1]);
+    // 从会话列表收集 gizmo_id。
+    // 翻几页：只有最近 100 条会话时，久未使用的项目就收集不到。
+    try {
+      let offset = 0;
+      const PAGE = 100;
+      for (let page = 0; page < 3; page++) {
+        const j = await craberApi('/backend-api/conversations?offset=' + offset
+          + '&limit=' + PAGE + '&order=updated');
+        const items = (j && j.items) || [];
+        for (const c of items) {
+          const gid = c.gizmo_id || (c.gizmo && c.gizmo.id);
+          if (gid) candIds.add(gid);
+        }
+        if (items.length < PAGE) break;
+        offset += PAGE;
+      }
+    } catch (e) { /* 会话列表拿不到就只用 URL 里的项目 */ }
+
+    // 逐个把 id 换成名字（只用接口）
+
+    await Promise.all([...candIds].map(async (gid) => {
+      // 已有映射就不必再问
+      const known = Object.keys(folderProjIdByName || {}).find((k) => folderProjIdByName[k] === gid);
+      if (known) { add(gid, known); return; }
+
+      // 名字只从接口取：/gizmos/{id}（带 token）→ 纯 cookie 再试一次
+      let nm = null;
+      try { nm = await API.getGizmoName(gid); } catch (e) { nm = null; }
+      if (!nm) nm = await folderFetchProjNameCookie(gid);
+      // 名字拿不到就不列这个项目（编个"未命名项目"只会让人困惑）
+      if (nm) add(gid, nm);
+    }));
+
+    // 只缓存"真拿到了项目"的结果。空结果缓存 5 分钟的话，
+    // 一次限流就会让项目列表空五分钟（实测很烦）。
+    if (out.length) {
+      craberProjectsCache.list = out;
+      craberProjectsCache.at = Date.now();
+    }
+    return out;
+  }
+
+  // 用 prompt 重命名（原版是行内编辑，这里用同名对话框保持一致语义）
+  function craberPromptRename(oldTitle, cb) {
+    craberPromptDialog({
+      title: '重命名聊天',
+      subtitle: '保持简短且易于识别',
+      value: oldTitle || '',
+      confirmText: '保存',
+      onOk: (t) => { if (t && t !== oldTitle) cb(t); }
+    });
+  }
+
+  /* ---------- 借用原生菜单 ---------- */
+  // 在原生侧栏里找到某条会话/项目对应的行元素。
+  // 找不到返回 null（例如该项目没展开、或会话不在"最近"里）。
+  function craberFindNativeRow(kind, id, name) {
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (!nav) return null;
+
+    if (kind === 'conv') {
+      const a = [...nav.querySelectorAll('a[href]')].find((el) => {
+        const e = folderEntryFromHref(el.getAttribute('href'));
+        return e && e.kind === 'conv' && e.id === id;
+      });
+      return a || null;
+    }
+    // 项目行：按名字匹配（项目行没有 id 属性）
+    if (kind === 'proj' || kind === 'projname') {
+      const nm = String(name || '').trim();
+      if (!nm) return null;
+      return [...nav.querySelectorAll('[role="button"]')].find((el) => {
+        if (!folderIsProjectRow(el) || el.closest('.craber-folders')) return false;
+        return (el.textContent || '').trim() === nm;
+      }) || null;
+    }
+    return null;
+  }
+
+  // 在元素上打开原生右键菜单（让 ChatGPT 自己弹它自己的菜单）。
+  // 这样菜单项、样式、行为全都与原生一致，我们不必重新实现任何操作。
+  function craberOpenNativeMenu(el, x, y) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    const cx = (typeof x === 'number') ? x : Math.round(r.left + r.width / 2);
+    const cy = (typeof y === 'number') ? y : Math.round(r.top + r.height / 2);
+    const init = {
+      bubbles: true, cancelable: true, view: window,
+      clientX: cx, clientY: cy,
+      screenX: cx, screenY: cy,
+      button: 2, buttons: 2
+    };
+    try {
+      el.dispatchEvent(new MouseEvent('contextmenu', init));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 文件夹内条目的「⋯」菜单：风格对齐原生（左侧图标 + 右侧快捷键位 + 危险项红字）
+  function folderKidMenu(anchor, f, key, title, href) {
+    folderClosePjify();
+    const kind = folderItemKindOf(key);
+    const isProj = kind === 'proj' || kind === 'projname';
+    const m = folderEl('div', 'craber-menu');
+
+    // mk(图标, 文案, 动作, 额外类, 是否带右箭头)
+    const mk = (icon, label, fn, cls, arrow) => {
+      const b = folderEl('button', 'craber-menu-item' + (cls ? ' ' + cls : ''));
+      b.type = 'button';
+      const ic = folderEl('span', 'craber-menu-ico');
+      ic.innerHTML = icon;
+      b.append(ic, folderEl('span', 'craber-menu-label', label));
+      if (arrow) {
+        const ar = folderEl('span', 'craber-menu-arrow');
+        ar.innerHTML = arrow;
+        b.append(ar);
+      }
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        folderClosePjify(); fn();
+      });
+      m.append(b);
+      return b;
+    };
+
+    const convId = kind === 'conv' ? key : null;
+
+    if (isProj) {
+      /* ---- 项目条目：与原版项目菜单同构 ---- */
+      mk(MENU_ICON.open, '打开项目', () => folderOpenProjectByName(title));
+      mk(MENU_ICON.rename, '重命名项目', () => {
+        const gid = folderProjGizmoId(key);
+        craberPromptDialog({
+          title: '重命名项目',
+          subtitle: '保持简短且易于识别',
+          value: title || '',
+          confirmText: '保存',
+          onOk: (v) => {
+            if (!v || v === title) return;
+            if (!gid) { navToast('找不到该项目 ID，无法重命名'); return; }
+            craberRenameProject(gid, v).then(() => {
+              // 项目在文件夹里是按"名字"记录的：名字变了要同步过去，
+              // 否则这条项目会变成找不到的孤儿项。
+              const oldKey = key;
+              const newKey = folderProjKeyByName(v);
+              if (oldKey !== newKey) {
+                for (const ff of folderData.folders) {
+                  const i = ff.items.indexOf(oldKey);
+                  if (i >= 0) {
+                    if (ff.items.indexOf(newKey) < 0) ff.items[i] = newKey;
+                    else ff.items.splice(i, 1);
+                  }
+                }
+                saveFolders();
+              }
+              // 项目名存在 key 里（projname:...），锁定新名字一段时间，
+              // 免得被原生侧栏的旧项目名覆盖回去
+              const lockKey = folderProjKeyByName(v);
+              folderTitleCache[lockKey] = v;
+              folderTitleLock[lockKey] = { title: v, until: Date.now() + 120000 };
+              folderRenderedSig = '';
+              renderFolders();
+              navToast('已重命名为「' + v + '」');
+            }).catch((e) => navToast('重命名失败：' + e.message));
+          }
+        });
+      });
+      mk(MENU_ICON.expand, folderProjOpen[key] ? '收起会话列表' : '展开会话列表', () => {
+        // 从菜单切换：找到该项目的行再原地过渡
+        const nav = document.querySelector('nav[aria-label="聊天记录"]');
+        const subEl = nav && nav.querySelector('.craber-folder-kid-sub[data-for="' + key + '"]');
+        const rowEl = subEl && subEl.parentElement
+          && subEl.parentElement.querySelector('.craber-folder-kid');
+        folderToggleProjOpen(key, rowEl);
+      });
+      m.append(folderEl('div', 'craber-menu-sep'));
+      mk(MENU_ICON.share, '分享项目', () => {
+        const gid = folderProjGizmoId(key);
+        if (!gid) { navToast('找不到该项目 ID，无法分享'); return; }
+        craberShareProject(gid).then((link) => {
+          if (!link) {
+            // 拿不到分享链接时，直接打开项目页，用户可在原生菜单里分享
+            folderOpenProjectByName(title);
+            navToast('未能自动生成分享链接，已打开项目页');
+            return;
+          }
+          try {
+            navigator.clipboard.writeText(link);
+            navToast('分享链接已复制');
+          } catch (e) {
+            craberDialog({
+              title: '分享链接',
+              subtitle: '已生成，可手动复制',
+              body: (() => {
+                const w = folderEl('div', 'craber-dlg-body');
+                const inp = document.createElement('input');
+                inp.type = 'text';
+                inp.className = 'craber-dlg-input';
+                inp.value = link;
+                w.append(inp);
+                setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) {} }, 30);
+                return w;
+              })(),
+              confirmText: '复制',
+              onConfirm: (close) => {
+                try { navigator.clipboard.writeText(link); navToast('已复制'); } catch (e) {}
+                close();
+              }
+            });
+          }
+        }).catch((e) => navToast('分享失败：' + e.message));
+      });
+    } else {
+      /* ---- 会话条目：与原版会话菜单同构（重命名/置顶/分享/归档/删除） ---- */
+      mk(MENU_ICON.open, '打开', () => folderNavigate(href || ('/c/' + convId)));
+
+      mk(MENU_ICON.rename, '重命名', () => {
+        craberPromptRename(title, (t) => {
+          craberRenameConv(convId, t).then(() => {
+            // 用锁定版写入：原生侧栏还没回显新名时，别被它的旧标题覆盖
+            folderSetTitleLocal(key, t);
+            // 项目会话缓存里这一条也要跟着改（展开项目时显示的是它）
+            for (const k of Object.keys(folderProjConvCache)) {
+              const list = folderProjConvCache[k];
+              if (!Array.isArray(list)) continue;
+              for (const c of list) if (c.key === key) c.label = t;
+            }
+            folderRenderedSig = '';
+            renderFolders();
+            navToast('已重命名');
+          }).catch((e) => navToast('重命名失败：' + e.message));
+        });
+      });
+
+      mk(MENU_ICON.pin, craberIsPinned(convId) ? '取消置顶' : '置顶', () => {
+        const next = !craberIsPinned(convId);
+        // 先本地生效：菜单立刻变"取消置顶"，列表位置立即上浮，不等网络
+        craberPinnedCache[convId] = next;
+        craberSavePinned();
+        craberRepinInFolders(convId, next);
+        folderRenderedSig = '';
+        renderFolders();
+
+        craberPinConv(convId, next).then(() => {
+          // 接口已确认成功（200 {"success":true}）：同步项目会话缓存里的置顶标记
+          craberApplyPinToConvCache(convId, next, Date.now());
+          navToast(next ? '已置顶' : '已取消置顶');
+          craberRefreshSidebarSoon();
+        }).catch((e) => {
+          // 失败回滚本地状态，避免显示与实际不符
+          craberPinnedCache[convId] = !next;
+          craberSavePinned();
+          craberRepinInFolders(convId, !next);
+          folderRenderedSig = '';
+          renderFolders();
+          navToast('置顶失败：' + e.message);
+        });
+      });
+
+      mk(MENU_ICON.share, '分享', () => {
+        const link = location.origin + '/share/' + convId;
+        try {
+          navigator.clipboard.writeText(link);
+          navToast('分享链接已复制');
+        } catch (e) {
+          craberDialog({
+            title: '分享链接',
+            subtitle: '已生成，可手动复制',
+            body: (() => {
+              const w = folderEl('div', 'craber-dlg-body');
+              const inp = document.createElement('input');
+              inp.type = 'text';
+              inp.className = 'craber-dlg-input';
+              inp.value = link;
+              w.append(inp);
+              setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) {} }, 30);
+              return w;
+            })(),
+            confirmText: '复制',
+            onConfirm: (close) => {
+              try { navigator.clipboard.writeText(link); navToast('已复制'); } catch (e) {}
+              close();
+            }
+          });
+        }
+      });
+
+      m.append(folderEl('div', 'craber-menu-sep'));
+
+      mk(MENU_ICON.archive, '归档', () => {
+        craberArchiveConv(convId, true).then(() => {
+          folderToggleItem(f.id, key);       // 归档后从文件夹里移除更符合直觉
+          navToast('已归档');
+        }).catch((e) => navToast('归档失败：' + e.message));
+      });
+
+      mk(MENU_ICON.remove, '删除', () => {
+        craberConfirmDialog({
+          title: '删除这个对话？',
+          message: '此操作不可恢复，该对话将永久删除。',
+          confirmText: '删除',
+          danger: true,
+          onOk: () => {
+            craberDeleteConv(convId).then(() => {
+              folderToggleItem(f.id, key);
+              navToast('已删除');
+            }).catch((e) => navToast('删除失败：' + e.message));
+          }
+        });
+      }, 'craber-menu-danger');
+    }
+
+    // 分组标题：与原版一致（显示这条内容现在属于哪个文件夹）
+    // 未归入文件夹时（项目下的会话默认都没有），不显示文件夹相关项
+    const noFolder = f.id === '__none__';
+    if (!noFolder) m.append(folderEl('div', 'craber-menu-group', f.name));
+
+    // 会话：原版的「移至项目 / 从项目中移除」（真实调用 gizmo_id 接口）
+    if (!isProj && convId) {
+      mk(MENU_ICON.move, '移至项目', () => {
+        craberOpenMoveToProject(anchor, convId, key, f);
+      }, '', MENU_ICON.chevron);
+      if (folderCurrentProjKeys().length) {
+        mk(MENU_ICON.unmove, '从项目中移除', () => {
+          craberMoveConvToProject(convId, null).then(() => {
+            navToast('已从项目中移除');
+          }).catch((e) => navToast('操作失败：' + e.message));
+        });
+      }
+      m.append(folderEl('div', 'craber-menu-sep'));
+    }
+
+    // 文件夹归属相关：移至其它文件夹 / 从文件夹中移除
+    if (!noFolder) {
+      mk(MENU_ICON.move, '移至其它文件夹', () => {
+        folderOpenTomovePicker(anchor, f, key, title);
+      }, '', MENU_ICON.chevron);
+      mk(MENU_ICON.unmove, '从文件夹中移除', () => {
+        folderToggleItem(f.id, key);
+        navToast('已从「' + f.name + '」移除');
+      }, 'craber-menu-danger');
+    }
+
+    // 借用原生菜单：置顶/分享/归档等操作交给 ChatGPT 自己处理，
+    // 行为与原生完全一致（也就不用在这里逐项重新实现）。
+    const nativeRow = craberFindNativeRow(kind, kind === 'conv' ? key : null, title);
+    if (nativeRow) {
+      m.append(folderEl('div', 'craber-menu-sep'));
+      const b = folderEl('button', 'craber-menu-item');
+      b.type = 'button';
+      const ic = folderEl('span', 'craber-menu-ico');
+      ic.innerHTML = MENU_ICON.more;
+      b.append(ic, folderEl('span', 'craber-menu-label', '更多操作…'));
+      b.title = '打开 ChatGPT 原生菜单（置顶、分享、归档等）';
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        folderClosePjify();
+        // 稍等一下让我们的菜单先收起来，避免和原生菜单叠在一起
+        setTimeout(() => {
+          const row = craberFindNativeRow(kind, kind === 'conv' ? key : null, title);
+          if (!row) { navToast('找不到对应的原生条目'); return; }
+          if (!craberOpenNativeMenu(row)) navToast('无法打开原生菜单');
+        }, 60);
+      });
+      m.append(b);
+    }
+
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    let left = r.right - mw;
+    let top = r.bottom + 4;
+    if (left < 8) left = 8;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    m.style.left = Math.round(left) + 'px';
+    m.style.top = Math.round(top) + 'px';
+    folderPjifyEl = m;
+    folderCloseOnOutside();
+  }
+
+  // 「移至项目」子菜单：列出用户的全部项目，点一个就把会话挪进去
+  async function craberOpenMoveToProject(anchor, convId, key, f) {
+    folderClosePjify();
+    const m = folderEl('div', 'craber-menu');
+    m.append(folderEl('div', 'craber-menu-group', '移至项目'));
+    const loading = folderEl('div', 'craber-menu-group', '正在读取项目…');
+    m.append(loading);
+    document.body.appendChild(m);
+    const place = () => {
+      const r = anchor.getBoundingClientRect();
+      const mw = m.offsetWidth, mh = m.offsetHeight;
+      let left = r.left;
+      let top = r.bottom + 4;
+      if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+      if (left < 8) left = 8;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+      m.style.left = Math.round(left) + 'px';
+      m.style.top = Math.round(top) + 'px';
+    };
+    place();
+    folderPjifyEl = m;
+    folderCloseOnOutside();
+
+    const list = await craberListProjects();
+    if (loading.parentElement) loading.remove();
+    if (!list.length) {
+      m.append(folderEl('div', 'craber-menu-group', '没有可用项目'));
+      place();
+      return;
+    }
+    for (const p of list) {
+      const b = folderEl('button', 'craber-menu-item');
+      b.type = 'button';
+      const ic = folderEl('span', 'craber-menu-ico');
+      ic.innerHTML = FOLDER_PROJ_ICON;
+      b.append(ic, folderEl('span', 'craber-menu-label', p.name));
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        folderClosePjify();
+        craberMoveConvToProject(convId, p.id).then(() => {
+          navToast('已移至「' + p.name + '」');
+        }).catch((err) => navToast('移动失败：' + err.message));
+      });
+      m.append(b);
+    }
+    place();
+  }
+
+  // "移至其它文件夹"：列出其它文件夹，点一个就把这条内容挪过去
+  function folderOpenTomovePicker(anchor, fromF, key, title) {
+    folderClosePjify();
+    const others = folderData.folders.filter((x) => x.id !== fromF.id);
+    const m = folderEl('div', 'craber-menu');
+    m.append(folderEl('div', 'craber-menu-group', '移动到'));
+    if (!others.length) {
+      m.append(folderEl('div', 'craber-menu-group', '没有其它文件夹'));
+    }
+    for (const t of others) {
+      const b = folderEl('button', 'craber-menu-item');
+      b.type = 'button';
+      const ic = folderEl('span', 'craber-menu-ico');
+      ic.innerHTML = FOLDER_ICON;
+      b.append(ic, folderEl('span', 'craber-menu-label', t.name));
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        folderClosePjify();
+        const i = fromF.items.indexOf(key);
+        if (i >= 0) fromF.items.splice(i, 1);
+        if (t.items.indexOf(key) < 0) t.items.push(key);
+        saveFolders();
+        renderFolders();
+        navToast('已移动到「' + t.name + '」');
+      });
+      m.append(b);
+    }
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    let left = r.left;
+    let top = r.bottom + 4;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    m.style.left = Math.round(left) + 'px';
+    m.style.top = Math.round(top) + 'px';
+    folderPjifyEl = m;
+    folderCloseOnOutside();
+  }
+
+  // 文件夹本身的「⋯」菜单：同样用 craber-menu，风格与原生一致
+  function folderMoreMenu(anchor, f) {
+    folderClosePjify();
+    const m = folderEl('div', 'craber-menu');
+    const mk = (icon, label, fn, cls) => {
+      const b = folderEl('button', 'craber-menu-item' + (cls ? ' ' + cls : ''));
+      b.type = 'button';
+      const ic = folderEl('span', 'craber-menu-ico');
+      ic.innerHTML = icon;
+      b.append(ic, folderEl('span', 'craber-menu-label', label));
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        folderClosePjify(); fn();
+      });
+      m.append(b);
+    };
+
+    // 顺序与原版菜单一致：重命名 / 置顶(此处为展开收起) → 分组 → 归档(此处为新建并移入) → 删除
+    mk(MENU_ICON.rename, '重命名', () => folderRename(f.id));
+    mk(MENU_ICON.expand, f.open ? '收起文件夹' : '展开文件夹', () => folderSetOpen(f.id, !f.open));
+
+    m.append(folderEl('div', 'craber-menu-sep'));
+    mk(MENU_ICON.move, '新建文件夹并移入', () => {
+      craberPromptDialog({
+        title: '新建文件夹并移入',
+        subtitle: '把「' + f.name + '」里的内容整体搬过去',
+        value: '',
+        placeholder: '文件夹名称',
+        confirmText: '创建',
+        onOk: (v) => {
+          const nf = folderCreate(v);
+          for (const k of f.items.slice()) { if (nf.items.indexOf(k) < 0) nf.items.push(k); }
+          f.items = [];
+          saveFolders();
+          renderFolders();
+        }
+      });
+    });
+
+    m.append(folderEl('div', 'craber-menu-group', f.name));
+    mk(MENU_ICON.remove, '删除', () => folderDelete(f.id), 'craber-menu-danger');
+
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    let left = r.right - mw;
+    let top = r.bottom + 4;
+    if (left < 8) left = 8;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    m.style.left = Math.round(left) + 'px';
+    m.style.top = Math.round(top) + 'px';
+    folderPjifyEl = m;
+    folderCloseOnOutside();
+  }
+
+  function folderUnmount() {
+    if (foldersEl && foldersEl.parentElement) foldersEl.remove();
+    foldersEl = null;
+    foldersHostNav = null;
+    folderRenderedSig = '';
+  }
+
+  /* ---------- 原生行上的「归入文件夹」按钮 ---------- */
+
+  // 原生行宿主：从链接往上走，第一个"高度不超过一行、且内部还有原生按钮"的祖先。
+  // 挂到纯文本 span 上算不出位置，挂到整个列表上又会让 hover 覆盖全部行。
+  function folderPickRowHost(a) {
+    // 原生行高度约 36px，往上走超过 1.6 倍行高就说明已经跨到区块级别了。
+    // 优先选"行内已经有自己按钮"的那层（原生归档/更多按钮所在容器），
+    // 没有按钮就退回到最接近一行的祖先 —— 按钮仍能贴着行显示。
+    let best = null;
+    let n = a;
+    for (let i = 0; i < 6 && n.parentElement && n.parentElement.tagName !== 'NAV'; i++) {
+      n = n.parentElement;
+      if (n.tagName === 'LI') return n;
+      const h = n.getBoundingClientRect().height;
+      if (h > 56) break;
+      if (n.querySelector(':scope > button, :scope > div > button')) return n;
+      if (!best) best = n;   // 记住最贴行的一层（越靠里越贴行）
+    }
+    return best || a.parentElement;
+  }
+
+  function folderScanRows() {
+    if (!uiPrefs.folders) return;
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (!nav) return;
+    const now = Date.now();
+    if (now - folderPjScanAt < 400) return;   // 原生会频繁重渲染，节流一下
+    folderPjScanAt = now;
+
+    // 项目行是 role="button" 的 div、没有 href，a[href] 那条查不到它，单独扫一遍
+    nav.querySelectorAll('[role="button"]').forEach((el) => {
+      if (!folderIsProjectRow(el)) return;
+      const name = (el.textContent || '').trim();
+      if (!name) return;
+      const projEntry = { kind: 'projname', id: name, key: folderProjKeyByName(name) };
+      // 项目行用手动拖拽：原生项目行自带拖拽（拖到别处=置顶/排序），
+      // 和"拖进文件夹"冲突，必须把 HTML5 拖拽关掉再自己接管手势。
+      folderBindManualDrag(el, () => projEntry);
+      folderAttachRowButton(el, projEntry, name, null);
+    });
+
+    nav.querySelectorAll('a[href]').forEach((a) => {
+      const entry = folderEntryFromHref(a.getAttribute('href'));
+      if (!entry) return;
+      folderRememberHref(entry, a.getAttribute('href'));
+      folderBindDrag(a);
+      const host = folderPickRowHost(a);
+      if (!host) return;
+      folderAttachRowButton(host, entry, folderEntryTitle(a), a);
+    });
+  }
+
+  // 给一行挂上「归入文件夹」按钮（按钮 + 右键菜单）。重复调用是空操作。
+  // anchor 用于弹窗定位；链接行传 a，项目行传 null（用行本身定位）。
+  function folderAttachRowButton(host, entry, title, a) {
+    if (!host) return;
+    if (host.querySelector(':scope > .craber-pj-btn')) return;
+    host.classList.add('craber-pj-host');
+    const btn = folderEl('button', 'craber-pj-btn');
+    btn.type = 'button';
+    btn.innerHTML = FOLDER_ICON;
+    btn.title = '归入文件夹';
+    btn.setAttribute('aria-label', '归入文件夹');
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      folderOpenPjify(btn, entry, title);
+    });
+    // 右键原生行也弹同一个菜单：比每次去够那个小按钮顺手
+    host.addEventListener('contextmenu', (ev) => {
+      if (!uiPrefs.folders) return;
+      if (a && !ev.target.closest('a')) return;      // 链接行只认点在链接上
+      ev.preventDefault();
+      folderOpenPjify(btn, entry, title);
+    });
+    // 插到"文字块"之后、原生操作按钮之前：原生右侧按钮在 hover 时才出现，
+    // 我们排在它前面就不会被它盖住（绝对定位到右缘实测会点成原生菜单）。
+    const textCol = a ? (a.closest('div') || null) : null;
+    const anchorEl = textCol && textCol.parentElement === host ? textCol : null;
+    if (anchorEl && anchorEl.nextSibling) host.insertBefore(btn, anchorEl.nextSibling);
+    else host.appendChild(btn);
+  }
+
+  // 拖拽归类：原生行本来可拖，这里只在拖起时记下条目，落点由文件夹行处理
+  // 通用拖拽绑定：el 可以是会话链接，也可以是项目行。
+  // getEntry 每次拖拽开始时才求值（名字/映射可能已变）。
+  function folderBindDragEl(el, getEntry) {
+    if (!el) return;
+    // 每轮都确保 draggable 存在：React 重建/复用节点时可能会把它清掉。
+    // 项目行原生本来就是 draggable，我们只保证它是 true。
+    if (el.getAttribute('draggable') !== 'true') el.setAttribute('draggable', 'true');
+    if (el.dataset.craberDrag) return;
+    el.dataset.craberDrag = '1';
+    // 用捕获阶段：原生（React）在项目行上也有拖拽逻辑（拖出去会置顶项目），
+    // 冒泡阶段我们可能拿到被处理过/被拦截的事件。捕获能先拿到，并决定是否接管。
+    el.addEventListener('dragstart', (e) => {
+      if (!uiPrefs.folders) return;
+      let entry = null;
+      try { entry = getEntry(); } catch (err) { entry = null; }
+      if (!entry) return;
+
+      folderDndKind = entry.kind;
+      folderDndId = entry.id;
+      folderDndKey = entry.key;
+      folderDndLabel = el.getAttribute('aria-label') || (el.textContent || '').trim() || null;
+      if (el.tagName === 'A') folderRememberHref(entry, el.getAttribute('href'));
+
+      try {
+        e.dataTransfer.setData('text/plain', 'craber:' + entry.key);
+        e.dataTransfer.effectAllowed = 'copyMove';
+      } catch (err) {}
+
+      // 项目行：原生也会处理拖拽（拖到别处=置顶项目），必须拦掉原生处理器。
+      if (entry.kind === 'proj' || entry.kind === 'projname') {
+        e.stopImmediatePropagation();
+      }
+    }, true);
+    el.addEventListener('dragend', () => {
+      folderDndKind = null;
+      folderDndId = null;
+      folderDndKey = null;
+      folderDndLabel = null;
+      document.querySelectorAll('.drag-over').forEach((n) => n.classList.remove('drag-over'));
+    });
+  }
+
+  // 会话链接的拖拽（原有入口，内部走通用实现）
+  function folderBindDrag(a) {
+    folderBindDragEl(a, () => folderEntryFromHref(a.getAttribute('href')));
+  }
+
+  // 项目行的拖拽：原生在这类行上自带拖拽（拖到别处会把项目置顶/排序），
+  // 和"拖进文件夹"直接冲突，靠拦事件很难彻底压住。
+  // 改为把手势抓在自己手里：屏蔽 HTML5 拖拽，用鼠标事件手动发起一个自定义拖拽会话。
+  /* ---------- 文件夹内条目拖动排序 ---------- */
+  // 用同一套"手动拖拽"（document 捕获层拦截 + 鼠标事件）：
+  // 原生在这些行上也有拖拽语义，用 HTML5 drag 会被它抢走。
+  let folderSortState = null;   // { el, key, fromF, startX, startY, started }
+  let folderSortDoneAt = 0;      // 排序完成的时刻，用于抑制紧随其后的 click
+  function folderJustSorted() { return Date.now() - folderSortDoneAt < 300; }
+
+  function folderSortBegin(el, key, f, ev) {
+    folderSortState = {
+      el, key, fromF: f,
+      startX: ev.clientX, startY: ev.clientY,
+      started: false
+    };
+  }
+
+  function folderSortMove(ev) {
+    const st = folderSortState;
+    if (!st) return;
+    if (!st.started) {
+      if (Math.abs(ev.clientX - st.startX) < 5 && Math.abs(ev.clientY - st.startY) < 5) return;
+      st.started = true;
+      st.el.classList.add('craber-sorting');
+      document.body.classList.add('craber-dragging');
+    }
+
+    // 找到指针下方的其他条目行，计算插入位置
+    const under = document.elementFromPoint(ev.clientX, ev.clientY);
+    const overRow = under && under.closest ? under.closest('.craber-folder-kid') : null;
+    document.querySelectorAll('.craber-folder-kid.sort-over-top, .craber-folder-kid.sort-over-bottom')
+      .forEach((n) => n.classList.remove('sort-over-top', 'sort-over-bottom'));
+    if (!overRow || overRow === st.el) return;
+
+    const r = overRow.getBoundingClientRect();
+    const before = ev.clientY < r.top + r.height / 2;
+    overRow.classList.add(before ? 'sort-over-top' : 'sort-over-bottom');
+    st.overRow = overRow;
+    st.before = before;
+    ev.preventDefault();
+  }
+
+  function folderSortEnd(ev) {
+    const st = folderSortState;
+    folderSortState = null;
+    if (!st) return false;
+    st.el.classList.remove('craber-sorting');
+    document.body.classList.remove('craber-dragging');
+    document.querySelectorAll('.sort-over-top, .sort-over-bottom')
+      .forEach((n) => n.classList.remove('sort-over-top', 'sort-over-bottom'));
+
+    if (!st.started) return false;         // 只是点击
+    if (!st.overRow) return true;          // 拖了但没落在其它条目上
+
+    const targetKey = st.overRow.dataset.sortKey;
+    if (!targetKey || targetKey === st.key) return true;
+
+    const f = st.fromF;
+    const from = f.items.indexOf(st.key);
+    const to = f.items.indexOf(targetKey);
+    if (from < 0 || to < 0) return true;
+
+    // 先移除，再按"插到目标前/后"计算新位置
+    f.items.splice(from, 1);
+    let insert = f.items.indexOf(targetKey);
+    if (insert < 0) insert = f.items.length;
+    if (!st.before) insert += 1;
+    f.items.splice(insert, 0, st.key);
+
+    saveFolders();
+    renderFolders();
+    folderSortDoneAt = Date.now();   // 抑制紧接着的 click（避免误跳转）
+    return true;
+  }
+
+  // 给文件夹内的条目行绑定拖动排序
+  function folderBindSort(row, key, f) {
+    if (!row) return;
+    folderInstallSortGlobal();
+    row.addEventListener('mousedown', (ev) => {
+      if (!uiPrefs.folders) return;
+      if (ev.button !== undefined && ev.button !== 0) return;
+      // 点在行内按钮（⋯ / 箭头）上时不排序
+      if (ev.target && ev.target.closest && ev.target.closest('button')) return;
+      folderSortBegin(row, key, f, ev);
+    }, true);
+    row.addEventListener('pointerdown', (ev) => {
+      if (!uiPrefs.folders) return;
+      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+      if (ev.target && ev.target.closest && ev.target.closest('button')) return;
+      folderSortBegin(row, key, f, ev);
+    }, true);
+  }
+
+  // 全局分发：只安装一次
+  let folderSortInstalled = false;
+  function folderInstallSortGlobal() {
+    if (folderSortInstalled) return;
+    folderSortInstalled = true;
+    document.addEventListener('mousemove', (ev) => { if (folderSortState) folderSortMove(ev); }, true);
+    document.addEventListener('pointermove', (ev) => { if (folderSortState) folderSortMove(ev); }, true);
+    document.addEventListener('mouseup', (ev) => {
+      if (!folderSortState) return;
+      const moved = folderSortEnd(ev);
+      if (moved) {
+        // 排序完成：别再让下面的点击触发跳转
+        ev.stopPropagation();
+        ev.preventDefault();
+      }
+    }, true);
+    document.addEventListener('pointerup', (ev) => {
+      if (!folderSortState) return;
+      const moved = folderSortEnd(ev);
+      if (moved) { ev.stopPropagation(); ev.preventDefault(); }
+    }, true);
+  }
+
+  // 所有已绑定拖拽的项目行处理函数
+  const folderProjDragHandlers = [];
+
+  // 找到一个"这次事件落在哪个已绑定行上"的处理函数
+  function folderProjDragHit(ev) {
+    const t = ev.target;
+    if (!t || !t.closest) return null;
+    const rowEl = t.closest('[data-craber-projdrag="1"]');
+    if (!rowEl) return null;
+    return folderProjDragHandlers.find((h) => h.el === rowEl) || null;
+  }
+
+  // 全局只安装一次：document 捕获阶段分发
+  let folderProjDragInstalled = false;
+  function folderInstallProjDragGlobal() {
+    if (folderProjDragInstalled) return;
+    folderProjDragInstalled = true;
+
+    const down = (ev) => {
+      const h = folderProjDragHit(ev);
+      if (!h) return;
+      h.onDown(ev);
+    };
+    const move = (ev) => {
+      const h = folderProjDragHit(ev) || folderProjDragActive;
+      if (!h) return;
+      h.suppress(ev);
+      h.onMove(ev);
+    };
+    const up = (ev) => {
+      const h = folderProjDragActive || folderProjDragHit(ev);
+      if (!h) return;
+      h.suppress(ev);
+      h.onUp(ev);
+    };
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('mousedown', down, true);
+    document.addEventListener('pointermove', move, true);
+    document.addEventListener('mousemove', move, true);
+    document.addEventListener('pointerup', up, true);
+    document.addEventListener('mouseup', up, true);
+  }
+
+  // 当前正在拖拽/按下的行处理函数（手势移出行元素后仍能继续）
+  let folderProjDragActive = null;
+
+  // 项目行的拖拽：原生在 document 层监听指针事件做"拖动置顶"，
+  // 元素级监听拦不住，所以拦截必须挂在 document 的捕获阶段。
+  function folderBindManualDrag(el, getEntry) {
+    if (!el) return;
+    // 关掉 HTML5 拖拽，避免原生走 dragstart 那条路
+    if (el.getAttribute('draggable') !== 'false') el.setAttribute('draggable', 'false');
+    el.dataset.craberProjdrag = '1';
+
+    let startX = 0, startY = 0, active = false, started = false;
+    const THRESHOLD = 5;   // 位移阈值：小于它算点击，不影响"打开项目"
+
+    // 本行的处理集合（下面 onDown 里通过 folderProjDragActive 引用它）
+    const self = {};
+    self.el = el;
+    self.isActive = () => active;
+    self.isStarted = () => started;
+
+    const isOurs = (ev) => {
+      const t = ev.target;
+      return !!(t && t.closest && t.closest('[data-craber-projdrag="1"]') === el);
+    };
+
+    // 统一的"开始"处理：按下时若发生在该行上，接管并切断原生手势
+    const onDown = (ev) => {
+      if (!uiPrefs.folders) return;
+      if (ev.button !== undefined && ev.button !== 0) return;
+      if (!isOurs(ev)) return;
+      if (ev.target && ev.target.closest && ev.target.closest('button')) return;
+
+      active = true;
+      started = false;
+      startX = ev.clientX;
+      startY = ev.clientY;
+      folderProjDragActive = self;   // 手势移出行外时仍由这一行接管
+
+      // 原生拿不到这次按下，就不会进入自己的拖拽状态（也就没有蓝色插入线/置顶）
+      ev.stopImmediatePropagation();
+      ev.stopPropagation();
+      ev.preventDefault();
+    };
+
+    // 拖拽开始后，持续压掉原生在 document 上的位移处理
+    const suppress = (ev) => {
+      // 按下即拦（否则原生可能在阈值内就进入自己的拖拽状态）；
+      // 但只在本次按下发生在该行、且是我们接管的情况下。
+      if (active) {
+        ev.stopImmediatePropagation();
+        ev.stopPropagation();
+      }
+    };
+
+    const onMove = (ev) => {
+      if (!active) return;
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!started) {
+        if (Math.abs(dx) < THRESHOLD && Math.abs(dy) < THRESHOLD) return;
+        started = true;
+        document.body.classList.add('craber-dragging');
+      }
+      // 落点高亮
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      const row = under && under.closest ? under.closest('.craber-folder[data-folder-id]') : null;
+      const zone = under && under.closest ? under.closest('.craber-folders') : null;
+      document.querySelectorAll('.craber-folder.drag-over').forEach((n) => {
+        if (n !== row) n.classList.remove('drag-over');
+      });
+      if (row) row.classList.add('drag-over');
+      else if (zone) zone.classList.add('drag-over');
+      else document.querySelectorAll('.craber-folders.drag-over')
+        .forEach((n) => n.classList.remove('drag-over'));
+      ev.preventDefault();
+    };
+
+    const onUp = (ev) => {
+      if (!active) return;
+      const wasDragging = started;
+      active = false;
+      started = false;
+      folderProjDragActive = null;
+      document.body.classList.remove('craber-dragging');
+      document.querySelectorAll('.drag-over').forEach((n) => n.classList.remove('drag-over'));
+
+      // 纯点击：原生被我们拦过，这里补回"打开项目"
+      if (!wasDragging) {
+        const nm = (el.textContent || '').trim();
+        if (nm) folderOpenProjectByName(nm);
+        return;
+      }
+
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      const row = under && under.closest ? under.closest('.craber-folder[data-folder-id]') : null;
+      const zone = under && under.closest ? under.closest('.craber-folders') : null;
+
+      const entry = getEntry();
+      if (!entry || !folderData) return;
+
+      let target = null;
+      if (row) {
+        const fid = row.dataset.folderId;
+        target = folderData.folders.find((x) => x.id === fid) || null;
+      } else if (zone && folderData.folders.length) {
+        target = folderData.folders[0];
+      }
+      if (!target) return;
+
+      if (target.items.indexOf(entry.key) >= 0) {
+        navToast('已经在「' + target.name + '」里了');
+        return;
+      }
+      folderAddItem(target, entry.key,
+        el.getAttribute('aria-label') || (el.textContent || '').trim() || null);
+      saveFolders();
+      renderFolders();
+      navToast('已加入「' + target.name + '」');
+    };
+
+    // 关键：拦截必须挂在 document 的捕获阶段。
+    // 原生 dnd（React 里一般是 document 级 pointerdown 监听）如果也在捕获阶段，
+    // 元素级监听会排在它之后 —— 那就是"能加进文件夹但仍会置顶"的原因。
+    // document 捕获 + 先注册，才能确保我们先拿到事件。
+    // 把具体处理函数挂到 self 上（前面已创建占位对象，避免 TDZ）
+    self.onDown = onDown;
+    self.onMove = onMove;
+    self.onUp = onUp;
+    self.suppress = suppress;
+    self.getEntry = getEntry;
+    folderProjDragHandlers.push(self);
+    folderInstallProjDragGlobal();
+  }
+
+
+  /* ---------- 「归入文件夹」弹出菜单 ---------- */
+
+  function folderOpenPjify(anchor, entry, title) {
+    folderClosePjify();
+    const key = entry.key;
+    folderTitleCache[key] = title;
+
+    const m = folderEl('div', 'craber-pjify');
+    m.append(folderEl('div', 'craber-pjify-hd',
+      (entry.kind === 'proj' || entry.kind === 'projname' ? '项目：' : '会话：') + title));
+
+    if (!folderData.folders.length) {
+      m.append(folderEl('div', 'craber-pjify-hd', '还没有文件夹，先新建一个'));
+    }
+    for (const f of folderData.folders) {
+      const on = f.items.indexOf(key) >= 0;
+      const row = folderEl('button', 'craber-pjify-row');
+      row.type = 'button';
+      row.title = on ? '从「' + f.name + '」移出' : '加入「' + f.name + '」';
+      row.append(folderEl('span', null, f.name));
+      if (on) {
+        const ck = folderEl('span', 'craber-pjify-check');
+        ck.innerHTML = FOLDER_CHECK;
+        row.append(ck);
+      }
+      row.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const added = folderToggleItem(f.id, key);
+        navToast(added ? '已加入「' + f.name + '」' : '已从「' + f.name + '」移出');
+        folderClosePjify();
+      });
+      m.append(row);
+    }
+
+    m.append(folderEl('div', 'craber-pjify-sep'));
+    const nw = folderEl('button', 'craber-pjify-row craber-pjify-new', '＋ 新建文件夹并放入');
+    nw.type = 'button';
+    nw.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      folderClosePjify();
+      craberPromptDialog({
+        title: '新建文件夹并放入',
+        subtitle: '新建后把该项直接放进去',
+        value: '',
+        placeholder: '文件夹名称',
+        confirmText: '创建',
+        onOk: (v) => {
+          folderCreate(v, key);
+          navToast('已新建并放入');
+        }
+      });
+    });
+    m.append(nw);
+
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    const mw = m.offsetWidth;
+    const mh = m.offsetHeight;
+    let left = r.left;
+    let top = r.bottom + 6;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+    m.style.left = Math.round(left) + 'px';
+    m.style.top = Math.round(top) + 'px';
+    folderPjifyEl = m;
+    folderCloseOnOutside();
+  }
+
+  function folderClosePjify() {
+    if (folderPjifyEl && folderPjifyEl.parentElement) folderPjifyEl.remove();
+    folderPjifyEl = null;
+  }
+
+  let folderOutsideBound = false;
+  function folderCloseOnOutside() {
+    if (folderOutsideBound) return;
+    folderOutsideBound = true;
+    document.addEventListener('click', (e) => {
+      if (!folderPjifyEl) return;
+      if (folderPjifyEl.contains(e.target)) return;
+      folderClosePjify();
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') folderClosePjify();
+    });
+    window.addEventListener('resize', folderClosePjify);
+  }
+
+  // 主循环：每秒一次。有变化才重建，其余时间几乎零开销。
+  /* ---------- 阻止原生「项目」区自动展开 ---------- */
+  // 原生会在这些时机自动展开项目行：进入项目内会话、侧栏重渲染、从项目页返回。
+  // 开启「锁定项目展开」后，我们把这些自动展开按回去，只有用户亲手点的才放行。
+  const folderProjGuard = {
+    armed: false,                      // 我们主动按回去时置位，避免和用户点击混淆
+    userTouchedAt: 0,                  // 用户最近一次点项目行的时间
+    collapsed: Object.create(null)     // 项目名 -> 是否已被我们收起
+  };
+
+  function folderProjRowExpanded(row) {
+    return row.getAttribute('aria-expanded') === 'true';
+  }
+
+  // 收集原生「项目」区块里的项目行（排除区块标题与自家节点）
+  function folderNativeProjRows() {
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (!nav) return [];
+    return [...nav.querySelectorAll('[role="button"]')].filter((el) => {
+      if (!folderIsProjectRow(el)) return false;
+      if (el.closest('.craber-folders')) return false;
+      const t = (el.textContent || '').trim();
+      if (!t || t === '项目' || t === '最近') return false;
+      return true;
+    });
+  }
+
+  // 原生项目行的展开状态记到 localStorage。
+  // 之前的实现只存在内存里，而且"只记录看到收起的"——
+  // 于是打开开关时项目本来就是展开的、之后就再也没记录过，
+  // 原生下次自动展开时我们根本不干预（表现为"锁了没用"）。
+  function folderGuardLoad() {
+    try {
+      const raw = localStorage.getItem('gpt_craber_proj_guard');
+      if (raw) {
+        const j = JSON.parse(raw);
+        if (j && j.collapsed) folderProjGuard.collapsed = j.collapsed;
+      }
+    } catch (e) { /* 损坏就重来 */ }
+  }
+  function folderGuardSave() {
+    try {
+      localStorage.setItem('gpt_craber_proj_guard',
+        JSON.stringify({ collapsed: folderProjGuard.collapsed }));
+    } catch (e) { /* 忽略 */ }
+  }
+
+  function folderGuardProjAutoExpand() {
+    if (!uiPrefs.lockProjExpand) return;
+    const now = Date.now();
+    let dirty = false;
+    for (const row of folderNativeProjRows()) {
+      const name = (row.textContent || '').trim();
+      const expanded = folderProjRowExpanded(row);
+
+      if (!expanded) {
+        // 收起状态：记为"用户想让它收起"（下次被原生自动展开时按回去）
+        if (folderProjGuard.collapsed[name] !== true) {
+          folderProjGuard.collapsed[name] = true;
+          dirty = true;
+        }
+        continue;
+      }
+
+      // 展开状态
+      if (folderProjGuard.armed) continue;
+      if (now - folderProjGuard.userTouchedAt < 500) continue;   // 用户刚点过，放行
+
+      // 从没被收起过的项目：不干预（尊重原生初始状态）。
+      // 但用户一旦手动收起过，就一定在表里，之后就会被锁住。
+      if (folderProjGuard.collapsed[name] !== true) continue;
+
+      folderProjGuard.armed = true;
+      try { row.click(); } catch (e) { /* 点不动就忽略 */ }
+      setTimeout(() => { folderProjGuard.armed = false; }, 150);
+    }
+    if (dirty) folderGuardSave();
+  }
+
+  // 记录"用户亲手点了项目行"，并在状态稳定后记住用户要的展开状态
+  let folderGuardLoaded = false;
+  function folderBindProjRowClick() {
+    if (!folderGuardLoaded) { folderGuardLoaded = true; folderGuardLoad(); }   // 恢复上次的收起记录
+    const nav = document.querySelector('nav[aria-label="聊天记录"]');
+    if (!nav || nav.dataset.craberProjGuard === '1') return;
+    nav.dataset.craberProjGuard = '1';
+    nav.addEventListener('click', (e) => {
+      if (!uiPrefs.lockProjExpand) return;
+      const row = e.target && e.target.closest ? e.target.closest('[role="button"]') : null;
+      if (!row || !folderIsProjectRow(row) || row.closest('.craber-folders')) return;
+      const t = (row.textContent || '').trim();
+      if (!t || t === '项目' || t === '最近') return;
+      folderProjGuard.userTouchedAt = Date.now();
+      setTimeout(() => {
+        const name = (row.textContent || '').trim();
+        // 用户亲手点过：以点完后的状态为准，并持久化
+        folderProjGuard.collapsed[name] = !folderProjRowExpanded(row);
+        folderGuardSave();
+      }, 300);
+    }, true);
+  }
+
+  function foldersTick() {
+    if (!uiPrefs.folders) { folderUnmount(); return; }
+    if (!folderData) folderData = loadFolders();
+    folderScanRows();
+    folderBindProjRowClick();
+    folderAutoExpand();   // 当前会话所在文件夹自动展开（每个只自动开一次）
+    folderGuardProjAutoExpand();
+    renderFolders();
+    folderHydrateTitles();
+  }
+
   /* ============================================================
    * 对话完成通知
    * ========================================================== */
@@ -3983,7 +7662,7 @@
   // 关掉必须真的卸载（移除已注入的节点 + 停掉后续挂载），而不是只隐藏 ——
   // 否则功能还在后台跑、还会去请求接口。
   const UI_PREFS_KEY = 'gpt_craber_ui_prefs';
-  const UI_PREFS_DEFAULT = { navRail: true, projectUI: true, notify: false };
+  const UI_PREFS_DEFAULT = { navRail: true, projectUI: true, notify: false, folders: true, lockProjExpand: false };
   let uiPrefs = (() => {
     try {
       const raw = localStorage.getItem(UI_PREFS_KEY);
@@ -4004,6 +7683,32 @@
       // 借这次点击手势请求通知权限（浏览器只放行用户手势内的权限请求）。
       // 关闭时无需清理：notifyTick 下一秒自己会复位状态位。
       if (on) notifyRequestPermission();
+    } else if (key === 'lockProjExpand') {
+      // 打开开关的瞬间，把"当前已展开"的项目也纳入守护范围：
+      // 用户点这个开关的本意就是"从现在起别再自动弹开"。
+      // 关闭时清空记录，回到完全交给原生。
+      if (on) {
+        for (const row of folderNativeProjRows()) {
+          const name = (row.textContent || '').trim();
+          // 已展开的：标记为"想让它收起"，这样原生下次自动展开就会被按回去。
+          // 注意这里不主动点它（用户可能正看着某个项目的内容）。
+          if (folderProjRowExpanded(row)) folderProjGuard.collapsed[name] = true;
+        }
+        folderGuardSave();
+        navToast('已锁定：项目不会再自动展开');
+      } else {
+        folderProjGuard.collapsed = Object.create(null);
+        folderGuardSave();
+      }
+    } else if (key === 'folders') {
+      // 开：立刻挂上；关：撤掉区块和原生行上的小按钮
+      if (on) { foldersTick(); }
+      else {
+        folderUnmount();
+        folderClosePjify();
+        document.querySelectorAll('.craber-pj-btn').forEach((b) => b.remove());
+        document.querySelectorAll('.craber-pj-host').forEach((n) => n.classList.remove('craber-pj-host'));
+      }
     }
   }
 
@@ -4165,7 +7870,9 @@
       panel.append(
         mkToggle('navRail', '节点导航', '在会话左侧显示回合节点轨道，可悬停预览、点击跳转'),
         mkToggle('projectUI', '项目 UI 优化', '在顶栏里显示项目对话入口与当前对话位置'),
-        mkToggle('notify', '完成通知', '回复生成完成后发送浏览器通知（首次开启需允许通知权限）')
+        mkToggle('notify', '完成通知', '回复生成完成后发送浏览器通知（首次开启需允许通知权限）'),
+        mkToggle('folders', '侧栏文件夹', '在侧栏「项目」下方显示自定义文件夹，可把项目与会话归入其中'),
+        mkToggle('lockProjExpand', '锁定项目展开', '阻止原生「项目」区自动展开：进入项目内会话时保持你手动收起的状态（需开启侧栏文件夹）')
       );
 
       panel.append(el('div', 'craber-fab-sep'));
@@ -4426,6 +8133,8 @@
     pbarTick();
     // 对话完成通知：下降沿检测，见 notifyTick
     notifyTick();
+    // 侧栏文件夹：原生侧栏会被 React 重建，每秒补挂一次（有指纹比对，无变化不做）
+    foldersTick();
   }, 1000);
 
   mountFab();
