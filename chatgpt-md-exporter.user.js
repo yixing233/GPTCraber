@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.14.2
+// @version      0.14.3
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.14.2';
+  const CRABER_VERSION = '0.14.3';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -183,7 +183,8 @@
         : [bearer, null];
 
       for (const url of cands) {
-        for (const auth of authModes) {
+        for (let ai = 0; ai < authModes.length; ai++) {
+          const auth = authModes[ai];
           const headers = auth ? auth : {};
           const r = await fetch(url, { headers, credentials: 'include' });
 
@@ -193,13 +194,17 @@
           }
           if (!r.ok) {
             lastStatus = r.status;
-            // 读一下错误码：conversation_inaccessible 说明是"凭证/归属"问题，
-            // 换一种鉴权方式还有机会。
             try {
               const e = await r.json();
               const code = e && e.detail && e.detail.code;
               if (code === 'conversation_inaccessible') sawInaccessible = true;
             } catch (err) { /* 非 JSON 响应，忽略 */ }
+
+            // 只在"鉴权可能有问题"时才换下一种鉴权；
+            // 404/405 说明这个端点不对，换鉴权没意义，直接换端点，
+            // 避免把请求数放大好几倍（会更容易触发限流）。
+            const authIssue = r.status === 401 || r.status === 403 || sawInaccessible;
+            if (!authIssue) break;
             continue;
           }
 
