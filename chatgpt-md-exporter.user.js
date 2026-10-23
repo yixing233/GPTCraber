@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.13.8
+// @version      0.14.2
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.13.8';
+  const CRABER_VERSION = '0.14.2';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -153,25 +153,75 @@
 
     // 全量取会话：这条最容易触发限流，所以排队等待 + 限流退避 + 按 Retry-After 自动重试。
     // attempt 让"被限流后自动接着拉"成为默认行为，调用方不用自己写重试。
+    //
+    // 端点会变：曾经可靠的单数 /backend-api/conversation/{id} 已经出现过 404。
+    // 所以这里按顺序试几个候选，第一个 2xx 且能解析出内容的就采用。
     async getConversation(convId, attempt) {
       const tries = attempt || 0;
       await apiWait();
       const t = await this.getToken();
       await apiGap();
-      const r = await fetch('/backend-api/conversation/' + convId, {
-        headers: { Authorization: 'Bearer ' + t },
-        credentials: 'include'
-      });
-      if (r.status === 429 && tries < 3) {
-        noteRateLimit(r);
-        return this.getConversation(convId, tries + 1);
+
+      const gid = craberCurrentGizmoId();
+      const cands = [
+        '/backend-api/conversation/' + convId,
+        '/backend-api/conversations/' + convId + '?include_has_versions=true',
+        '/backend-api/conversations/' + convId
+      ];
+      if (gid) cands.splice(1, 0, '/backend-api/gizmos/' + gid + '/conversation/' + convId);
+
+      let lastStatus = 0;
+      let sawInaccessible = false;
+
+      // 两种鉴权方式都试：先带 Bearer（多数情况够用），
+      // 再纯 Cookie（原生页面就是纯 Cookie）。有些账号的 accessToken 与
+      // Cookie 会话并不等价，此时带 token 反而会被判 conversation_inaccessible。
+      // 按已知可行的方式优先尝试；另一种留作兜底
+      const bearer = { Authorization: 'Bearer ' + t };
+      const authModes = craberAuthMode === 'cookie'
+        ? [null, bearer]
+        : [bearer, null];
+
+      for (const url of cands) {
+        for (const auth of authModes) {
+          const headers = auth ? auth : {};
+          const r = await fetch(url, { headers, credentials: 'include' });
+
+          if (r.status === 429 && tries < 3) {
+            noteRateLimit(r);
+            return this.getConversation(convId, tries + 1);
+          }
+          if (!r.ok) {
+            lastStatus = r.status;
+            // 读一下错误码：conversation_inaccessible 说明是"凭证/归属"问题，
+            // 换一种鉴权方式还有机会。
+            try {
+              const e = await r.json();
+              const code = e && e.detail && e.detail.code;
+              if (code === 'conversation_inaccessible') sawInaccessible = true;
+            } catch (err) { /* 非 JSON 响应，忽略 */ }
+            continue;
+          }
+
+          let j = null;
+          try { j = await r.json(); } catch (e) { continue; }
+          // 能解析出消息结构的才算数：避免拿到空壳把整篇导出搞成白板
+          if (j && (j.mapping || Array.isArray(j.items) || Array.isArray(j.messages))) {
+            craberNoteAuthMode(auth ? 'bearer' : 'cookie');
+            return j;
+          }
+          lastStatus = lastStatus || 200;
+        }
       }
-      if (!r.ok) {
-        const err = new Error('会话内容获取失败: ' + r.status);
-        err.status = r.status;   // 调用方要靠它区分 429（限流）和真失败
-        throw err;
-      }
-      return r.json();
+
+      const msg = sawInaccessible
+        ? '无法访问该会话（conversation_inaccessible）。可能原因：它属于另一个账号或工作区，'
+          + '或已被删除。可尝试刷新页面后重新打开该会话再导出。'
+        : '会话内容获取失败: ' + (lastStatus || '未知');
+      const err = new Error(msg);
+      err.status = lastStatus || 0;   // 调用方要靠它区分 429（限流）和真失败
+      err.code = sawInaccessible ? 'conversation_inaccessible' : null;
+      throw err;
     },
 
     async getFileInfo(fileId) {
@@ -401,16 +451,50 @@
    * 会话结构：线程重建 + 回合分组
    * ========================================================== */
 
+  // 当前页面所在的 gizmo/项目 id（有些会话端点需要它）
+  // 记录"哪种鉴权方式可用"，避免每次请求都白试一遍。
+  // 'bearer' = 带 Authorization；'cookie' = 仅 Cookie（原生页面的做法）。
+  let craberAuthMode = 'bearer';
+  function craberNoteAuthMode(mode) {
+    if (mode && craberAuthMode !== mode) craberAuthMode = mode;
+  }
+
+  function craberCurrentGizmoId() {
+    const m = location.pathname.match(/\/g\/(g-p-[0-9a-f]+)/);
+    return m ? m[1] : null;
+  }
+
+  // 把会话还原成"一条从提问到回答的线性线程"。
+  //
+  // 首选 mapping + current_node（ChatGPT 的树形结构，能正确取到当前分支）。
+  // 但结构会变：拿不到 mapping 时退回 items / messages 数组，
+  // 否则整篇导出会变成空白（实测踩到过 404 后 mapping 缺失的情况）。
   function buildThread(conv) {
-    const map = conv.mapping;
+    const map = conv && conv.mapping;
     const out = [];
-    let cur = conv.current_node;
-    while (cur) {
-      const node = map[cur];
-      if (node && node.message) out.push(node);
-      cur = node ? node.parent : null;
+    if (map && typeof map === 'object') {
+      let cur = conv.current_node;
+      while (cur) {
+        const node = map[cur];
+        if (node && node.message) out.push(node);
+        cur = node ? node.parent : null;
+      }
+      if (out.length) return out.reverse();
+      // 有 mapping 但没有 current_node（或链断了）：按 create_time 排序兜底
+      const nodes = Object.keys(map)
+        .map((k) => map[k])
+        .filter((n) => n && n.message);
+      nodes.sort((a, b) => (a.message.create_time || 0) - (b.message.create_time || 0));
+      return nodes;
     }
-    return out.reverse();
+
+    // 没有 mapping：尝试直接数组形式
+    const arr = (conv && (conv.items || conv.messages)) || null;
+    if (Array.isArray(arr)) {
+      return arr.map((m) => (m && m.message ? m : { message: m }))
+        .filter((n) => n && n.message);
+    }
+    return [];
   }
 
   // 把线程按"用户提问 → 之后的助手/工具回复"切成一个个回合
@@ -749,6 +833,17 @@
       const lang = m.content.language && m.content.language !== 'unknown' ? m.content.language : '';
       return '```' + lang + '\n' + (m.content.text || '') + '\n```\n\n';
     }
+
+    // 遇到不认识的 content_type 时尽力提取文本。
+    // 以前直接 return '' 会悄悄丢掉整段内容（新版结构一变就少一大段）。
+    if (role === 'assistant') {
+      const parts = (m.content && m.content.parts) || [];
+      const text = parts.filter((x) => typeof x === 'string').join('\n\n').replace(PUA, '').trim();
+      const inline = (m.content && typeof m.content.text === 'string') ? m.content.text.trim() : '';
+      const body = text || inline;
+      if (body) return body + '\n\n';
+      if (ct) return '_（该段为 ' + ct + ' 类型内容，无法提取为 Markdown）_' + '\n\n';
+    }
     return '';
   }
 
@@ -988,6 +1083,8 @@
     };
 
     let done = 0;
+    let failCount = 0;
+    let lastErr = '';
     for (let idx = 0; idx < convMetas.length; idx++) {
       const meta = convMetas[idx];
       const seq = String(idx + 1).padStart(pad, '0');
@@ -1014,6 +1111,8 @@
         zip.add(dir + '/' + sanitizeFilename(meta.title || conv.title || '会话') + '.md', _enc.encode(md));
       } catch (e) {
         console.warn('[gpt-craber] 会话导出失败', meta.id, e);
+        failCount++;
+        lastErr = e && e.message ? e.message : '未知错误';
         // 失败的会话留一个说明文件，不中断整体
         zip.add(dir + '/_导出失败.txt', _enc.encode('导出失败：' + (e && e.message) + '\n会话 id：' + meta.id + '\n'));
       }
@@ -1024,6 +1123,11 @@
     if (onProgress) onProgress(convMetas.length, convMetas.length, '打包中…');
     const blob = zip.generate();
     triggerDownload(blob, 'chatgpt-conversations.zip');
+
+    // 有失败就明确说出来，别让人解压后才发现是空的
+    if (failCount) {
+      navToast('有 ' + failCount + ' / ' + convMetas.length + ' 个会话导出失败：' + lastErr);
+    }
   }
 
   /* ============================================================
@@ -1891,6 +1995,11 @@
     .craber-pjify-row:hover{background:var(--craber-hover)}
     .craber-pjify-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .craber-pjify-row .craber-pjify-check{flex:none;color:var(--craber-accent);width:13px;height:13px}
+    /* 导出项的图标：不能跟随 span 的 flex:1 被拉伸 */
+    .craber-pjify-row .craber-pjify-ico{flex:none;width:14px;height:14px;display:flex;
+      align-items:center;justify-content:center;color:var(--craber-sub)}
+    .craber-pjify-row .craber-pjify-ico svg{width:14px;height:14px}
+    .craber-pjify-export:hover .craber-pjify-ico{color:var(--craber-fg)}
     /* 目标文件夹名称：不加图标，纯文字左对齐，右侧放勾选状态 */
     .craber-pjify-sep{height:1px;background:var(--craber-line);margin:4px 6px}
     .craber-pjify-new{color:var(--craber-accent)}
@@ -4601,6 +4710,8 @@
     + ' stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
   // 图标全部按原版菜单的样式与尺寸（16px、1.7 描边）
   const MENU_ICON = {
+    // 导出（下载箭头到托盘）
+    export: mi('<path d="M12 4v11"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/>'),
     // 打开（外链箭头）
     open: mi('<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>'),
     // 展开/收起
@@ -6519,6 +6630,51 @@
   }
 
   // 文件夹内条目的「⋯」菜单：风格对齐原生（左侧图标 + 右侧快捷键位 + 危险项红字）
+  /* ---------- 从菜单直接导出 ---------- */
+
+  // 导出单个会话为 Markdown（带图片目录，打包成 zip）。
+  // 复用既有渲染管线，行为和"多会话导出"保持一致。
+  async function craberExportConvById(convId, title) {
+    if (!convId) { navToast('找不到会话 ID，无法导出'); return; }
+    const meta = { id: convId, title: title || '会话' };
+    try {
+      navToast('正在导出…');
+      await exportConversations([meta]);
+      navToast('已导出「' + (title || '会话') + '」');
+    } catch (e) {
+      navToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
+    }
+  }
+
+  // 导出整个项目：把它名下的会话全部导出成一个 zip。
+  // 项目 ID 可能缺失（只有名字），先解析再拉会话列表。
+  async function craberExportProject(key, name) {
+    let gid = folderProjGizmoId(key);
+    if (!gid) gid = await folderResolveProjIdByName(name).catch(() => null);
+    if (!gid) { navToast('找不到该项目 ID，无法导出'); return; }
+
+    let list = folderProjConvCache[folderKeyOf('proj', gid)]
+      || folderProjConvCache[key];
+    if (!list || !list.length) {
+      try { list = await folderLoadProjConvs(key, gid); } catch (e) { list = null; }
+    }
+    if (!list || !list.length) { navToast('该项目没有可导出的会话'); return; }
+
+    const metas = list.map((c) => {
+      const id = String(c.key || '').indexOf('conv:') === 0 ? c.key.slice(5) : c.key;
+      return { id: id, title: c.label || '会话', gizmo_id: gid };
+    }).filter((m) => m.id);
+
+    if (!metas.length) { navToast('该项目没有可导出的会话'); return; }
+    try {
+      navToast('正在导出 ' + metas.length + ' 个会话…');
+      await exportConversations(metas);
+      navToast('已导出「' + name + '」');
+    } catch (e) {
+      navToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
+    }
+  }
+
   function folderKidMenu(anchor, f, key, title, href) {
     folderClosePjify();
     const kind = folderItemKindOf(key);
@@ -6596,6 +6752,9 @@
         folderToggleProjOpen(key, rowEl);
       });
       m.append(folderEl('div', 'craber-menu-sep'));
+      mk(MENU_ICON.export, '导出项目', () => {
+        craberExportProject(key, title);
+      });
       mk(MENU_ICON.share, '分享项目', () => {
         const gid = folderProjGizmoId(key);
         if (!gid) { navToast('找不到该项目 ID，无法分享'); return; }
@@ -6677,6 +6836,10 @@
           renderFolders();
           navToast('置顶失败：' + e.message);
         });
+      });
+
+      mk(MENU_ICON.export, '导出会话', () => {
+        craberExportConvById(convId, title);
       });
 
       mk(MENU_ICON.share, '分享', () => {
@@ -7390,6 +7553,23 @@
     const m = folderEl('div', 'craber-pjify');
     m.append(folderEl('div', 'craber-pjify-hd',
       (entry.kind === 'proj' || entry.kind === 'projname' ? '项目：' : '会话：') + title));
+
+    // 导出：侧栏原生行右键也能直接导出，不必先进文件夹
+    const isProjEntry = entry.kind === 'proj' || entry.kind === 'projname';
+    const expRow = folderEl('button', 'craber-pjify-row craber-pjify-export');
+    expRow.type = 'button';
+    const expIco = folderEl('span', 'craber-pjify-ico');
+    expIco.innerHTML = MENU_ICON.export;
+    expRow.append(expIco, folderEl('span', null, isProjEntry ? '导出项目' : '导出会话'));
+    expRow.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      folderClosePjify();
+      if (isProjEntry) craberExportProject(key, title);
+      else craberExportConvById(entry.id, title);
+    });
+    m.append(expRow);
+    m.append(folderEl('div', 'craber-pjify-sep'));
 
     if (!folderData.folders.length) {
       m.append(folderEl('div', 'craber-pjify-hd', '还没有文件夹，先新建一个'));
