@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.14.3
+// @version      0.15.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.14.3';
+  const CRABER_VERSION = '0.15.0';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -44,7 +44,9 @@
     mode: 'qa',            // 'qa' = 问答对；'ai' = 仅 AI 回复
     includeCode: false,    // 是否导出 assistant/code（工具调用代码，如 search(...)）
     sourcesFooter: true,   // 是否在文末附"参考来源"
-    embedImages: true      // ChatGPT 托管图是否转 base64 内嵌（否则用临时链接）
+    embedImages: true,     // ChatGPT 托管图是否转 base64 内嵌（否则用临时链接）
+    includeTools: false,   // 是否导出工具调用及其结果（默认关：通常会整段复述文档）
+    includeReasoning: false // 是否导出思考/推理过程（默认关，折叠显示）
   };
 
   function loadSettings() {
@@ -65,6 +67,15 @@
     // 支持 /c/{id} 与 /g/g-xxx/c/{id}
     const m = location.pathname.match(/\/c\/([^/?#]+)/);
     return m ? m[1] : null;
+  }
+
+  // 当前时间戳，用于文件名后缀：20261023-1618
+  // 精确到分钟即可：同一天同一分钟连续导出的概率很低，真撞了浏览器也会加 (1)。
+  function craberStamp(d) {
+    const t = d || new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return String(t.getFullYear()) + p(t.getMonth() + 1) + p(t.getDate())
+      + '-' + p(t.getHours()) + p(t.getMinutes());
   }
 
   function sanitizeFilename(s) {
@@ -525,9 +536,56 @@
    * ========================================================== */
 
   function extractText(node) {
-    if (!node) return '';
-    const parts = (node.message.content && node.message.content.parts) || [];
-    return parts.filter((p) => typeof p === 'string').join(' ').replace(PUA, '').trim();
+    if (!node || !node.message) return '';
+    const c = node.message.content;
+    if (!c) return '';
+    // 优先 parts 里的字符串；新结构有时把正文放在 content.text
+    const parts = c.parts || [];
+    let s = parts.filter((p) => typeof p === 'string').join(' ').trim();
+    if (!s && typeof c.text === 'string') s = c.text.trim();
+    return s.replace(PUA, '').trim();
+  }
+
+  // 从任意 message 里尽力取出纯文本（未知类型的兜底用）。
+  // 有些新结构把正文放在 parts[].text / parts[].content，而不是裸字符串。
+  function craberLooseText(m) {
+    if (!m) return '';
+    const c = m.content || {};
+    const out = [];
+    if (typeof c.text === 'string') out.push(c.text);
+    for (const p of (c.parts || [])) {
+      if (typeof p === 'string') { out.push(p); continue; }
+      if (!p || typeof p !== 'object') continue;
+      if (typeof p.text === 'string') out.push(p.text);
+      else if (typeof p.content === 'string') out.push(p.content);
+      else if (typeof p.value === 'string') out.push(p.value);
+    }
+    // 有些结构把结果塞在 metadata 里
+    const md = m.metadata || {};
+    if (!out.length && typeof md.text === 'string') out.push(md.text);
+
+    // 实测字段（与通用猜测不同，这几个必须单独认）：
+    //   content_type=thoughts         -> content.thoughts（通常字符串或数组）
+    //   content_type=reasoning_recap  -> content.content（字符串）
+    //   content_type=tether_quote     -> content.text（网页正文，默认不导出）
+    if (!out.length) {
+      const th = c.thoughts;
+      if (typeof th === 'string') out.push(th);
+      else if (Array.isArray(th)) {
+        for (const x of th) {
+          if (typeof x === 'string') out.push(x);
+          else if (x && typeof x === 'object') {
+            if (typeof x.text === 'string') out.push(x.text);
+            else if (typeof x.content === 'string') out.push(x.content);
+            else if (typeof x.summary === 'string') out.push(x.summary);
+          }
+        }
+      }
+    }
+    if (!out.length && c.content_type === 'reasoning_recap' && typeof c.content === 'string') {
+      out.push(c.content);
+    }
+    return out.join('\n\n').replace(PUA, '').trim();
   }
 
   // image_group 里挑一张要用的图 URL（与 renderRef 保持一致）
@@ -824,8 +882,13 @@
     const ct = m.content && m.content.content_type;
 
     // tool 角色是工具调用结果（如上传文档解析出的全文复述、代码执行等），
-    // 不是模型对用户的回答，直接跳过，避免整篇文档复述混进导出。
-    if (role === 'tool') return '';
+    // 不是模型对用户的回答，默认跳过；开启 includeTools 后折叠输出。
+    if (role === 'tool') {
+      if (!settings.includeTools) return '';
+      const t = craberLooseText(m);
+      if (!t) return '';
+      return '<details><summary>🔧 工具调用结果</summary>' + '\n\n' + t.slice(0, 4000) + '\n\n' + '</details>' + '\n\n';
+    }
 
     if (role === 'assistant' && ct === 'text') {
       const t = renderAssistantText(m, cache).trim();
@@ -839,13 +902,47 @@
       return '```' + lang + '\n' + (m.content.text || '') + '\n```\n\n';
     }
 
-    // 遇到不认识的 content_type 时尽力提取文本。
-    // 以前直接 return '' 会悄悄丢掉整段内容（新版结构一变就少一大段）。
+    // 思考/推理过程：默认不导出，开启 includeReasoning 后折叠显示
+    if (ct === 'reasoning_recap' || ct === 'thoughts' || ct === 'reasoning') {
+      if (!settings.includeReasoning) return '';
+      const t = craberLooseText(m);
+      if (!t) return '';
+      return '<details><summary>💭 思考过程</summary>' + '\n\n' + t.slice(0, 8000) + '\n\n' + '</details>' + '\n\n';
+    }
+
+    // 搜索抓到的网页正文（tether_quote）。
+    // 一次搜索会产生几十个这类节点，全导出会把正文淹掉，
+    // 所以默认只保留来源链接（由 collectSources 汇总到文末），
+    // 开启 includeTools 才把摘要折叠附上。
+    if (ct === 'tether_quote') {
+      if (!settings.includeTools) return '';
+      const title = (m.content && m.content.title) || '';
+      const url = (m.content && m.content.url) || '';
+      const txt = craberLooseText(m);
+      if (!url && !txt) return '';
+      return '<details><summary>🌐 ' + (title || url) + '</summary>' + '\n\n'
+        + (url ? '[' + (title || url) + '](' + url + ')' + '\n\n' : '')
+        + (txt ? txt.slice(0, 1500) : '') + '\n\n</details>\n\n';
+    }
+
+    // 浏览过程的展示节点：默认略过（没有正文价值）
+    if (ct === 'tether_browsing_display') {
+      if (!settings.includeTools) return '';
+      const t = craberLooseText(m) || (m.content && m.content.summary) || '';
+      return t ? '_（浏览过程：' + String(t).slice(0, 200) + '）_' + '\n\n' : '';
+    }
+
+    // 模型侧的工具调用请求
+    if (ct === 'tool_call' || ct === 'function_call') {
+      if (!settings.includeTools) return '';
+      const t = craberLooseText(m);
+      if (!t) return '';
+      return '<details><summary>🔧 工具调用</summary>' + '\n\n' + '```' + '\n' + t.slice(0, 4000) + '\n' + '```' + '\n\n' + '</details>' + '\n\n';
+    }
+
+    // 兜底：尽力取出文本，取不到就留一行说明
     if (role === 'assistant') {
-      const parts = (m.content && m.content.parts) || [];
-      const text = parts.filter((x) => typeof x === 'string').join('\n\n').replace(PUA, '').trim();
-      const inline = (m.content && typeof m.content.text === 'string') ? m.content.text.trim() : '';
-      const body = text || inline;
+      const body = craberLooseText(m);
       if (body) return body + '\n\n';
       if (ct) return '_（该段为 ' + ct + ' 类型内容，无法提取为 Markdown）_' + '\n\n';
     }
@@ -855,14 +952,37 @@
   function collectSources(turn) {
     const seen = new Set();
     const list = [];
+    const add = (it) => {
+      if (!it || !it.url || seen.has(it.url)) return;
+      seen.add(it.url);
+      list.push({
+        url: it.url,
+        title: it.title || it.attribution || it.domain || it.url,
+        attr: it.attribution || it.domain || ''
+      });
+    };
+
     for (const node of turn.answers) {
+      // 1) 正文引用标记（content_references）
       const refs = (node.message.metadata && node.message.metadata.content_references) || [];
       for (const r of refs) {
-        const items = r.items || r.sources || [];
-        for (const it of items) {
-          if (!it || !it.url || seen.has(it.url)) continue;
-          seen.add(it.url);
-          list.push({ url: it.url, title: it.title || it.attribution || it.url, attr: it.attribution || '' });
+        for (const it of (r.items || r.sources || [])) add(it);
+      }
+
+      // 2) 搜索抓取到的网页（tether_quote）。
+      //    实测这类节点数量远超正文消息（一次搜索几十条），
+      //    它们带 url/domain/title，是最完整的来源清单。
+      const content = node.message.content || {};
+      if (content.content_type === 'tether_quote') {
+        add({ url: content.url, title: content.title, domain: content.domain });
+      }
+      // 3) 浏览结果（tether_browsing_display）里可能带 assets/results
+      if (content.content_type === 'tether_browsing_display') {
+        const arr = content.assets || content.results || [];
+        if (Array.isArray(arr)) {
+          for (const it of arr) {
+            if (it && typeof it === 'object') add(it);
+          }
         }
       }
     }
@@ -984,69 +1104,134 @@
       (collectFileIds(turn, true).length > 0 || collectSearchImageUrls(turn).length > 0);
     const hasAttachments = collectAttachments(turn, true).length > 0;
 
+    // 文件名统一：<标题>_<时间戳>，与菜单导出保持一致
+    const stamp = craberStamp();
+
     if (hasImages || hasAttachments) {
       const zip = createZip();
       const sink = makeZipImageSink(zip); // 资源写入 images/、files/，md 引用相对路径
       const { title, md } = await renderTurn(turn, null, sink, { forceQuestion: true });
       zip.add(sanitizeFilename(title) + '.md', _enc.encode(md));
-      triggerDownload(zip.generate(), sanitizeFilename(title) + '.zip');
+      triggerDownload(zip.generate(), sanitizeFilename(title) + '_' + stamp + '.zip');
       return;
     }
 
     const { title, md } = await renderTurn(turn, null, null, { forceQuestion: true });
-    triggerDownload(new Blob([md], { type: 'text/markdown;charset=utf-8' }), sanitizeFilename(title) + '.md');
+    triggerDownload(new Blob([md], { type: 'text/markdown;charset=utf-8' }),
+      sanitizeFilename(title) + '_' + stamp + '.md');
   }
 
   async function exportBatch(selectedTurns, onProgress) {
+    // 文件名统一用「会话标题」：这样不管选了几轮，导出的都是同一个名字，
+    // 不会出现 01_问题一.md、02_问题二.md 这种一堆文件。
+    const convTitle = (state.conv && state.conv.title) || '未命名会话';
+
     // 只选一轮时，含附件则必须打 zip，确保原文件独立落在 files/；否则仍导出单个 md。
     if (selectedTurns.length === 1) {
       const turn = selectedTurns[0];
       const includeQuestion = settings.mode === 'qa';
       const hasAttachments = includeQuestion && collectAttachments(turn, true).length > 0;
-      const seq = (state.turns ? state.turns.indexOf(turn) : -1) + 1;
-      const pad1 = String((state.turns && state.turns.length) || 1).length;
-      const prefix = seq > 0 ? String(seq).padStart(pad1, '0') + '_' : '';
+      const stamp = craberStamp();
       if (hasAttachments) {
         const zip = createZip();
         const sink = makeZipImageSink(zip);
-        const { title, md } = await renderTurn(turn, onProgress, sink);
-        zip.add(prefix + sanitizeFilename(title) + '.md', _enc.encode(md));
-        triggerDownload(zip.generate(), prefix + sanitizeFilename(title) + '.zip');
+        const { md } = await renderTurn(turn, onProgress, sink);
+        zip.add(sanitizeFilename(convTitle) + '.md', _enc.encode(md));
+        triggerDownload(zip.generate(), sanitizeFilename(convTitle) + '_' + stamp + '.zip');
         return;
       }
       const sink = makeDataUriSink(); // 单文件无处放 images/ 目录，图片以 data URI 内嵌
-      const { title, md } = await renderTurn(turn, onProgress, sink);
+      const { md } = await renderTurn(turn, onProgress, sink);
       if (onProgress) onProgress(1, 1);
-      const blob = new Blob([_enc.encode(prefix + sanitizeFilename(title) + '\n' && md) || md], { type: 'text/markdown' });
-      triggerDownload(new Blob([md], { type: 'text/markdown' }), prefix + sanitizeFilename(title) + '.md');
+      triggerDownload(new Blob([md], { type: 'text/markdown' }),
+        sanitizeFilename(convTitle) + '_' + stamp + '.md');
       return;
     }
-    const zip = createZip(); // 内联 STORE 打包器，零依赖零 eval，不触发 CSP
-    const sink = makeZipImageSink(zip); // 图片以原始二进制写入 images/，md 用相对路径引用
-    const used = {};
-    // 序号按回合在整个对话中的真实顺序，补零对齐（跳选也保持全局一致，文件名可正确排序）
+    // 多回合：合并为一个 md 文件（以前是一回合一个文件，导出后要翻好几个 md）
+    //
+    // 仍然走 zip：图片和上传文档需要落在 images/、files/ 里用相对路径引用，
+    // 单文件塞 base64 会很大。zip 里只有一份 md + 资源目录。
+    const zip = createZip();
+    const sink = makeZipImageSink(zip);
+
+    let md = '# ' + convTitle + '\n\n';
+
+    // 序号按回合在整个对话中的真实顺序（跳选也保持全局一致）
     const pad = String((state.turns && state.turns.length) || selectedTurns.length).length;
     let i = 0;
     for (const turn of selectedTurns) {
-      const { title, md } = await renderTurn(turn, null, sink);
+      const r = await renderTurn(turn, null, sink);
       const seq = ((state.turns ? state.turns.indexOf(turn) : -1) + 1) || (i + 1);
-      const prefix = String(seq).padStart(pad, '0') + '_';
-      let name = prefix + sanitizeFilename(title);
-      if (used[name] != null) { used[name]++; name = name + ' (' + used[name] + ')'; }
-      else used[name] = 0;
-      zip.add(name + '.md', _enc.encode(md));
+
+      // 回合之间用二级标题分隔，便于在单文件里定位
+      md += '## 第 ' + String(seq).padStart(pad, '0') + ' 轮\n\n';
+      md += r.md.trim() + '\n\n---\n\n';
+
       i++;
       if (onProgress) onProgress(i, selectedTurns.length);
     }
+    // 去掉末尾多余的分隔线
+    md = md.replace(/\n+---\n+$/, '\n');
+
     if (onProgress) onProgress(selectedTurns.length, selectedTurns.length, '打包中…');
-    const blob = zip.generate(); // 同步产出 Blob（纯数据操作，STORE 不压缩，很快）
-    const zipName = sanitizeFilename(state.conv && state.conv.title) || 'chatgpt-export';
-    triggerDownload(blob, zipName + '.zip');
+    // 内部的 md 用纯会话名（干净、便于阅读），只有最外层文件名带日期
+    zip.add(sanitizeFilename(convTitle) + '.md', _enc.encode(md.trim() + '\n'));
+    const blob = zip.generate();
+    triggerDownload(blob, sanitizeFilename(convTitle) + '_' + craberStamp() + '.zip');
   }
 
   /* ============================================================
    * 多会话：列表获取与批量导出
    * ========================================================== */
+
+  /* 会话列表缓存
+   * 设置中心每次切到「会话列表」都会重建页面，原来每次都重新翻页拉全部会话：
+   * 几十个会话就是 2 次请求，几百个就是十几次，而这份数据（标题/时间）
+   * 十分钟内基本不变。所以：
+   *   - 拉到就存一份带时间戳的快照，下次直接渲染，切页零请求
+   *   - 超过 TTL 或手动刷新才重新拉
+   *   - 缓存按账号隔离，切换账号不会看到别人的会话
+   */
+  // 取消勾选的 id 集合：会话列表页每次切页都会重建，勾选状态存在这里才不会丢
+  const convSelOff = new Set();
+
+  // 会话列表的筛选条件（项目 / 日期）。同样要跨切页保留。
+  const convFilter = { projFilter: 'all', dateRange: 0, dateFrom: '', dateTo: '' };
+
+  const CONV_CACHE_KEY = 'gpt_craber_conv_cache';
+  const CONV_CACHE_TTL = 10 * 60 * 1000;   // 10 分钟：超过就当作过期，进入时自动刷新
+
+  function convCacheLoad() {
+    try {
+      const j = JSON.parse(localStorage.getItem(CONV_CACHE_KEY) || 'null');
+      if (!j || !Array.isArray(j.items)) return null;
+      return { at: Number(j.at) || 0, account: String(j.account || ''), items: j.items };
+    } catch (e) { return null; }
+  }
+
+  function convCacheSave(items) {
+    try {
+      const acct = craberAccountLoad();
+      localStorage.setItem(CONV_CACHE_KEY, JSON.stringify({
+        at: Date.now(),
+        account: (acct && acct.name) ? sanitizeRemoteSeg(acct.name) : '',
+        // 只留渲染需要的字段：整份 conversations 原文大得多，也没必要留
+        items: (items || []).map((m) => ({
+          id: m.id, title: m.title || '', update_time: Number(m.update_time) || 0,
+          gizmo_id: m.gizmo_id || (m.gizmo && m.gizmo.id) || null
+        }))
+      }));
+    } catch (e) { /* 存储满了就只走内存 */ }
+  }
+
+  // 缓存是否可用：账号一致且没超过 TTL。账号不一致时宁可重拉。
+  function convCacheFresh(c) {
+    if (!c || !c.items.length) return false;
+    const acct = craberAccountLoad();
+    const who = (acct && acct.name) ? sanitizeRemoteSeg(acct.name) : '';
+    if (who && c.account && who !== c.account) return false;
+    return Date.now() - c.at < CONV_CACHE_TTL;
+  }
 
   // 分页拉取全部会话（title/id/时间等），自动翻页直到取完 total
   async function fetchAllConversations(onProgress) {
@@ -1075,7 +1260,11 @@
   // 导出多个会话：每个会话合并为单个 md，放进以会话标题命名的子文件夹，
   // 子文件夹内含 images/（该会话的图片）。属于“项目”的会话再套一层项目名文件夹，
   // 无项目的会话直接放在 zip 根。全部打进一个 zip。
-  async function exportConversations(convMetas, onProgress) {
+  // 构建会话 zip 的公共实现：只负责产出 blob，不触发下载。
+  // 导出（下载）和备份（上传 WebDAV）共用这一套，避免两处逻辑漂移。
+  // 返回 { blob, zipName, failCount, lastErr }
+  async function buildConversationsZip(convMetas, onProgress, opts) {
+    opts = opts || {};
     const zip = createZip();
     const usedDir = {};        // 每个父目录下的子文件夹名去重：key = parent + '||' + name
     const pad = String(convMetas.length).length;
@@ -1101,19 +1290,28 @@
       const pgid = getProjectGizmoId(meta);
       if (pgid) parent = (await projectDirName(pgid)) + '/';
 
+      // 会话内容先取回来：标题以接口为准。
+      // 文件夹里存的标题可能是旧的（用户改过名），或干脆是空的，
+      // 直接拿来当文件名会出现「01_未命名」这种没法辨认的结果。
+      let conv = null;
+      try { conv = await API.getConversation(meta.id); } catch (e) { /* 下面统一处理 */ }
+
+      // 标题以接口为准：文件夹里的标题可能是旧的，也可能为空
+      const realTitle = (conv && conv.title) || meta.title || '会话';
+
       // 子文件夹名：序号_标题，在同一父目录下去重
-      let leaf = seq + '_' + sanitizeFilename(meta.title || '未命名');
+      let leaf = seq + '_' + sanitizeFilename(realTitle);
       const dedupKey = parent + '||' + leaf;
       if (usedDir[dedupKey] != null) { usedDir[dedupKey]++; leaf = leaf + ' (' + usedDir[dedupKey] + ')'; }
       else usedDir[dedupKey] = 0;
       const dir = parent + leaf;
 
       try {
-        const conv = await API.getConversation(meta.id);
+        if (!conv) throw new Error('会话内容获取失败');
         // 图片写入该会话子文件夹下的 images/
         const sink = makeZipImageSink(zip, dir + '/');
         const { md } = await renderConversationToMd(conv, sink);
-        zip.add(dir + '/' + sanitizeFilename(meta.title || conv.title || '会话') + '.md', _enc.encode(md));
+        zip.add(dir + '/' + sanitizeFilename(realTitle) + '.md', _enc.encode(md));
       } catch (e) {
         console.warn('[gpt-craber] 会话导出失败', meta.id, e);
         failCount++;
@@ -1127,12 +1325,29 @@
 
     if (onProgress) onProgress(convMetas.length, convMetas.length, '打包中…');
     const blob = zip.generate();
-    triggerDownload(blob, 'chatgpt-conversations.zip');
+
+    // zip 名按场景取：单会话用会话标题，项目导出用项目名，
+    // 其余（多选导出）保留通用名。之前一律 chatgpt-conversations.zip，
+    // 从菜单连续导出几次会得到一堆同名文件（浏览器自动加 (1)(2)）。
+    let zipName = opts.zipName ? sanitizeFilename(opts.zipName)
+      : (convMetas.length === 1
+        ? sanitizeFilename(convMetas[0].title || '会话')
+        : 'chatgpt-conversations');
+
+    return { blob, zipName, failCount, lastErr };
+  }
+
+  // 导出（下载）入口：在公共实现之上加命名与下载
+  async function exportConversations(convMetas, onProgress, opts) {
+    const built = await buildConversationsZip(convMetas, onProgress, opts);
+    // 带日期：同一天导出多次也能区分（否则浏览器只会加 (1)(2)）
+    triggerDownload(built.blob, built.zipName + '_' + craberStamp() + '.zip');
 
     // 有失败就明确说出来，别让人解压后才发现是空的
-    if (failCount) {
-      navToast('有 ' + failCount + ' / ' + convMetas.length + ' 个会话导出失败：' + lastErr);
+    if (built.failCount) {
+      navToast('有 ' + built.failCount + ' / ' + convMetas.length + ' 个会话导出失败：' + built.lastErr);
     }
+    return built;
   }
 
   /* ============================================================
@@ -1255,17 +1470,33 @@
       transition:opacity .16s ease,transform .16s cubic-bezier(.2,.8,.25,1)}
     .craber-fab-menu.craber-closing{opacity:0;visibility:visible;transform:translateY(8px) scale(.98);
       transition:opacity .12s ease,transform .12s ease}
-    .craber-fab-panel{display:flex;flex-direction:column;gap:2px;min-width:170px;padding:6px;
+    /* 面板用两列网格：项多了不会变成一条细长的竖条。
+       * 开关类（craber-fab-toggle）和分隔线占满整行，其余按钮两列并排。 */
+    .craber-fab-panel{display:grid;grid-template-columns:1fr 1fr;gap:2px;
+      width:340px;max-width:calc(100vw - 24px);padding:6px;
       border-radius:12px;background:var(--craber-bg);border:1px solid var(--craber-line);
       box-shadow:0 12px 34px rgba(0,0,0,.22);font-family:system-ui,sans-serif;
       /* 深浅色切换时颜色平滑过渡；只过渡颜色属性，不影响开合的 transform/opacity */
       transition:background-color .2s ease,border-color .2s ease,color .2s ease}
+    /* 这几类要独占一整行：分隔线、开关行、收起按钮、版本脚注 */
+    .craber-fab-panel > .craber-fab-sep,
+    .craber-fab-panel > .craber-fab-toggle,
+    .craber-fab-panel > .craber-fab-collapse,
+    .craber-fab-panel > .craber-fab-ver{grid-column:1 / -1}
     .craber-fab-item{display:flex;align-items:center;gap:8px;width:100%;
       padding:9px 10px;border:none;border-radius:8px;
       background:transparent;color:var(--craber-fg);
       font:inherit;font-size:13px;font-weight:500;text-align:left;cursor:pointer;
       transition:background-color .12s ease}
     .craber-fab-item:hover{background:var(--craber-hover)}
+    .craber-fab-item-label{flex:1;min-width:0;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap;text-align:left}
+    .craber-fab-item-arrow{flex:none;width:12px;height:12px;display:flex;
+      align-items:center;justify-content:center;color:var(--craber-sub);opacity:.55}
+    .craber-fab-item-arrow svg{width:12px;height:12px}
+    .craber-fab-item:hover .craber-fab-item-arrow{opacity:.9}
+    /* 收起按钮不需要箭头：它只是收面板，不进入任何下一级 */
+    .craber-fab-collapse .craber-fab-item-arrow{display:none}
     .craber-fab-collapse{color:var(--craber-sub)}
     /* 版本脚注：只读展示，居右、弱化，不抢菜单项的视觉 */
     .craber-fab-ver{padding:4px 10px 2px;text-align:right;
@@ -1635,12 +1866,48 @@
     }
 
     /* 螃蟹按钮的 tooltip：挂在 body 上的独立元素，不受操作栏 overflow 裁切 */
+    /* tooltip：挂在 body 上的浮层，逃出操作栏 overflow。
+       样式与面板/对话框统一：深色药丸、8px 圆角、细描边、贴边阴影，
+       默认在按钮下方；顶部空间不够时翻到上方（.craber-tip-up）。 */
     .craber-tip{position:fixed;z-index:var(--craber-z-tip);pointer-events:none;
-      background:#2f2f2f;color:#fff;font-size:12px;line-height:1;font-weight:400;
-      padding:6px 9px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.25);
-      white-space:nowrap;font-family:system-ui,sans-serif;
-      opacity:0;transform:translateY(3px);transition:opacity .12s ease,transform .12s ease}
-    .craber-tip.show{opacity:1;transform:translateY(0)}
+      --craber-tip-bg:#23262b; --craber-tip-fg:#f7f8f9;
+      max-width:min(260px,calc(100vw - 24px));box-sizing:border-box;
+      background:var(--craber-tip-bg);color:var(--craber-tip-fg);
+      font-size:12px;line-height:1.45;font-weight:450;letter-spacing:.005em;
+      padding:6px 10px;border-radius:8px;
+      border:1px solid rgba(255,255,255,.08);
+      box-shadow:0 4px 14px rgba(15,18,22,.22),0 1px 4px rgba(15,18,22,.16);
+      white-space:nowrap;text-align:center;
+      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+      opacity:0;transform:translateY(-2px) scale(.98);
+      transform-origin:50% 0;
+      transition:opacity .13s ease,transform .13s ease}
+    .craber-tip.show{opacity:1;transform:translateY(0) scale(1)}
+    /* 被说明的元素在自家模态里：气泡必须浮到模态之上，否则被遮罩盖住 */
+    .craber-tip.craber-tip-modal{z-index:calc(var(--craber-z-modal) + 5)}
+    /* 箭头：用旋转方块贴在边上，永远指向被说明的元素 */
+    .craber-tip::after{content:'';position:absolute;left:var(--craber-arrow-x,50%);top:-5px;
+      width:8px;height:8px;margin-left:-4px;border-radius:2px;
+      background:var(--craber-tip-bg);
+      border-left:1px solid rgba(255,255,255,.08);
+      border-top:1px solid rgba(255,255,255,.08);
+      transform:rotate(45deg)}
+    .craber-tip.craber-tip-up{transform-origin:50% 100%}
+    .craber-tip.craber-tip-up::after{top:auto;bottom:-5px;border-left:none;border-top:none;
+      border-right:1px solid rgba(255,255,255,.08);
+      border-bottom:1px solid rgba(255,255,255,.08)}
+    /* 多行内容（含说明文字）时左对齐更好读 */
+    .craber-tip.craber-tip-multiline{white-space:normal;text-align:left}
+    /* 深色主题下反色：面板本身是深的，再压一块深色就看不出层次 */
+    html[data-theme="dark"] .craber-tip{
+      --craber-tip-bg:#e9eaec; --craber-tip-fg:#16181c;
+      border-color:rgba(0,0,0,.1);
+      box-shadow:0 4px 14px rgba(0,0,0,.42),0 1px 4px rgba(0,0,0,.3)}
+    html[data-theme="dark"] .craber-tip::after{border-color:rgba(0,0,0,.1)}
+    @media (prefers-reduced-motion:reduce){
+      .craber-tip{transition:opacity .01s linear;transform:none}
+      .craber-tip.show{transform:none}
+    }
 
     /* 列表项的预览按钮：默认隐藏，行 hover 时淡入 */
     .craber-item{position:relative}
@@ -1813,92 +2080,717 @@
     .craber-pj-host{position:relative}
 
     /* 加载动画：小圆环旋转，用于"读取会话与项目…" */
-    .craber-dlg-loading{display:flex;align-items:center;gap:9px;padding:16px 6px;
-      font-size:13.5px;color:var(--craber-sub)}
-    .craber-dlg-spin{flex:none;width:15px;height:15px;border-radius:50%;
-      border:2px solid var(--craber-line);border-top-color:var(--craber-sub);
+    .craber-dlg-loading{display:flex;align-items:center;justify-content:center;gap:9px;
+      padding:12px 6px;font-size:12.5px;color:var(--craber-sub)}
+    .craber-dlg-spin{flex:none;width:14px;height:14px;border-radius:50%;
+      border:2px solid color-mix(in srgb,var(--craber-sub) 28%,transparent);
+      border-top-color:var(--craber-accent);
       animation:craber-spin .7s linear infinite}
-    @keyframes craber-spin{to{transform:rotate(360deg)}}
 
-    /* 仿原生的对话框：居中卡片、12px 圆角、柔和投影。
-       按钮沿用原版配色：浅底取消 + 黑色实心确认；危险操作用红色。 */
+    /* 对话框：居中卡片、柔和投影、轻磨砂遮罩。
+       按钮沿用原版配色：浅底取消 + 实心确认；危险操作用红色。 */
+    /* 叠层对话框：下层压暗并禁止交互，上层带更强的投影 */
+    .craber-dlg-mask.craber-dlg-behind{pointer-events:none}
+    .craber-dlg-mask.craber-dlg-behind .craber-dlg{transform:scale(.985);
+      transition:transform .15s ease,opacity .15s ease;opacity:.55}
     .craber-dlg-mask{position:fixed;inset:0;z-index:var(--craber-z-modal);
-      background:rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center;
-      font-family:system-ui,sans-serif;animation:craber-fade-in .12s ease}
-    .craber-dlg{width:min(520px,calc(100vw - 40px));max-width:100%;max-height:min(78vh,720px);
-      display:flex;flex-direction:column;background:var(--craber-bg);min-width:0;overflow:hidden;
-      border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.24);
-      padding:20px 20px 14px;box-sizing:border-box;
-      animation:craber-pop-in .16s cubic-bezier(.2,.8,.25,1)}
-    .craber-dlg-hd{display:flex;align-items:flex-start;gap:12px}
-    .craber-dlg-title{flex:1;font-size:18px;font-weight:650;color:var(--craber-fg);
-      line-height:1.35;letter-spacing:-.01em}
-    .craber-dlg-x{flex:none;width:28px;height:28px;border:none;background:none;
-      border-radius:7px;color:var(--craber-sub);cursor:pointer;font-size:19px;line-height:1;
-      display:flex;align-items:center;justify-content:center;margin:-2px -4px 0 0}
+      background:rgba(17,19,23,.38);display:flex;align-items:center;justify-content:center;
+      padding:24px;box-sizing:border-box;
+      -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
+      font-family:system-ui,sans-serif;animation:craber-fade-in .14s ease}
+    .craber-dlg{position:relative;width:min(560px,100%);max-width:100%;
+      max-height:min(78vh,720px);
+      display:flex;flex-direction:column;background:var(--craber-bg);color:var(--craber-fg);
+      min-width:0;overflow:hidden;border-radius:18px;
+      border:1px solid rgba(0,0,0,.06);
+      box-shadow:0 1px 2px rgba(0,0,0,.04),0 12px 28px rgba(0,0,0,.12),
+        0 32px 64px rgba(0,0,0,.16);
+      padding:20px 22px 18px;box-sizing:border-box;
+      animation:craber-pop-in .18s cubic-bezier(.2,.8,.25,1)}
+    html[data-theme="dark"] .craber-dlg{border-color:rgba(255,255,255,.09);
+      box-shadow:0 1px 2px rgba(0,0,0,.3),0 14px 32px rgba(0,0,0,.42),
+        0 36px 70px rgba(0,0,0,.5)}
+    /* 无底部按钮的对话框（设置中心）：不再画底栏，只留标题栏的 ×、Esc 与点遮罩关闭 */
+    .craber-dlg.craber-dlg-plain{padding-bottom:0}
+    .craber-dlg-hd{display:flex;align-items:center;gap:12px}
+    .craber-dlg-mark{flex:none;width:36px;height:36px;border-radius:11px;
+      display:flex;align-items:center;justify-content:center;
+      background:color-mix(in srgb,var(--craber-accent) 13%,transparent);
+      color:var(--craber-accent)}
+    .craber-dlg-mark svg{width:21px;height:21px;display:block}
+    .craber-dlg-headtext{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+    .craber-dlg-title{font-size:16.5px;font-weight:650;color:var(--craber-fg);
+      line-height:1.3;letter-spacing:-.012em;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-dlg-mark ~ .craber-dlg-headtext .craber-dlg-title{font-size:18px}
+    .craber-dlg-sub{font-size:13px;color:var(--craber-sub);line-height:1.5;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-dlg-badge{flex:none;height:22px;padding:0 8px;border-radius:999px;
+      display:inline-flex;align-items:center;
+      background:var(--craber-ghost);color:var(--craber-sub);
+      font-size:11px;font-weight:500;font-variant-numeric:tabular-nums;
+      user-select:none}
+    .craber-dlg-x{flex:none;width:30px;height:30px;border:none;background:none;padding:0;
+      border-radius:9px;color:var(--craber-sub);cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      margin-right:-6px;
+      transition:background-color .14s ease,color .14s ease}
+    .craber-dlg-x svg{width:15px;height:15px;display:block}
     .craber-dlg-x:hover{background:var(--craber-hover);color:var(--craber-fg)}
-    .craber-dlg-sub{margin-top:5px;font-size:13.5px;color:var(--craber-sub);line-height:1.5}
+    .craber-dlg-x:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
     /* 只纵向溢出：横向一律 hidden。
        之前这里是 overflow:auto，横向滚动条落在这个外层容器上，
        即使列表自己写了 overflow-x:hidden 也压不住（实测）。 */
-    .craber-dlg-body{margin-top:14px;min-height:0;overflow-x:hidden;
+    .craber-dlg-body{margin-top:16px;min-height:0;overflow-x:hidden;
       overflow-y:auto;flex:1;min-width:0;box-sizing:border-box}
     .craber-dlg-text{font-size:14px;color:var(--craber-fg);line-height:1.6;white-space:pre-wrap}
     .craber-dlg-hint{margin-top:8px;font-size:12.5px;color:var(--craber-sub);line-height:1.5}
-    .craber-dlg-input{width:100%;box-sizing:border-box;padding:10px 12px;
-      border:1px solid var(--craber-line);border-radius:10px;
-      background:var(--craber-bg);color:var(--craber-fg);
-      font-size:14px;font-family:inherit;outline:none}
-    .craber-dlg-input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.14)}
-    .craber-dlg-ft{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex:none}
-    .craber-dlg-btn{height:36px;padding:0 16px;border-radius:18px;border:1px solid transparent;
-      background:var(--craber-ghost);color:var(--craber-fg);font-size:14px;font-weight:500;
-      cursor:pointer;font-family:inherit;transition:background .12s ease}
+    /* 输入框：默认浅填充、无边框；聚焦时才亮起边框与光晕，视觉更安静 */
+    .craber-dlg-input{width:100%;box-sizing:border-box;padding:9px 12px;
+      border:1px solid transparent;border-radius:10px;
+      background:color-mix(in srgb,var(--craber-hover) 78%,var(--craber-bg));
+      color:var(--craber-fg);font-size:13.5px;font-family:inherit;outline:none;
+      transition:background-color .14s ease,border-color .14s ease,box-shadow .14s ease}
+    .craber-dlg-input::placeholder{color:var(--craber-sub);opacity:.78}
+    .craber-dlg-input:hover{border-color:var(--craber-line)}
+    .craber-dlg-input:focus{border-color:var(--craber-accent);background:var(--craber-bg);
+      box-shadow:0 0 0 3px color-mix(in srgb,var(--craber-accent) 16%,transparent)}
+    .craber-dlg-ft{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;flex:none;
+      flex-wrap:wrap}
+    .craber-dlg-ft-spacer{flex:1;min-width:0}
+    .craber-dlg-btn{height:36px;padding:0 16px;border-radius:10px;border:1px solid transparent;
+      background:var(--craber-ghost);color:var(--craber-fg);font-size:13.5px;font-weight:500;
+      cursor:pointer;font-family:inherit;
+      transition:background-color .14s ease,border-color .14s ease,transform .1s ease}
     .craber-dlg-btn:hover{background:var(--craber-hover)}
-    .craber-dlg-primary{background:#0d0d0d;color:#fff;border-color:#0d0d0d}
+    .craber-dlg-btn:active{transform:translateY(1px)}
+    /* 禁用态：主按钮退回浅底灰字，避免"黑底白字整体半透明"后看不清 */
+    .craber-dlg-btn:disabled{cursor:default;transform:none}
+    .craber-dlg-primary:disabled,.craber-dlg-primary:disabled:hover,
+    html[data-theme="dark"] .craber-dlg-primary:disabled,
+    html[data-theme="dark"] .craber-dlg-primary:disabled:hover{
+      background:var(--craber-ghost);color:var(--craber-sub);border-color:transparent;
+      box-shadow:none}
+    .craber-dlg-btn:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+    .craber-dlg-primary{background:#0d0d0d;color:#fff;border-color:#0d0d0d;
+      box-shadow:0 1px 2px rgba(0,0,0,.18)}
     .craber-dlg-primary:hover{background:#000}
+    html[data-theme="dark"] .craber-dlg-primary{background:#fff;border-color:#fff;color:#0d0d0d}
+    html[data-theme="dark"] .craber-dlg-primary:hover{background:#ececec}
     .craber-dlg-danger{background:#e02e2a;border-color:#e02e2a;color:#fff}
     .craber-dlg-danger:hover{background:#c82622}
 
     /* 对话框内的候选列表（选择要添加的项目/会话） */
-    /* 搜索 + 日期筛选（添加对话框内，仅会话页签显示） */
-    .craber-dlg-filter{display:flex;flex-direction:column;gap:7px;
-      padding:8px 0 4px;min-width:0}
-    .craber-dlg-filter[hidden]{display:none}
-    .craber-dlg-search{width:100%;box-sizing:border-box;padding:7px 11px;
-      border:1px solid var(--craber-line);border-radius:9px;
+    /* 🦀 面板（对话框形式） */
+    /* 设置中心：左导航 + 右内容 */
+    /* 设置中心：按视口比例放大，而不是写死像素 ——
+       写死 640×460 在大屏上会显得局促（实测偏小）。
+       同时给出上下限，小屏和超宽屏都不会失控。 */
+    /* 高度按视口给足：设置页信息量大，78~86vh 在 900 高的屏上会频繁滚动。
+       同时留出遮罩的 24px 内边距，任何窗口下都不会顶出可视区。 */
+    .craber-dlg-wide{width:min(960px,max(680px,74vw));
+      height:min(860px,calc(100vh - 40px));
+      max-width:100%;max-height:100%;
+      display:flex;flex-direction:column;padding:20px 24px 0;border-radius:20px}
+
+    .craber-set{display:flex;gap:0;flex:1;min-height:0;margin:18px -24px 0;
+      border-top:1px solid var(--craber-line);overflow:hidden}
+    /* 左侧导航：浅一档底色，分组标题 + 图标条目；选中项浮成白色卡片并带左侧竖条 */
+    .craber-set-nav{flex:none;width:200px;padding:12px 10px 16px;overflow-y:auto;
+      background:color-mix(in srgb,var(--craber-hover) 66%,var(--craber-bg));
+      border-right:1px solid var(--craber-line);
+      display:flex;flex-direction:column;gap:2px;scrollbar-width:none;
+      box-sizing:border-box}
+    .craber-set-nav::-webkit-scrollbar{display:none}
+    .craber-set-item{position:relative;display:flex;align-items:center;gap:9px;width:100%;
+      box-sizing:border-box;text-align:left;padding:8px 10px;border:none;border-radius:9px;
+      background:none;color:var(--craber-fg);font:inherit;font-size:13.5px;
+      cursor:pointer;min-width:0;
+      transition:background-color .14s ease,box-shadow .14s ease}
+    .craber-set-itemico{flex:none;width:16px;height:16px;display:flex;
+      align-items:center;justify-content:center;color:var(--craber-sub);
+      transition:color .14s ease}
+    .craber-set-itemico svg{width:16px;height:16px;display:block}
+    .craber-set-itemlabel{flex:1;min-width:0;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap}
+    .craber-set-item:hover{background:color-mix(in srgb,var(--craber-fg) 6%,transparent)}
+    .craber-set-item:hover .craber-set-itemico{color:var(--craber-fg)}
+    .craber-set-item.on{background:var(--craber-bg);font-weight:600;
+      box-shadow:0 1px 2px rgba(0,0,0,.06),0 0 0 1px var(--craber-line)}
+    /* 深色下 --craber-bg 比导航底色更暗，选中项会"沉"下去；换成提亮一档 */
+    html[data-theme="dark"] .craber-set-nav{background:color-mix(in srgb,var(--craber-hover) 40%,var(--craber-bg))}
+    html[data-theme="dark"] .craber-set-item.on{
+      background:color-mix(in srgb,var(--craber-fg) 9%,var(--craber-bg))}
+    .craber-set-item.on .craber-set-itemico{color:var(--craber-accent)}
+    .craber-set-item.on::before{content:'';position:absolute;left:-10px;top:50%;
+      width:3px;height:16px;margin-top:-8px;border-radius:0 3px 3px 0;
+      background:var(--craber-accent)}
+    .craber-set-item:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
+    .craber-set-body{flex:1;min-width:0;min-height:0;display:flex;
+      flex-direction:column;overflow-y:auto;padding:18px 26px 20px;
+      scrollbar-width:thin;scrollbar-color:var(--craber-line) transparent}
+    .craber-set-body::-webkit-scrollbar{width:10px}
+    .craber-set-body::-webkit-scrollbar-thumb{background:var(--craber-line);
+      border-radius:6px;border:3px solid var(--craber-bg);background-clip:content-box}
+    .craber-set-body::-webkit-scrollbar-thumb:hover{background:var(--craber-sub)}
+    .craber-set-body::-webkit-scrollbar-track{background:transparent}
+    @keyframes craber-page-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+    /* 普通页：按内容自然撑开，外层 body 负责滚动（绝不能参与 flex 收缩，
+       否则卡片自身的 overflow:hidden 会把下半截内容直接裁掉） */
+    .craber-set-page{display:flex;flex-direction:column;gap:0;min-width:0;
+      flex:none;max-width:860px;
+      animation:craber-page-in .2s ease both}
+    /* 列表页专用：吃满剩余高度，把 头 / 工具栏 / 列表 / 状态 排成竖向弹性列 */
+    .craber-set-page.craber-set-fill{flex:1;min-height:0;height:auto}
+    .craber-set-page.craber-set-fill .craber-set-convlist,
+    .craber-set-page.craber-set-fill .craber-set-turnlist{flex:1;min-height:120px}
+    .craber-set-pagehd{display:flex;flex-direction:column;gap:4px;
+      padding:0 0 10px}
+    .craber-set-pagetitle{margin:0;font-size:17px;font-weight:650;line-height:1.3;
+      letter-spacing:-.01em}
+    .craber-set-pagedesc{font-size:12.5px;color:var(--craber-sub);line-height:1.55;
+      max-width:60ch}
+    /* 行式列表（功能开关）：整块做成卡片，行间用细线分，悬停时整行提亮 */
+    .craber-set-list{display:flex;flex-direction:column;min-width:0;
+      border:1px solid var(--craber-line);border-radius:14px;overflow:hidden;
+      background:var(--craber-bg)}
+    .craber-set-row{display:flex;align-items:center;gap:14px;width:100%;
+      box-sizing:border-box;padding:14px 16px;border:none;border-top:1px solid var(--craber-line);
+      border-radius:0;background:none;color:var(--craber-fg);font:inherit;
+      text-align:left;cursor:pointer;min-width:0;
+      transition:background-color .14s ease}
+    .craber-set-row:first-child{border-top:none}
+    .craber-set-row:hover{background:color-mix(in srgb,var(--craber-fg) 3%,transparent)}
+    .craber-set-row:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px}
+    .craber-set-ico{flex:none;width:32px;height:32px;border-radius:9px;
+      display:flex;align-items:center;justify-content:center;
+      background:var(--craber-ghost);color:var(--craber-sub);
+      transition:background-color .16s ease,color .16s ease}
+    .craber-set-ico svg{width:16px;height:16px;display:block}
+    .craber-set-switch.on .craber-set-ico{
+      background:color-mix(in srgb,var(--craber-accent) 13%,transparent);
+      color:var(--craber-accent)}
+    .craber-set-rowmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+    .craber-set-rowlabel{font-size:13.5px;font-weight:500;line-height:1.4}
+    .craber-set-rowdesc{font-size:12px;color:var(--craber-sub);line-height:1.45}
+    .craber-set-unit{font-size:13px;color:var(--craber-sub)}
+    /* 设置行：左侧标签+说明，右侧控件（参考原生设置页的横向排布）
+       整组做成卡片，用细线分行的同时保留统一圆角。 */
+    .craber-set-form{display:flex;flex-direction:column;min-width:0;
+      border:1px solid var(--craber-line);border-radius:14px;
+      background:var(--craber-bg);overflow:hidden}
+    .craber-set-field{display:flex;align-items:center;gap:24px;
+      padding:10px 16px;border-top:1px solid var(--craber-line);min-width:0;
+      transition:background-color .14s ease}
+    .craber-set-field:first-child{border-top:none}
+    .craber-set-field:focus-within{
+      background:color-mix(in srgb,var(--craber-hover) 62%,var(--craber-bg))}
+    .craber-set-fieldcol{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px}
+    .craber-set-label{font-size:13.5px;color:var(--craber-fg);font-weight:500;
+      line-height:1.4}
+    .craber-set-hint{font-size:12px;color:var(--craber-sub);line-height:1.45}
+    /* 表单卡片末尾的范围小结：贴着卡片内边距，不单独占一行分隔线 */
+    .craber-set-form > .craber-set-hint{padding:0 16px 11px;margin-top:-6px}
+    /* 右列给固定比例而不是像素：标签列和控件列约 1:1，
+       之前 width:min(340px,42%) 是相对"由内容撑开"的父级算的，
+       结果是输入框被压得很窄、右边留下大片空白。 */
+    .craber-set-ctrl{flex:0 0 46%;display:flex;align-items:center;gap:8px;
+      min-width:0;justify-content:flex-end}
+    .craber-set-ctrl .craber-dlg-input{flex:1;min-width:0;width:100%;
+      box-sizing:border-box;padding:8px 11px;font-size:13px;border-radius:9px}
+    /* 当前账号：图标 + 名字，只读展示 */
+    .craber-acct{display:inline-flex;align-items:center;gap:7px;min-width:0;
+      max-width:100%;padding:5px 11px 5px 8px;border-radius:999px;
+      background:color-mix(in srgb,var(--craber-accent) 9%,transparent);
+      border:1px solid color-mix(in srgb,var(--craber-accent) 22%,transparent)}
+    .craber-acct-ico{display:flex;align-items:center;justify-content:center;
+      width:18px;height:18px;flex:none;color:var(--craber-accent)}
+    .craber-acct-ico svg{width:15px;height:15px;display:block}
+    .craber-acct-name{font-size:12.5px;font-weight:550;color:var(--craber-fg);
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+    .craber-acct-name-warn{color:var(--craber-sub);font-weight:400}
+    /* 远端路径预览：等宽、可截断，一眼看清会写到哪 */
+    .craber-pathprev{display:flex;align-items:baseline;gap:8px;min-width:0}
+    .craber-pathprev-label{flex:none;font-size:11.5px;color:var(--craber-sub)}
+    .craber-pathprev-path{min-width:0;font-size:11.5px;line-height:1.5;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      color:color-mix(in srgb,var(--craber-fg) 62%,var(--craber-sub));
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    html[data-theme="dark"] .craber-pathprev-path{color:var(--craber-fg);opacity:.72}
+    html[data-theme="dark"] .craber-pathprev-label{opacity:.85}
+        /* 带「已选 chip」的字段：标签行在上、chip 区在下并跨满整行 */
+    .craber-set-field.craber-set-field-stack{flex-direction:column;align-items:stretch;gap:7px;
+      padding-top:9px;padding-bottom:9px}
+    .craber-set-fieldhd{display:flex;align-items:flex-start;gap:16px;min-width:0}
+    .craber-set-fieldhd .craber-set-fieldcol{gap:2px}
+    .craber-set-fieldhd > .craber-set-fieldcol{flex:1 1 auto}
+    .craber-set-field-stack .craber-set-ctrl{flex:none;width:auto;justify-content:flex-end;
+      padding-top:1px}
+    /* 备份位置：账号徽标 + 目录输入 + 远端路径，一行排开，太窄时换行 */
+    .craber-locrow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-width:0}
+    .craber-locrow-input{flex:0 1 150px;min-width:104px;max-width:170px;
+      box-sizing:border-box;padding:7px 10px;font-size:12.5px;border-radius:9px}
+    .craber-locrow .craber-pathprev{flex:1 1 200px;padding:0;min-width:0;gap:6px}
+    .craber-set-chipbar{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+    .craber-set-chipbar[hidden]{display:none}
+    .craber-set-chipempty{font-size:12px;color:var(--craber-sub);line-height:1.5;
+      padding:1px 0}
+    /* 窄屏时上下堆叠，避免左右挤压 */
+    @media (max-width: 780px){
+      /* 注意：遮罩本身有内边距，小屏下再让宽高 100% 会把标题栏顶出可视区 */
+      .craber-dlg-wide{width:100%;height:calc(100% - 0px);max-width:100%;max-height:100%;
+        border-radius:16px;padding:16px 16px 0}
+      .craber-dlg-mask{padding:12px}
+      /* 窄屏：副标题允许换行，字号也略收一点，避免被截成半句 */
+      .craber-dlg-sub{white-space:normal;line-height:1.45}
+      .craber-dlg-hd{gap:10px}
+      .craber-dlg-mark{width:32px;height:32px;border-radius:10px}
+      .craber-dlg-mark svg{width:19px;height:19px}
+      .craber-set{margin:14px -16px 0;flex-direction:column}
+      .craber-set-nav{width:auto;flex:none;flex-direction:row;gap:4px;
+        padding:8px 10px;border-right:none;border-bottom:1px solid var(--craber-line);
+        overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+      .craber-set-nav::-webkit-scrollbar{display:none}
+      .craber-set-nav .craber-set-item{padding:7px 10px;font-size:13px}
+      .craber-set-item{width:auto;flex:none;padding:7px 11px}
+      .craber-set-item.on::before{display:none}
+      .craber-dlg-badge{display:none}
+      .craber-set-body{padding:18px 16px 20px}
+      .craber-set-field{flex-direction:column;align-items:flex-start;gap:8px}
+      .craber-set-ctrl{flex:none;width:100%;justify-content:stretch}
+      .craber-set-ctrl .craber-dlg-input{width:100%}
+      .craber-set-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+    .craber-set-note{font-size:12.5px;color:var(--craber-sub);line-height:1.6;
+      padding:11px 13px;border:1px solid var(--craber-line);border-radius:10px;
+      background:color-mix(in srgb,var(--craber-hover) 70%,var(--craber-bg))}
+    .craber-set-convlist > .craber-set-note,
+    .craber-set-turnlist > .craber-set-note{border:none;background:none;
+      text-align:center;padding:22px 12px}
+    /* 按钮 */
+    .craber-set-actions{display:flex;gap:8px;flex-wrap:wrap;padding:11px 0 0}
+    /* 工具栏：搜索框在左，操作按钮 + 计数成组在右 */
+    .craber-set-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+      padding-bottom:10px}
+    /* 筛选条：标签 + 控件，日期 chip 一行放得下，项目下拉跟在后面 */
+    .craber-set-filters{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;
+      padding-bottom:12px;min-width:0}
+    .craber-set-filter{display:flex;align-items:center;gap:8px;min-width:0;
+      flex-wrap:wrap;row-gap:6px}
+    .craber-set-filter[hidden]{display:none}
+    .craber-set-filterlbl{flex:none;font-size:12px;color:var(--craber-sub)}
+    .craber-set-filter .craber-dlg-chips{gap:5px}
+    .craber-set-filter .craber-dlg-chip{padding:3px 9px;font-size:12px}
+    /* 自绘下拉：触发器 + 浮层菜单（原生 select 的弹层无法美化） */
+    .craber-sel{position:relative;display:inline-flex;min-width:0}
+    .craber-sel-trigger{display:inline-flex;align-items:center;gap:7px;
+      max-width:190px;height:28px;box-sizing:border-box;padding:0 8px 0 10px;
+      border:1px solid var(--craber-line);border-radius:8px;background:var(--craber-bg);
+      color:var(--craber-fg);font:inherit;font-size:12px;cursor:pointer;
+      transition:border-color .14s ease,background-color .14s ease}
+    .craber-sel-trigger:hover{background:var(--craber-hover);
+      border-color:color-mix(in srgb,var(--craber-fg) 18%,var(--craber-line))}
+    .craber-sel-trigger:focus-visible{outline:none;border-color:var(--craber-accent);
+      box-shadow:0 0 0 3px color-mix(in srgb,var(--craber-accent) 16%,transparent)}
+    .craber-sel.open .craber-sel-trigger{border-color:var(--craber-accent);
+      box-shadow:0 0 0 3px color-mix(in srgb,var(--craber-accent) 16%,transparent)}
+    .craber-sel-trigger:disabled{opacity:.55;cursor:default}
+    .craber-sel-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-sel-caret{flex:none;display:flex;color:var(--craber-sub);
+      transition:transform .16s ease,color .16s ease}
+    .craber-sel-caret svg{width:12px;height:12px;display:block}
+    .craber-sel.open .craber-sel-caret{transform:rotate(180deg);color:var(--craber-accent)}
+    /* 菜单挂 body、fixed 定位：坐标由 JS 按触发器位置算，避开面板 overflow */
+    .craber-selmenu{position:fixed;z-index:calc(var(--craber-z-modal) + 3);
+      box-sizing:border-box;padding:5px;overflow-y:auto;
+      background:var(--craber-bg);border:1px solid var(--craber-line);
+      border-radius:11px;box-shadow:0 10px 28px rgba(15,18,22,.16),0 2px 6px rgba(15,18,22,.1);
+      opacity:0;transform:translateY(-4px) scale(.99);transform-origin:50% 0;
+      transition:opacity .12s ease,transform .12s ease;
+      scrollbar-width:thin;scrollbar-color:var(--craber-line) transparent}
+    .craber-selmenu.show{opacity:1;transform:none}
+    .craber-selmenu-up{transform-origin:50% 100%;transform:translateY(4px) scale(.99)}
+    .craber-selmenu-up.show{transform:none}
+    .craber-selmenu[hidden]{display:none}
+    html[data-theme="dark"] .craber-selmenu{
+      box-shadow:0 10px 28px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.35)}
+    .craber-selopt{display:flex;align-items:center;gap:8px;padding:7px 9px;
+      border-radius:8px;font-size:12.5px;color:var(--craber-fg);cursor:pointer;
+      transition:background-color .1s ease}
+    .craber-selopt-txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap}
+    .craber-selopt-tick{flex:none;width:13px;height:13px;display:none;
+      color:var(--craber-accent)}
+    .craber-selopt-tick svg{width:13px;height:13px;display:block}
+    .craber-selopt.hi{background:var(--craber-hover)}
+    .craber-selopt.on{background:color-mix(in srgb,var(--craber-accent) 10%,transparent);
+      color:var(--craber-accent);font-weight:550}
+    .craber-selopt.on .craber-selopt-tick{display:flex}
+    .craber-selopt-none{padding:9px;font-size:12.5px;color:var(--craber-sub);text-align:center}
+    /* 筛选条分两行：第一行是"时间 + 日期 chips"，第二行是自定义区间（按需） */
+    .craber-set-filterrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+      min-width:0;row-gap:6px}
+    .craber-set-datecustom{display:flex;align-items:center;gap:6px}
+    .craber-set-datecustom[hidden]{display:none}
+    .craber-set-dateinput{height:28px;width:132px;box-sizing:border-box;padding:0 6px;
+      border:1px solid var(--craber-line);border-radius:8px;background:var(--craber-bg);
+      color:var(--craber-fg);font:inherit;font-size:12px;outline:none;color-scheme:light dark}
+    .craber-set-dateinput:focus-visible{border-color:var(--craber-accent)}
+    .craber-set-datesep{font-size:12px;color:var(--craber-sub)}
+    /* 行内项目名：小字 + 浅色，不抢标题 */
+    .craber-set-turnproj{font-size:11.5px;line-height:1.4;color:var(--craber-sub);
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-set-toolbar > .craber-set-searchwrap{flex:1 1 180px;min-width:140px}
+    .craber-set-toolbar > .craber-set-btn:first-of-type{margin-left:auto}
+    .craber-set-toolbar > .craber-set-btn{flex:none}
+    /* 小号按钮：跟在 chip 后面做"选择…"，不该和主按钮一样大 */
+    .craber-set-btn-sm{height:30px;padding:0 11px;font-size:12.5px;border-radius:8px}
+    /* 纯图标按钮（刷新）：方形、居中，图标跟文字同色 */
+    .craber-set-btn.craber-set-iconbtn{width:32px;height:34px;padding:0;flex:none;
+      display:inline-flex;align-items:center;justify-content:center}
+    .craber-set-btn.craber-set-iconbtn svg{width:15px;height:15px;flex:none;display:block}
+    .craber-set-btn.craber-set-iconbtn.craber-spinning svg{animation:craber-spin .9s linear infinite}
+    .craber-set-btn.craber-set-iconbtn:disabled{opacity:.55;cursor:default}
+    @media (prefers-reduced-motion:reduce){
+      .craber-set-iconbtn.craber-spinning svg{animation-duration:2.4s}
+    }
+    /* 范围为项目/会话时，控件列要能放下 chips + 按钮 */
+    .craber-set-ctrl .craber-dlg-chips{flex:none}
+    /* 选择对话框：列表固定高度，便于滚动查找 */
+    .craber-pick{display:flex;flex-direction:column;gap:12px;min-width:0;margin-top:16px}
+    /* 固定高度 + flex:1 的加载占位，才能在框内垂直居中 */
+    .craber-pick-list{display:flex;flex-direction:column;gap:2px;
+      height:min(46vh,320px);min-height:200px;
+      overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;
+      border:1px solid var(--craber-line);border-radius:12px;padding:6px;
+      background:var(--craber-bg)}
+    .craber-pick-list > .craber-set-loading{flex:1;min-height:0}
+    .craber-pick .craber-dav-status{margin-top:-2px;font-size:12px}
+    /* 工具条：搜索框 + 全选/清空，同一行 */
+    .craber-pick-tools{display:flex;align-items:center;gap:8px;min-width:0}
+    .craber-pick-tools > .craber-set-searchwrap{flex:1 1 auto;min-width:110px}
+    .craber-pick-tools > .craber-set-btn{flex:none;height:34px}
+    /* 已选区：可删除 chip，超过两行在内部滚动 */
+    /* 最多两行，再多在区内纵向滚动：高度稳定，列表不被挤小 */
+    .craber-pick-picked{display:flex;flex-wrap:wrap;gap:6px;min-width:0;
+      max-height:66px;overflow-y:auto;overflow-x:hidden;
+      padding:7px 8px;border-radius:11px;box-sizing:border-box;
+      background:color-mix(in srgb,var(--craber-hover) 72%,var(--craber-bg));
+      scrollbar-width:thin;scrollbar-color:var(--craber-line) transparent}
+    .craber-pick-picked .craber-selchip{flex:0 1 auto;max-width:100%}
+    .craber-pick-picked::-webkit-scrollbar{width:8px}
+    .craber-pick-picked::-webkit-scrollbar-thumb{background:var(--craber-line);
+      border-radius:4px;border:2px solid transparent;background-clip:content-box}
+    .craber-pick-picked::-webkit-scrollbar-track{background:transparent}
+    .craber-pick-pickedwrap[hidden],
+    .craber-pick-picked[hidden],
+    .craber-pick-picked:empty{display:none}
+    .craber-pick-pickedwrap{display:flex;flex-direction:column;gap:6px;min-width:0;
+      margin-top:-2px}
+    .craber-pick-pickedhd{display:flex;align-items:center;gap:8px}
+    .craber-pick-pickedcount{font-size:12px;color:var(--craber-sub);
+      font-variant-numeric:tabular-nums}
+    .craber-pick-picked::-webkit-scrollbar{width:8px}
+    .craber-pick-picked::-webkit-scrollbar-thumb{background:var(--craber-line);
+      border-radius:4px;border:2px solid transparent;background-clip:content-box}
+    /* 通用：已选项 chip（选择对话框 / 备份范围共用） */
+    .craber-selchip{display:inline-flex;align-items:center;gap:5px;max-width:230px;
+      box-sizing:border-box;padding:3px 4px 3px 9px;border-radius:999px;
+      background:var(--craber-bg);border:1px solid var(--craber-line);
+      font-size:12px;line-height:1.5;color:var(--craber-fg)}
+    .craber-selchip-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-selchip-x{flex:none;width:17px;height:17px;padding:0;border:none;
+      border-radius:50%;background:transparent;color:var(--craber-sub);cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      transition:background-color .12s ease,color .12s ease}
+    .craber-selchip-x svg{width:9px;height:9px;display:block}
+    .craber-selchip-x:hover{background:rgba(224,46,42,.12);color:#e02e2a}
+    /* 勾选后的行也浅高亮，扫视时不必盯复选框 */
+    .craber-pick-list .craber-set-convrow:has(input:checked){
+      background:color-mix(in srgb,var(--craber-accent) 6%,transparent)}
+    .craber-pick-list .craber-set-convrow:has(input:checked) .craber-set-turnq{
+      color:var(--craber-fg);font-weight:500}
+        /* 选择/设置对话框里搜索框是行内控件：不吃多余高度 */
+    .craber-pick > .craber-set-searchwrap{flex:none;width:100%;min-width:0}
+    /* 搜索框：图标 + 无边框输入，聚焦时整块亮起 */
+    .craber-set-searchwrap{flex:1 1 180px;min-width:140px;display:flex;align-items:center;
+      gap:8px;height:34px;padding:0 11px;box-sizing:border-box;border-radius:10px;
+      background:color-mix(in srgb,var(--craber-hover) 78%,var(--craber-bg));
+      border:1px solid transparent;
+      transition:background-color .14s ease,border-color .14s ease,box-shadow .14s ease}
+    .craber-set-searchwrap:focus-within{background:var(--craber-bg);
+      border-color:var(--craber-accent);
+      box-shadow:0 0 0 3px color-mix(in srgb,var(--craber-accent) 16%,transparent)}
+    .craber-set-searchicon{flex:none;display:flex;color:var(--craber-sub)}
+    .craber-set-searchicon svg{width:14px;height:14px;display:block}
+    .craber-set-searchwrap input{flex:1;min-width:0;border:none;background:none;
+      outline:none;color:var(--craber-fg);font:inherit;font-size:13px;padding:0;height:100%}
+    .craber-set-searchwrap input::placeholder{color:var(--craber-sub);opacity:.8}
+    /* 会话 / 回合列表：卡片式容器，列表在自己的区域内滚动 */
+    .craber-set-convlist,.craber-set-turnlist{display:flex;flex-direction:column;
+      gap:2px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+      scrollbar-width:thin;margin:0;padding:6px 6px 8px;
+      border:1px solid var(--craber-line);border-radius:14px;background:var(--craber-bg)}
+    .craber-set-convlist{padding-bottom:10px}
+    .craber-set-convlist::-webkit-scrollbar,
+    .craber-set-turnlist::-webkit-scrollbar{width:8px}
+    .craber-set-convlist::-webkit-scrollbar-thumb,
+    .craber-set-turnlist::-webkit-scrollbar-thumb{background:var(--craber-line);
+      border-radius:4px;border:2px solid var(--craber-bg);background-clip:content-box}
+    .craber-set-convlist::-webkit-scrollbar-track,
+    .craber-set-turnlist::-webkit-scrollbar-track{background:transparent}
+    /* 概况统计：三个数字并排，让页面一进来就有信息 */
+    .craber-set-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:10px;border:none;background:none;overflow:visible;margin-bottom:12px}
+    .craber-set-stat{background:color-mix(in srgb,var(--craber-hover) 78%,var(--craber-bg));
+      border:1px solid var(--craber-line);border-radius:12px;padding:10px 13px;
+      display:flex;flex-direction:column;gap:3px;min-width:0}
+    .craber-set-statnum{font-size:18px;font-weight:650;line-height:1.2;
+      font-variant-numeric:tabular-nums;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap}
+    .craber-set-statlbl{font-size:11.5px;color:var(--craber-sub);line-height:1.3}
+
+    /* 加载占位：撑满列表区域并居中 */
+    .craber-set-loading{display:flex;flex-direction:column;align-items:center;
+      justify-content:center;gap:10px;flex:1;min-height:120px;
+      color:var(--craber-sub);font-size:13px}
+    .craber-set-loading .craber-spin{width:16px;height:16px;border-width:2px;
+      border-color:color-mix(in srgb,var(--craber-sub) 28%,transparent);
+      border-top-color:var(--craber-accent)}
+    .craber-set-loadingtext{font-size:12.5px}
+    .craber-set-convrow,.craber-set-turnrow{display:flex;align-items:center;gap:11px;
+      padding:9px 10px;border-radius:9px;cursor:pointer;min-width:0;
+      transition:background-color .12s ease}
+    .craber-set-convrow:hover,.craber-set-turnrow:hover{background:var(--craber-hover)}
+    .craber-set-convrow:hover .craber-set-turnq{color:var(--craber-fg)}
+    /* 隐藏原生复选框，用统一的 .craber-box 画（原生控件在深色下几乎看不见） */
+    .craber-set-convrow input[type=checkbox],
+    .craber-set-turnrow input[type=checkbox]{position:absolute;opacity:0;width:0;height:0}
+    .craber-set-convrow .craber-box,.craber-set-turnrow .craber-box{margin-top:0;
+      width:17px;height:17px;border-radius:6px;
+      border-color:color-mix(in srgb,var(--craber-sub) 55%,transparent);
+      transition:background-color .14s ease,border-color .14s ease}
+    .craber-set-convrow:hover .craber-box,.craber-set-turnrow:hover .craber-box{
+      border-color:var(--craber-sub)}
+    .craber-set-convrow input:checked + .craber-box,
+    .craber-set-turnrow input:checked + .craber-box{
+      background:var(--craber-accent);border-color:var(--craber-accent)}
+    .craber-set-convrow input:checked + .craber-box::after,
+    .craber-set-turnrow input:checked + .craber-box::after{
+      opacity:1;left:0;right:0;top:-1px;bottom:0;margin:auto;width:4px;height:8px;
+      border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+    .craber-set-convrow input:focus-visible + .craber-box,
+    .craber-set-turnrow input:focus-visible + .craber-box{
+      outline:2px solid var(--craber-accent);outline-offset:2px}
+    .craber-set-turnmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .craber-set-turnq{font-size:13px;line-height:1.4;overflow:hidden;
+      text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;
+      -webkit-box-orient:vertical;word-break:break-word}
+    .craber-set-convrow .craber-set-turnq{-webkit-line-clamp:1;display:block;
+      white-space:nowrap;text-overflow:ellipsis}
+    .craber-set-turnmeta{font-size:11.5px;color:var(--craber-sub)}
+    /* 列表右侧的日期：只到天，等宽数字对齐 */
+    .craber-set-rowdate{flex:none;align-self:center;font-size:11.5px;
+      color:var(--craber-sub);font-variant-numeric:tabular-nums;white-space:nowrap}
+    .craber-set-btn{height:34px;padding:0 14px;border-radius:10px;
+      border:1px solid var(--craber-line);background:var(--craber-bg);
+      color:var(--craber-fg);font:inherit;font-size:13px;font-weight:500;
+      cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+      transition:background-color .14s ease,border-color .14s ease,
+        box-shadow .14s ease,transform .1s ease}
+    .craber-set-btn:hover{background:var(--craber-hover);
+      border-color:color-mix(in srgb,var(--craber-fg) 18%,var(--craber-line))}
+    .craber-set-btn:active{transform:translateY(1px)}
+    .craber-set-btn:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+    .craber-set-btn:disabled{opacity:.55;cursor:default;transform:none}
+    .craber-set-btn svg{width:14px;height:14px;display:block}
+    .craber-set-btn-primary{background:#0d0d0d;border-color:#0d0d0d;color:#fff;
+      box-shadow:0 1px 2px rgba(0,0,0,.16)}
+    .craber-set-btn-primary:hover{background:#000;border-color:#000}
+    /* 深浅色下按钮底色跟随主题，避免深色模式里出现黑底黑字 */
+    html[data-theme="dark"] .craber-set-btn-primary{background:#fff;border-color:#fff;color:#0d0d0d}
+    html[data-theme="dark"] .craber-set-btn-primary:hover{background:#ececec;border-color:#ececec}
+    /* 工具栏里的已选计数 */
+    .craber-set-selcount{flex:none;font-size:12px;color:var(--craber-sub);
+      font-variant-numeric:tabular-nums;margin-left:2px;white-space:nowrap}
+    @media (prefers-reduced-motion:reduce){
+      .craber-set-page,.craber-set-item,.craber-set-row,.craber-set-btn{
+        animation:none;transition:none}
+    }
+
+    /* 开关尺寸：设置行里的开关比菜单里略大，命中区域更舒服 */
+    .craber-set-switch .craber-fab-switch{width:36px;height:20px;border-radius:10px}
+    .craber-set-switch .craber-fab-switch::after{width:16px;height:16px}
+    .craber-set-switch.craber-fab-toggle.on .craber-fab-switch::after{transform:translateX(16px)}
+    .craber-set-page .craber-dav-loghead{margin-top:12px}
+    .craber-set-page .craber-dav-loglist{margin-top:2px}
+    /* 状态行：与设置区留出气口 */
+    .craber-dav-status{margin-top:12px}
+    .craber-crab{display:flex;flex-direction:column;gap:18px;min-width:0}
+    .craber-crab-sec{display:flex;flex-direction:column;gap:8px;min-width:0}
+    .craber-crab-sectitle{font-size:12px;font-weight:600;letter-spacing:.03em;
+      color:var(--craber-sub);text-transform:uppercase}
+    /* 导出：两张卡片并排 */
+    .craber-crab-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .craber-crab-card{display:flex;flex-direction:column;gap:3px;text-align:left;
+      padding:11px 12px;border:1px solid var(--craber-line);border-radius:10px;
+      background:var(--craber-bg);color:var(--craber-fg);cursor:pointer;
+      font:inherit;min-width:0;transition:background-color .12s ease,border-color .12s ease}
+    .craber-crab-card:hover{background:var(--craber-hover);border-color:var(--craber-sub)}
+    .craber-crab-cardtitle{font-size:13.5px;font-weight:600;line-height:1.3}
+    .craber-crab-carddesc{font-size:11.5px;color:var(--craber-sub);line-height:1.35;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    /* 行：左文字（可带副标题）+ 右侧箭头/开关 */
+    .craber-crab-row{display:flex;align-items:center;gap:10px;width:100%;
+      box-sizing:border-box;padding:9px 10px;border:none;border-radius:8px;
+      background:transparent;color:var(--craber-fg);cursor:pointer;
+      font:inherit;text-align:left;min-width:0;
+      transition:background-color .12s ease}
+    .craber-crab-row:hover{background:var(--craber-hover)}
+    .craber-crab-rowmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+    .craber-crab-rowlabel{font-size:13px;font-weight:500;line-height:1.35;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-crab-rowdesc{font-size:11.5px;color:var(--craber-sub);line-height:1.35;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-crab-rowarrow{flex:none;width:13px;height:13px;display:flex;
+      align-items:center;justify-content:center;color:var(--craber-sub);opacity:.5}
+    .craber-crab-rowarrow svg{width:13px;height:13px}
+    .craber-crab-row:hover .craber-crab-rowarrow{opacity:.85}
+    .craber-crab-toggle .craber-crab-rowlabel{flex:1;font-size:13px}
+    .craber-crab-ver{font-size:11px;color:var(--craber-sub);opacity:.7;
+      text-align:right;font-variant-numeric:tabular-nums;user-select:none;cursor:default}
+
+    /* WebDAV 对话框：两个区块，统一 20px 间距节奏 */
+    .craber-dav{display:flex;flex-direction:column;gap:20px}
+    .craber-dav-sec{display:flex;flex-direction:column;gap:0;min-width:0}
+    .craber-dav-sec + .craber-dav-sec{padding-top:18px;
+      border-top:1px solid var(--craber-line)}
+    .craber-dav-sectitle{font-size:12px;font-weight:600;letter-spacing:.03em;
+      color:var(--craber-sub);text-transform:uppercase;margin-bottom:12px}
+
+    /* 同步记录 */
+    .craber-dav-loghead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+    .craber-dav-logtitle{font-size:13px;color:var(--craber-fg);font-weight:600}
+    .craber-dav-logmeta{flex:1;min-width:0;font-size:11.5px;color:var(--craber-sub);
+      text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-dav-clear{flex:none;border:none;background:none;padding:2px 6px;
+      border-radius:6px;font:inherit;font-size:11.5px;color:var(--craber-sub);
+      cursor:pointer;margin-left:auto}
+    .craber-dav-clear:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    /* 记录列表：去掉外层额外留白，行间距靠 gap 控制 */
+    .craber-dav-loglist{max-height:120px;overflow-y:auto;overflow-x:hidden;
+      display:flex;flex-direction:column;gap:1px;padding-right:6px;
+      margin-right:-6px}
+    .craber-dav-logempty{padding:14px 2px;font-size:12.5px;color:var(--craber-sub);
+      text-align:center}
+    .craber-dav-logrow{display:flex;align-items:flex-start;gap:8px;padding:8px;
+      border-radius:8px;font-size:12.5px;line-height:1.4}
+    .craber-dav-logrow:hover{background:var(--craber-hover)}
+    .craber-dav-logdot{flex:none;width:6px;height:6px;border-radius:50%;margin-top:6px;
+      background:var(--craber-accent)}
+    .craber-dav-logrow.err .craber-dav-logdot{background:#e02e2a}
+    .craber-dav-logmain{flex:1;min-width:0}
+    .craber-dav-logline{color:var(--craber-fg);display:flex;align-items:center;
+      gap:6px;min-width:0}
+    .craber-dav-logname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    /* 变更徽标：+N 绿、-N 红，紧凑等宽便于一眼比较 */
+    .craber-dav-chip{flex:none;padding:0 5px;border-radius:4px;font-size:11px;
+      line-height:16px;font-weight:600;font-variant-numeric:tabular-nums}
+    .craber-dav-chip.add{color:var(--craber-accent);background:rgba(16,163,127,.12)}
+    .craber-dav-chip.del{color:#e02e2a;background:rgba(224,46,42,.12)}
+    .craber-dav-logrow.err .craber-dav-logline{color:#e02e2a}
+    .craber-dav-logdetail{color:var(--craber-sub);font-size:11.5px;margin-top:1px;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-dav-logtime{flex:none;color:var(--craber-sub);font-size:11px;
+      font-variant-numeric:tabular-nums;margin-top:1px}
+
+    /* WebDAV 状态行：成功绿、失败红 */
+    .craber-dav-status{font-size:12.5px;line-height:1.5;
+      color:var(--craber-sub);word-break:break-word;margin-top:10px}
+    .craber-dav-status:empty{display:none}
+    .craber-dav-status.ok{color:var(--craber-accent)}
+    .craber-dav-status.err{color:#e02e2a}
+
+    /* WebDAV 设置对话框字段 */
+    .craber-dav-field{margin-bottom:12px}
+    .craber-dav-field:last-of-type{margin-bottom:0}
+    .craber-dav-label{font-size:12px;color:var(--craber-sub);margin-bottom:6px;
+      font-weight:500}
+
+    /* 注入到原生菜单里的「导出」项：尽量贴近原生菜单项的外观 */
+    .craber-menu-injected{display:block}
+    .craber-menu-inj-btn{display:flex;align-items:center;gap:8px;width:100%;
+      box-sizing:border-box;padding:8px 10px;border:none;background:none;
+      text-align:left;cursor:pointer;border-radius:8px;
+      font-size:13.5px;font-family:inherit;color:inherit;line-height:1.3}
+    .craber-menu-inj-btn:hover{background:var(--craber-hover)}
+    .craber-menu-inj-ico{flex:none;width:16px;height:16px;display:flex;
+      align-items:center;justify-content:center}
+    .craber-menu-inj-ico svg{width:16px;height:16px}
+
+    /* 导出进度浮层（菜单导出时显示，右下角） */
+    .craber-prog{position:fixed;right:20px;bottom:20px;z-index:var(--craber-z-tip);
+      width:280px;box-sizing:border-box;padding:14px 16px;
       background:var(--craber-bg);color:var(--craber-fg);
-      font-size:13.5px;font-family:inherit;outline:none}
-    .craber-dlg-search:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+      border:1px solid var(--craber-line);border-radius:12px;
+      box-shadow:0 8px 28px rgba(0,0,0,.14);
+      font-size:13px;font-family:inherit}
+    .craber-prog-hd{font-weight:600;font-size:13.5px;line-height:1.4;
+      margin-bottom:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-prog-bar{height:5px;border-radius:3px;background:var(--craber-ghost);
+      overflow:hidden}
+    .craber-prog-fill{height:100%;width:0;border-radius:3px;
+      background:var(--craber-accent);transition:width .2s ease}
+    .craber-prog-fill.err{background:#e02e2a}
+    .craber-prog-txt{margin-top:8px;font-size:12.5px;color:var(--craber-sub);
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+    /* 搜索 + 日期筛选（添加对话框内，仅会话页签显示） */
+    .craber-dlg-filter{display:flex;flex-direction:column;gap:8px;
+      padding:10px 0 4px;min-width:0}
+    /* 添加选择器：页签贴到 body 顶部，筛选与列表顺次排布 */
+    .craber-picker-body > .craber-dlg-tabs{margin-top:0}
+    .craber-dlg-filter .craber-set-searchwrap{width:100%;flex:none}
+    .craber-dlg-filter[hidden]{display:none}
     .craber-dlg-chips{display:flex;flex-wrap:wrap;gap:6px}
     .craber-dlg-chip{display:inline-flex;align-items:center;gap:5px;cursor:pointer;
-      padding:4px 9px;border:1px solid var(--craber-line);border-radius:999px;
+      padding:4px 10px;border:1px solid var(--craber-line);border-radius:999px;
       font-size:12.5px;color:var(--craber-sub);user-select:none;
-      transition:background .12s ease,border-color .12s ease,color .12s ease}
-    .craber-dlg-chip:hover{background:var(--craber-hover)}
+      transition:background-color .12s ease,border-color .12s ease,color .12s ease}
+    .craber-dlg-chip:hover{background:var(--craber-hover);color:var(--craber-fg)}
     .craber-dlg-chip input{display:none}
-    .craber-dlg-chip:has(input:checked){background:var(--craber-fg);
-      border-color:var(--craber-fg);color:var(--craber-bg)}
+    /* 选中态用蟹绿的淡底 + 绿字，比整块涂黑轻，也不抢主按钮的视觉 */
+    .craber-dlg-chip:has(input:checked){
+      background:color-mix(in srgb,var(--craber-accent) 12%,transparent);
+      border-color:color-mix(in srgb,var(--craber-accent) 45%,transparent);
+      color:var(--craber-accent)}
     .craber-dlg-custom{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
     .craber-dlg-custom[hidden]{display:none}
     .craber-dlg-date{padding:5px 8px;border:1px solid var(--craber-line);
       border-radius:8px;background:var(--craber-bg);color:var(--craber-fg);
       font-size:12.5px;font-family:inherit;outline:none}
-    .craber-dlg-date:focus{border-color:#2563eb}
+    .craber-dlg-date:focus{border-color:var(--craber-accent);
+      box-shadow:0 0 0 3px color-mix(in srgb,var(--craber-accent) 14%,transparent)}
     .craber-dlg-datesep{font-size:12.5px;color:var(--craber-sub)}
 
     /* 页签：会话 / 项目。选中项用底部横线标记，风格贴原生。 */
-    .craber-dlg-tabs{display:flex;gap:2px;margin:12px 0 0;
-      border-bottom:1px solid var(--craber-line)}
-    .craber-dlg-tab{border:none;background:none;padding:8px 12px 9px;cursor:pointer;
-      font-size:14px;font-family:inherit;color:var(--craber-sub);font-weight:500;
-      position:relative;border-radius:8px 8px 0 0}
-    .craber-dlg-tab:hover{color:var(--craber-fg);background:var(--craber-hover)}
-    .craber-dlg-tab.on{color:var(--craber-fg);font-weight:600}
-    .craber-dlg-tab.on::after{content:'';position:absolute;left:8px;right:8px;
-      bottom:-1px;height:2px;border-radius:2px;background:var(--craber-fg)}
+    .craber-dlg-tabs{display:inline-flex;gap:2px;margin:14px 0 0;padding:3px;
+      border-radius:10px;background:var(--craber-ghost);align-self:flex-start}
+    .craber-dlg-tab{border:none;background:none;padding:6px 14px;cursor:pointer;
+      font-size:13px;font-family:inherit;color:var(--craber-sub);font-weight:500;
+      position:relative;border-radius:8px;
+      transition:background-color .14s ease,color .14s ease,box-shadow .14s ease}
+    .craber-dlg-tab:hover{color:var(--craber-fg)}
+    .craber-dlg-tab.on{color:var(--craber-fg);font-weight:600;background:var(--craber-bg);
+      box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px color-mix(in srgb,var(--craber-fg) 8%,transparent)}
     .craber-dlg-pane{display:flex;flex-direction:column;min-width:0;min-height:0}
     .craber-dlg-pane[hidden]{display:none}
+    /* 添加选择器：外层不滚动，页签与筛选固定，列表撑满剩余高度自己滚 */
+    .craber-picker-body{display:flex;flex-direction:column;overflow:hidden}
+    .craber-picker-body > .craber-dlg-tabs,
+    .craber-picker-body > .craber-dlg-filter{flex:none}
+    .craber-picker-body .craber-dlg-pane{flex:1;min-height:0}
+    .craber-picker-body .craber-dlg-list{flex:1;min-height:120px;max-height:none}
     .craber-dlg-count{font-size:12.5px;color:var(--craber-sub);margin-left:2px;
       font-variant-numeric:tabular-nums}
 
@@ -1908,9 +2800,10 @@
        滚动条被裁到框外只剩一条缝（实测）。
        改为正常的 0 外边距 + 右侧留出滚动条宽度的内边距。 */
     .craber-dlg-list{display:flex;flex-direction:column;gap:2px;
-      max-height:min(52vh,440px);overflow-y:auto;overflow-x:hidden;
-      margin:0;padding:0 10px 0 0;min-width:0;
-      box-sizing:border-box;scrollbar-width:thin}
+      max-height:min(48vh,420px);overflow-y:auto;overflow-x:hidden;
+      margin:0;padding:6px;min-width:0;
+      box-sizing:border-box;scrollbar-width:thin;
+      border:1px solid var(--craber-line);border-radius:12px;background:var(--craber-bg)}
     /* 滚动条本身：加一点圆角内缩，不被卡片内边距压到边缘外 */
     .craber-dlg-list::-webkit-scrollbar{width:8px}
     .craber-dlg-list::-webkit-scrollbar-thumb{background:var(--craber-line);
@@ -1932,10 +2825,12 @@
     .craber-dlg-item .craber-dlg-item-ico svg{width:16px;height:16px;display:block}
     .craber-dlg-item-name{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;
       white-space:nowrap}
-    .craber-dlg-check{flex:none;width:18px;height:18px;border:1.5px solid var(--craber-line);
-      border-radius:5px;display:flex;align-items:center;justify-content:center;
-      color:#fff;transition:background .12s ease,border-color .12s ease}
-    .craber-dlg-check.on{background:#0d0d0d;border-color:#0d0d0d}
+    .craber-dlg-check{flex:none;width:17px;height:17px;
+      border:1.5px solid color-mix(in srgb,var(--craber-sub) 55%,transparent);
+      border-radius:6px;display:flex;align-items:center;justify-content:center;
+      color:#fff;box-sizing:border-box;
+      transition:background-color .12s ease,border-color .12s ease}
+    .craber-dlg-check.on{background:var(--craber-accent);border-color:var(--craber-accent)}
     .craber-dlg-check svg{width:12px;height:12px;display:block}
     .craber-dlg-check.locked{background:var(--craber-ghost);border-color:var(--craber-ghost);
       color:var(--craber-sub)}
@@ -1950,9 +2845,10 @@
       margin-left:auto;padding:3px 10px 3px 8px;border-radius:7px;user-select:none}
     .craber-dlg-all:hover{background:var(--craber-hover)}
     .craber-dlg-all-label{font-size:13px;color:var(--craber-sub)}
-    .craber-dlg-all .craber-dlg-check.partial{background:#0d0d0d;border-color:#0d0d0d;color:#fff}
+    .craber-dlg-all .craber-dlg-check.partial{background:var(--craber-accent);
+      border-color:var(--craber-accent);color:#fff}
     .craber-dlg-all .craber-dlg-check.locked{opacity:.4;cursor:default}
-    .craber-dlg-toolbar button{border:none;background:none;color:#2563eb;
+    .craber-dlg-toolbar button{border:none;background:none;color:var(--craber-accent);
       font-size:13px;cursor:pointer;padding:2px 0;font-family:inherit}
     .craber-dlg-toolbar button:hover{text-decoration:underline}
 
@@ -2001,6 +2897,8 @@
     .craber-pjify-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .craber-pjify-row .craber-pjify-check{flex:none;color:var(--craber-accent);width:13px;height:13px}
     /* 导出项的图标：不能跟随 span 的 flex:1 被拉伸 */
+    .craber-pjify-group{padding:2px 10px 5px;font-size:11.5px;font-weight:600;
+      color:var(--craber-sub);letter-spacing:.02em}
     .craber-pjify-row .craber-pjify-ico{flex:none;width:14px;height:14px;display:flex;
       align-items:center;justify-content:center;color:var(--craber-sub)}
     .craber-pjify-row .craber-pjify-ico svg{width:14px;height:14px}
@@ -2008,6 +2906,34 @@
     /* 目标文件夹名称：不加图标，纯文字左对齐，右侧放勾选状态 */
     .craber-pjify-sep{height:1px;background:var(--craber-line);margin:4px 6px}
     .craber-pjify-new{color:var(--craber-accent)}
+
+    /* 二级菜单：向右弹出的独立浮层（与原生菜单一致），不是内联展开 */
+    .craber-pjify-hassub{position:relative}
+    .craber-pjify-arrow{flex:none !important;width:12px;height:12px;display:flex;
+      align-items:center;justify-content:center;color:var(--craber-sub);opacity:.7}
+    .craber-pjify-arrow svg{width:12px;height:12px;display:block}
+    .craber-pjify-hassub:hover .craber-pjify-arrow,
+    .craber-pjify-hassub.subon .craber-pjify-arrow{opacity:1}
+    /* 入口展开时保持高亮，提示"这个浮层是哪来的" */
+    .craber-pjify-hassub.subon{background:var(--craber-hover)}
+    /* 已加入数量：入口右侧的小圆标 */
+    .craber-pjify-count{flex:none !important;min-width:16px;height:16px;padding:0 4px;
+      box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;
+      border-radius:8px;background:var(--craber-ghost);color:var(--craber-sub);
+      font-size:10.5px;font-variant-numeric:tabular-nums}
+    /* 二级浮层本体：与主菜单同款外观，独立定位 */
+    .craber-pjify-sub{position:fixed;z-index:var(--craber-z-fab-menu);
+      min-width:168px;max-width:240px;padding:6px;box-sizing:border-box;
+      background:var(--craber-bg);border:1px solid var(--craber-line);
+      border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);
+      opacity:0;transform:translateX(-4px);
+      transition:opacity .12s ease,transform .12s ease;
+      pointer-events:none;max-height:min(60vh,420px);overflow-y:auto;
+      scrollbar-width:thin}
+    .craber-pjify-sub.craber-open{opacity:1;transform:none;pointer-events:auto}
+    .craber-pjify-subinner{display:flex;flex-direction:column;min-height:0}
+    .craber-pjify-subrow{padding-left:6px}
+    .craber-pjify-subempty{padding:6px 8px 8px;font-size:12px;color:var(--craber-sub)}
     .craber-folders.drag-over{background:var(--craber-hover);border-radius:8px;
       box-shadow:inset 0 0 0 1.5px var(--craber-accent)}
     @media (prefers-reduced-motion:reduce){
@@ -2043,6 +2969,8 @@
               <label class="craber-chip"><input type="checkbox" name="craber-code"><span class="craber-box"></span>含代码/工具调用</label>
               <label class="craber-chip"><input type="checkbox" name="craber-src"><span class="craber-box"></span>附参考来源</label>
               <label class="craber-chip"><input type="checkbox" name="craber-img"><span class="craber-box"></span>图片转 base64</label>
+              <label class="craber-chip"><input type="checkbox" name="craber-tools"><span class="craber-box"></span>含工具结果</label>
+              <label class="craber-chip"><input type="checkbox" name="craber-think"><span class="craber-box"></span>含思考过程</label>
             </div>
           </div>
         </div>
@@ -2055,6 +2983,7 @@
           <button class="craber-btn primary" data-act="export">导出选中</button>
         </div>
       </div>`;
+    layer.el = mask;
     document.body.appendChild(mask);
 
     const close = () => mask.remove();
@@ -2074,6 +3003,8 @@
     bindCheck('craber-code', 'includeCode');
     bindCheck('craber-src', 'sourcesFooter');
     bindCheck('craber-img', 'embedImages');
+    bindCheck('craber-tools', 'includeTools');
+    bindCheck('craber-think', 'includeReasoning');
 
     const listEl = mask.querySelector('.craber-list');
     const statusEl = mask.querySelector('[data-role="status"]');
@@ -2141,9 +3072,11 @@
           statusEl.textContent = note || ('导出中 ' + done + '/' + total + ' …');
         });
         statusEl.textContent = '完成 ✓';
+        navToast('已导出 ' + selected.length + ' 个回合');
       } catch (err) {
         statusEl.textContent = '失败：' + err.message;
         console.error('[gpt-craber]', err);
+        navToast('导出失败：' + (err && err.message ? err.message : '未知错误'));
       }
     });
   }
@@ -4378,6 +5311,964 @@
    * 逼人先决定删哪边。项目记作 'proj:g-p-xxx'，会话记裸 id。
    */
 
+  /* ---------- WebDAV 同步 ----------
+   * 文件夹数据存在 localStorage，换设备就看不到。
+   * 这里用 WebDAV 把它同步到用户自己的网盘（坚果云 / Nextcloud / 群晖等）。
+   *
+   * 设计要点：
+   * - 凭证只存在本地 localStorage，不上传到任何第三方
+   * - 冲突按 updatedAt 判断，较新的覆盖较旧的
+   * - 同步是"整份覆盖"，不做字段级合并：文件夹结构不大，
+   *   合并规则反而容易产生难解释的结果
+   */
+  const DAV_KEY = 'gpt_craber_webdav';
+  const DAV_REMOTE_NAME = 'craber-folders.json';
+
+  function davLoad() {
+    try {
+      const j = JSON.parse(localStorage.getItem(DAV_KEY) || 'null');
+      if (!j || typeof j !== 'object') return { url: '', user: '', pass: '', auto: false, lastSync: 0 };
+      return {
+        url: String(j.url || ''),
+        user: String(j.user || ''),
+        pass: String(j.pass || ''),
+        auto: !!j.auto,
+        lastSync: Number(j.lastSync) || 0
+      };
+    } catch (e) {
+      return { url: '', user: '', pass: '', auto: false, lastSync: 0 };
+    }
+  }
+
+  function davSave(cfg) {
+    try { localStorage.setItem(DAV_KEY, JSON.stringify(cfg)); } catch (e) {}
+  }
+
+  // 统一的 WebDAV 请求（用 GM_xmlhttpRequest 绕开 CORS）
+  // opts.cfg：显式传入的配置（配置对话框里"测试连接"要用当前输入值，
+  // 不能读已保存的 —— 那时用户还没点保存）。
+  function davRequest(method, url, opts) {
+    opts = opts || {};
+    return new Promise((resolve, reject) => {
+      const headers = Object.assign({}, opts.headers || {});
+      const cfg = opts.cfg || davLoad();
+      if (cfg.user || cfg.pass) {
+        headers.Authorization = 'Basic ' + btoa(unescape(encodeURIComponent(cfg.user + ':' + cfg.pass)));
+      }
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        reject(new Error('GM_xmlhttpRequest 不可用'));
+        return;
+      }
+      GM_xmlhttpRequest({
+        method,
+        url,
+        headers,
+        data: opts.body,
+        timeout: 20000,
+        onload: (r) => resolve({ status: r.status, text: r.responseText }),
+        onerror: () => reject(new Error('网络错误')),
+        ontimeout: () => reject(new Error('请求超时'))
+      });
+    });
+  }
+
+  function davBaseUrl(cfg) {
+    let u = String(cfg.url || '').trim();
+    if (!u) return '';
+    if (u.charAt(u.length - 1) !== '/') u += '/';
+    return u;
+  }
+
+  // 把当前文件夹数据上传到 WebDAV
+  async function davPush(cfg) {
+    const base = davBaseUrl(cfg);
+    if (!base) throw new Error('未配置 WebDAV 地址');
+    // 覆盖前先在本地留一份快照：万一合并逻辑出问题，还能找回上一次的样子
+    try {
+      const old = localStorage.getItem(FOLDERS_KEY);
+      if (old) localStorage.setItem(FOLDERS_KEY + '_bak', old);
+    } catch (e) {}
+    const payload = JSON.stringify({
+      ver: 1,
+      // 用本地数据的真实修改时间，而不是"此刻" ——
+      // 否则每次上传都会把时间戳推到现在，另一台设备就永远判不出谁更新
+      updatedAt: Number(folderDataUpdatedAt) || Date.now(),
+      folders: folderData && folderData.folders ? folderData.folders : [],
+      projNames: (folderData && folderData.projNames) || {},
+      tombstones: (folderData && folderData.tombstones) || {}
+    }, null, 2);
+
+    // 先保证目录在：AList 等服务不会因为 PUT 到深层路径就自动建目录。
+    // 目录已存在时 MKCOL 返回 405，davEnsureDir 内部会忽略。
+    await davEnsureDir(cfg);
+
+    const r = await davRequest('PUT', base + DAV_REMOTE_NAME, {
+      cfg: cfg,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: payload
+    });
+    if (r.status < 200 || r.status >= 300) {
+      throw new Error('上传失败 HTTP ' + r.status
+        + (r.status === 401 ? '（用户名或密码不对）' : '')
+        + (r.status === 404 ? '（目录不存在）' : '')
+        + (r.status === 405 ? '（该地址不接受 PUT）' : ''));
+    }
+    return { at: Date.now() };
+  }
+
+  // 按"文件夹名"合并两边的文件夹列表。
+  //
+  // 规则：
+  //   同名文件夹      → 合并 items（并集去重），保留本地 id/open
+  //   只有一边有      → 直接保留（不会因为另一边没它就删掉）
+  //
+  // 这样两台设备各建各的文件夹时互不覆盖。
+  // 已知限制：删除文件夹不会跨设备传播（需要墓碑机制才能做到，
+  // 见后续可选的升级方案）。
+  function davMergeFolders(localList, remoteList, tombMerged) {
+    const out = [];
+    const byName = new Map();
+    const tombs = tombMerged || folderData.tombstones || {};
+
+    const norm = (n) => String(n || '').trim();
+    // 某文件夹是否已被删除（有墓碑）
+    const folderDead = (nm) => Number(tombs[folderTombKeyFolder(nm)]) > 0;
+    // 某条目是否已从某文件夹移除（有墓碑）
+    const itemDead = (nm, key) => Number(tombs[folderTombKeyItem(nm, key)]) > 0;
+
+    // 先放入本地（保持本地顺序），跳过已删除的文件夹与已移除的条目
+    for (const f of localList || []) {
+      if (!f || typeof f.id !== 'string') continue;
+      const nm = norm(f.name) || '未命名';
+      if (folderDead(nm)) continue;
+      const srcItems = Array.isArray(f.items) ? f.items : [];
+      const item = {
+        id: f.id,                       // 保留本地 id：菜单、展开状态都靠它
+        name: nm,
+        open: f.open !== false,
+        items: srcItems.filter((k) => typeof k === 'string' && !itemDead(nm, k))
+      };
+      out.push(item);
+      if (!byName.has(nm)) byName.set(nm, item);
+    }
+
+    // 再把远端独有的并进来 / 同名的合并 items
+    for (const f of remoteList || []) {
+      if (!f || typeof f.id !== 'string') continue;
+      const nm = norm(f.name) || '未命名';
+      if (folderDead(nm)) continue;             // 已被删除
+      const items = (Array.isArray(f.items) ? f.items : [])
+        .filter((k) => typeof k === 'string' && !itemDead(nm, k));
+      const hit = byName.get(nm);
+      if (hit) {
+        // 同名：并集，保持本地已有顺序
+        for (const k of items) {
+          if (hit.items.indexOf(k) < 0) hit.items.push(k);
+        }
+      } else {
+        const item = {
+          id: f.id || folderUid(),
+          name: nm,
+          open: f.open !== false,
+          items: items.slice()
+        };
+        out.push(item);
+        byName.set(nm, item);
+      }
+    }
+    return out;
+  }
+
+  // 合并两侧墓碑：同一个键取较新的时间戳
+  function davMergeTombstones(localT, remoteT) {
+    const out = Object.assign(Object.create(null), localT || {});
+    const r = remoteT && typeof remoteT === 'object' ? remoteT : {};
+    for (const k of Object.keys(r)) {
+      const a = Number(out[k]) || 0;
+      const b = Number(r[k]) || 0;
+      if (b > a) out[k] = b;
+    }
+    return out;
+  }
+
+  // 把远端数据落到本地
+  function davApplyRemote(remote) {
+    if (!remote || !Array.isArray(remote.folders)) return false;
+    folderData = {
+      ver: 1,
+      folders: remote.folders.filter((f) => f && typeof f.id === 'string'),
+      projNames: remote.projNames && typeof remote.projNames === 'object' ? remote.projNames : {},
+      tombstones: (remote.tombstones && typeof remote.tombstones === 'object') ? remote.tombstones : {}
+    };
+    saveFolders();
+    folderRenderedSig = '';
+    renderFolders();
+    return true;
+  }
+
+  /* ---------- 同步记录 ----------
+   * 每次同步留一条：时间、结果、动作、概要。
+   * 只留最近 20 条，存 localStorage —— 记录是给人看的，不是审计，
+   * 无限增长没有意义。
+   */
+  const DAV_LOG_KEY = 'gpt_craber_webdav_log';
+  const DAV_LOG_MAX = 20;
+
+  function davLogLoad() {
+    try {
+      const j = JSON.parse(localStorage.getItem(DAV_LOG_KEY) || '[]');
+      return Array.isArray(j) ? j : [];
+    } catch (e) { return []; }
+  }
+
+  function davLogPush(entry) {
+    try {
+      const list = davLogLoad();
+      list.unshift(Object.assign({ at: Date.now() }, entry));
+      localStorage.setItem(DAV_LOG_KEY, JSON.stringify(list.slice(0, DAV_LOG_MAX)));
+    } catch (e) {}
+  }
+
+  function davLogClear() {
+    try { localStorage.removeItem(DAV_LOG_KEY); } catch (e) {}
+  }
+
+  // 对比前后两份数据，算出增减数量。
+  // 分两组：文件夹本身的增删，以及文件夹内条目的增删。
+  function davDiff(beforeList, afterList) {
+    const keyOf = (list) => {
+      const m = new Map();
+      for (const f of list || []) {
+        if (!f || typeof f.name !== 'string') continue;
+        m.set(f.name.trim(), Array.isArray(f.items) ? f.items : []);
+      }
+      return m;
+    };
+    const A = keyOf(beforeList);
+    const B = keyOf(afterList);
+
+    let folderAdd = 0, folderDel = 0;
+    for (const k of B.keys()) if (!A.has(k)) folderAdd++;
+    for (const k of A.keys()) if (!B.has(k)) folderDel++;
+
+    // 条目按 名称 + 条目key 对比
+    let itemAdd = 0, itemDel = 0;
+    const flat = (m) => {
+      const s = new Set();
+      for (const [name, items] of m) for (const k of items) s.add(name + '\u0000' + k);
+      return s;
+    };
+    const FA = flat(A), FB = flat(B);
+    for (const x of FB) if (!FA.has(x)) itemAdd++;
+    for (const x of FA) if (!FB.has(x)) itemDel++;
+
+    return { folderAdd, folderDel, itemAdd, itemDel };
+  }
+
+  // 把变更量渲染成 "+2 -1" 这样的紧凑文本；没有变化时返回空串
+  function davDiffText(d) {
+    if (!d) return '';
+    const parts = [];
+    if (d.folderAdd) parts.push('+' + d.folderAdd + ' 文件夹');
+    if (d.folderDel) parts.push('-' + d.folderDel + ' 文件夹');
+    if (d.itemAdd) parts.push('+' + d.itemAdd + ' 条目');
+    if (d.itemDel) parts.push('-' + d.itemDel + ' 条目');
+    return parts.join('  ');
+  }
+
+  /* ---------- 会话自动备份 ----------
+   * 把当前账号的会话导出成 zip，直接传到 WebDAV，不经过浏览器下载。
+   *
+   * 设计：
+   * - 只备份"自上次备份以来有更新"的会话，靠 update_time 判断
+   * - 远端按 <目录>/<ChatGPT 用户名>/YYYY-MM-DD/ 分目录：
+   *   同一台 WebDAV 上多个账号各自一份，互不覆盖，也便于回溯
+   * - 全量备份时上限可配，避免一次拉几百个会话被限流
+   */
+  /* 当前 ChatGPT 账号
+   * 备份按用户名分目录：同一个 WebDAV 上可能存着多个账号的备份，
+   * 混在一起既分不清归属，增量记录也会互相干扰。
+   * 名字来源：/api/auth/session 的 user.name / user.email；
+   * 该接口偶尔不带 user，退回 /backend-api/me。
+   * 结果落 localStorage：页面首屏就能显示，不必等请求。
+   */
+  const ACCOUNT_KEY = 'gpt_craber_account';
+  let acctPromise = null;
+
+  function craberAccountLoad() {
+    try {
+      const j = JSON.parse(localStorage.getItem(ACCOUNT_KEY) || 'null');
+      return (j && typeof j === 'object') ? j : null;
+    } catch (e) { return null; }
+  }
+
+  function craberAccountSave(a) {
+    try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(a)); } catch (e) {}
+  }
+
+  // force = true 时忽略缓存重新识别（账号切换后用）
+  function craberAccountInfo(force) {
+    const cached = craberAccountLoad();
+    if (!force && cached && cached.name) return Promise.resolve(cached);
+    if (acctPromise) return acctPromise;
+
+    acctPromise = (async () => {
+      let u = null;
+      try {
+        const r = await fetch('/api/auth/session', { credentials: 'include' });
+        if (r.ok) {
+          const j = await r.json();
+          u = (j && j.user) || null;
+        }
+      } catch (e) { /* 网络失败走下面的兜底 */ }
+
+      if (!u || (!u.name && !u.email)) {
+        try {
+          const me = await craberApi('/backend-api/me');
+          if (me) u = me;
+        } catch (e) { /* 拿不到就留空：界面会提示，备份仍可用本地记录的名称 */ }
+      }
+
+      const info = {
+        name: String((u && (u.name || u.email)) || '').trim(),
+        email: String((u && u.email) || ''),
+        id: String((u && u.id) || ''),
+        at: Date.now()
+      };
+      if (info.name) craberAccountSave(info);
+      return info;
+    })().finally(() => { acctPromise = null; });
+
+    return acctPromise;
+  }
+
+  // 远端目录名：去掉路径分隔符与 WebDAV 不接受的字符。
+  // 中文与空格保留（URL 那层会百分号编码），首尾点会让部分服务拒绝。
+  function sanitizeRemoteSeg(s) {
+    let t = String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-');
+    t = t.replace(/\s+/g, ' ').trim();
+    t = t.replace(/^\.+|\.+$/g, '').trim();
+    if (t.length > 48) t = t.slice(0, 48).trim();
+    return t;
+  }
+
+  const DAV_BACKUP_CFG_KEY = 'gpt_craber_backup_cfg';
+  const DAV_BACKUP_STATE_KEY = 'gpt_craber_backup_state';
+
+  // 范围不再用互斥的 scope 开关：两组都空 = 备份全部；
+  // 任一非空 = 备份「所选项目下的会话 ∪ 所选会话」。
+  const DAV_BACKUP_DEFAULT = {
+    enabled: false, dir: 'craber-backup', mode: 'incremental', max: 50, lastRun: 0,
+    // account：远端按「用户名」分目录，这里记住识别到的名字（留空则回退到匿名目录）
+    account: '', scopeProjects: [], scopeConvs: []
+  };
+
+  function davBackupCfgLoad() {
+    try {
+      const j = JSON.parse(localStorage.getItem(DAV_BACKUP_CFG_KEY) || 'null');
+      if (!j || typeof j !== 'object') return Object.assign({}, DAV_BACKUP_DEFAULT);
+      return {
+        enabled: !!j.enabled,
+        dir: String(j.dir || 'craber-backup'),
+        mode: j.mode === 'full' ? 'full' : 'incremental',
+        max: Math.max(1, Math.min(500, Number(j.max) || 50)),
+        lastRun: Number(j.lastRun) || 0,
+        account: String(j.account || ''),
+        scopeProjects: Array.isArray(j.scopeProjects)
+          ? j.scopeProjects.filter((x) => typeof x === 'string') : [],
+        scopeConvs: Array.isArray(j.scopeConvs)
+          ? j.scopeConvs.filter((x) => typeof x === 'string') : []
+      };
+    } catch (e) {
+      return Object.assign({}, DAV_BACKUP_DEFAULT);
+    }
+  }
+
+  function davBackupCfgSave(c) {
+    try { localStorage.setItem(DAV_BACKUP_CFG_KEY, JSON.stringify(c)); } catch (e) {}
+  }
+
+  // 已备份记录：convId -> update_time。
+  // 带 account 字段：切换账号时整份重来，否则"本月已备份 N 个"会把两个账号混着数。
+  function davBackupStateLoad() {
+    try {
+      const j = JSON.parse(localStorage.getItem(DAV_BACKUP_STATE_KEY) || 'null');
+      if (!j || typeof j !== 'object') return { done: {}, lastRun: 0, account: '' };
+      return {
+        done: (j.done && typeof j.done === 'object') ? j.done : {},
+        lastRun: Number(j.lastRun) || 0,
+        account: String(j.account || '')
+      };
+    } catch (e) { return { done: {}, lastRun: 0, account: '' }; }
+  }
+  function davBackupStateSave(s) {
+    try { localStorage.setItem(DAV_BACKUP_STATE_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+
+  // 本地日期串 YYYY-MM-DD，用于远端分目录
+  function davDateStr(d) {
+    const t = d || new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());
+  }
+
+  // 备份目录：<用户配的 dir>/<用户名>/<YYYY-MM-DD>/
+  // 用户名缺失时调用方会先报错，这里只用 shared 兜底（老配置直接读目录时）。
+  function davBackupDirUrl(cfg, dateStr, accountName) {
+    const base = davBaseUrl(cfg);
+    const bcfg = davBackupCfgLoad();
+    const sub = String(bcfg.dir || 'craber-backup').replace(/^\/+|\/+$/g, '');
+    const who = sanitizeRemoteSeg(accountName || bcfg.account || '') || 'shared';
+    return base + sub + '/' + encodeURIComponent(who) + '/' + dateStr + '/';
+  }
+
+  // 把 blob 上传到指定 URL
+  async function davPutBlob(url, blob, cfg) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        reject(new Error('GM_xmlhttpRequest 不可用'));
+        return;
+      }
+      const headers = {};
+      if (cfg.user || cfg.pass) {
+        headers.Authorization = 'Basic ' + btoa(unescape(encodeURIComponent(cfg.user + ':' + cfg.pass)));
+      }
+      headers['Content-Type'] = 'application/zip';
+      GM_xmlhttpRequest({
+        method: 'PUT',
+        url,
+        headers,
+        data: blob,
+        timeout: 120000,      // 备份包可能很大
+        onload: (r) => resolve({ status: r.status }),
+        onerror: () => reject(new Error('网络错误')),
+        ontimeout: () => reject(new Error('上传超时'))
+      });
+    });
+  }
+
+  // 确保某个 URL 目录存在（逐级 MKCOL，允许 405）
+  async function davEnsureUrlDir(url, cfg) {
+    let u;
+    try { u = new URL(url); } catch (e) { throw new Error('地址格式不对'); }
+    const segs = u.pathname.split('/').filter(Boolean);
+    let path = '';
+    for (let i = 0; i < segs.length; i++) {
+      // pathname 已经是编码过的：先解码再编码，否则 % 会被二次转义
+      let seg = segs[i];
+      try { seg = decodeURIComponent(seg); } catch (e) { /* 非法序列就按原样用 */ }
+      path += '/' + encodeURIComponent(seg);
+      if (!/\/$/.test(path)) {
+        // 最后一段是目录，需要带尾斜杠
+      }
+      const r = await davRequest('MKCOL', u.origin + path + '/', { cfg: cfg });
+      if (r.status === 201 || r.status === 405 || r.status === 200
+        || r.status === 301 || r.status === 302 || r.status === 409) continue;
+      if (r.status === 401) throw new Error('用户名或密码不对（HTTP 401）');
+      if (r.status === 403) throw new Error('没有权限创建目录（HTTP 403）');
+      throw new Error('创建目录失败 HTTP ' + r.status);
+    }
+  }
+
+  /* 备份历史：每次备份留一条，供页面展示"备份过什么" */
+  const DAV_BACKUP_LOG_KEY = 'gpt_craber_backup_log';
+  const DAV_BACKUP_LOG_MAX = 30;
+
+  function davBackupLogLoad() {
+    try {
+      const j = JSON.parse(localStorage.getItem(DAV_BACKUP_LOG_KEY) || '[]');
+      return Array.isArray(j) ? j : [];
+    } catch (e) { return []; }
+  }
+
+  function davBackupLogPush(entry) {
+    try {
+      const list = davBackupLogLoad();
+      list.unshift(Object.assign({ at: Date.now() }, entry));
+      localStorage.setItem(DAV_BACKUP_LOG_KEY, JSON.stringify(list.slice(0, DAV_BACKUP_LOG_MAX)));
+    } catch (e) {}
+  }
+
+  function davBackupLogClear() {
+    try { localStorage.removeItem(DAV_BACKUP_LOG_KEY); } catch (e) {}
+  }
+
+  // 执行一次备份
+  async function davBackupRun(opts) {
+    opts = opts || {};
+    const cfg = davLoad();
+    if (!cfg.url) throw new Error('还没配置 WebDAV');
+
+    const bcfg = davBackupCfgLoad();
+    let state = davBackupStateLoad();
+
+    // 0. 先确认是哪个账号：远端目录按用户名分，多个账号互不覆盖
+    if (opts.onProgress) opts.onProgress(0, 1, '识别账号…');
+    let acct = { name: bcfg.account || '' };
+    try {
+      const info = await craberAccountInfo(true);
+      if (info && info.name) acct = info;
+    } catch (e) { /* 识别失败就用上次记住的名字 */ }
+    const rawName = String(acct.name || bcfg.account || '').trim();
+    const acctName = sanitizeRemoteSeg(rawName) || 'shared';
+    if (!rawName || acctName === 'shared') {
+      throw new Error('没能识别 ChatGPT 账号名，备份已暂停（请刷新页面后重试）');
+    }
+    if (bcfg.account !== acctName) {
+      bcfg.account = acctName;
+      davBackupCfgSave(bcfg);
+    }
+    // 换了账号：旧的"已备份"记录属于别的账号，不能拿来判断增量
+    if (state.account && state.account !== acctName) {
+      state = { done: {}, lastRun: 0, account: acctName };
+      davBackupStateSave(state);
+    }
+    state.account = acctName;
+
+    // 1. 拉会话列表
+    if (opts.onProgress) opts.onProgress(0, 1, '读取会话列表…');
+    const all = await fetchAllConversations((n, total) => {
+      if (opts.onProgress) opts.onProgress(n, total, '读取会话列表 ' + n + '/' + (total || '…'));
+    });
+
+    // 2a. 按范围过滤。
+    // 项目与会话是"取并集"的两个选择器，不是互斥模式：
+    // 选 2 个项目 + 3 个会话 = 这 2 个项目下的所有会话 ∪ 这 3 个会话。
+    const wantProjs = new Set(bcfg.scopeProjects || []);
+    const wantConvs = new Set(bcfg.scopeConvs || []);
+    // 项目名 → gizmo_id；缓存里没有的，等下从会话自带的 gizmo_id 反查
+    const wantGids = new Set();
+    for (const nm of wantProjs) {
+      const gid = folderProjIdByName[nm];
+      if (gid) wantGids.add(gid);
+    }
+
+    let pool = all;
+    if (wantProjs.size || wantConvs.size) {
+      pool = all.filter((c) => {
+        if (!c) return false;
+        // 明确选了会话：直接命中
+        if (wantConvs.has(c.id)) return true;
+        // 按项目命中：gizmo_id 匹配
+        if (!wantProjs.size) return false;
+        const gid = c.gizmo_id || (c.gizmo && c.gizmo.id);
+        if (!gid) return false;
+        if (wantGids.has(gid)) return true;
+        // 名字还没建立映射时按名兜底
+        if (folderProjNameFromKey && wantProjs.has(folderProjNameFromKey('proj:' + gid))) return true;
+        return false;
+      });
+    }
+
+    // 2b. 再按增量/全量筛选
+    let targets;
+    if (bcfg.mode === 'full') {
+      targets = pool.slice();
+    } else {
+      targets = pool.filter((c) => {
+        const id = c.id;
+        if (!id) return false;
+        const prev = state.done[id];
+        const ts = Number(c.update_time) || 0;
+        return prev == null || ts > prev;         // 没备过 或 更新过
+      });
+    }
+    // 按上限截断（新会话优先）
+    targets.sort((a, b) => (Number(b.update_time) || 0) - (Number(a.update_time) || 0));
+    const limited = targets.slice(0, bcfg.max);
+
+    if (!limited.length) {
+      const hasScope = (bcfg.scopeProjects || []).length || (bcfg.scopeConvs || []).length;
+      return {
+        ok: true, skipped: true, count: 0, pending: 0,
+        reason: hasScope ? '所选范围内没有待备份的会话' : '没有需要备份的会话'
+      };
+    }
+
+    // 3. 构建 zip
+    const metas = limited.map((c) => ({ id: c.id, title: c.title, gizmo_id: c.gizmo_id }));
+    const built = await buildConversationsZip(metas, (done, total, note) => {
+      if (opts.onProgress) opts.onProgress(done, total, note);
+    }, { zipName: 'backup' });
+
+    // 4. 上传
+    const dateStr = davDateStr();
+    const dirUrl = davBackupDirUrl(cfg, dateStr, acctName);
+    if (opts.onProgress) opts.onProgress(1, 1, '创建远端目录…');
+    await davEnsureUrlDir(dirUrl, cfg);
+
+    const stamp = craberStamp();
+    const fileName = 'backup_' + stamp + (bcfg.mode === 'full' ? '_full' : '') + '.zip';
+    if (opts.onProgress) opts.onProgress(1, 1, '上传 ' + fileName + '…');
+    const r = await davPutBlob(dirUrl + fileName, built.blob, cfg);
+    if (r.status < 200 || r.status >= 300) {
+      throw new Error('上传失败 HTTP ' + r.status);
+    }
+
+    // 5. 记录已备份
+    for (const c of limited) {
+      state.done[c.id] = Number(c.update_time) || Date.now();
+    }
+    state.lastRun = Date.now();
+    davBackupStateSave(state);
+
+    bcfg.lastRun = Date.now();
+    davBackupCfgSave(bcfg);
+
+    // 留一条历史：页面据此展示"备份过哪些、多少、多大"
+    const bytes = built.blob && built.blob.size ? built.blob.size : 0;
+    const relPath = [String(bcfg.dir || 'craber-backup').replace(/^\/+|\/+$/g, ''),
+      acctName, dateStr].filter(Boolean).join('/');
+    davBackupLogPush({
+      ok: true,
+      count: limited.length,
+      failCount: built.failCount || 0,
+      bytes: bytes,
+      file: fileName,
+      mode: bcfg.mode,
+      account: acctName,
+      path: relPath
+    });
+
+    // 还有多少没备（被上限截断的部分）
+    const pending = Math.max(0, targets.length - limited.length);
+
+    return {
+      ok: true, count: limited.length, file: fileName, dir: dirUrl,
+      account: acctName, path: relPath,
+      failCount: built.failCount, pending: pending, bytes: bytes
+    };
+  }
+
+  // 确保目录存在：逐级 MKCOL。
+  // AList / Nextcloud 这类服务不会因为 PUT 到深层路径就自动建目录，
+  // 所以先逐级创建，再上传。
+  // 405 = 已存在（不同服务返回不一），视为成功。
+  async function davEnsureDir(cfg) {
+    const base = davBaseUrl(cfg);
+    if (!base) throw new Error('未配置 WebDAV 地址');
+
+    // 把 URL 拆成 host + 逐级路径，例：
+    //   https://a.com/dav/BaiduNetdisk/craber/
+    //   → https://a.com  +  ['dav','BaiduNetdisk','craber']
+    let u;
+    try { u = new URL(base); } catch (e) { throw new Error('地址格式不对'); }
+    const segs = u.pathname.split('/').filter(Boolean);
+    if (!segs.length) return;              // 根目录，无需创建
+
+    const origin = u.origin;
+    let path = '';
+    for (let i = 0; i < segs.length; i++) {
+      path += '/' + encodeURIComponent(segs[i]);
+      const r = await davRequest('MKCOL', origin + path + '/', { cfg: cfg });
+      // 201 创建成功；405 已存在；部分服务对已存在返回 301/302 或 200
+      if (r.status === 201 || r.status === 405 || r.status === 200
+        || r.status === 301 || r.status === 302) continue;
+      if (r.status === 401) throw new Error('用户名或密码不对（HTTP 401）');
+      if (r.status === 403) throw new Error('没有权限在该目录创建文件夹（HTTP 403）');
+      // 409 = 父目录还不存在（理论上不会发生，因为我们逐级创建），继续尝试让下一级失败时报错
+      if (r.status === 409) continue;
+      throw new Error('创建目录失败 HTTP ' + r.status + '（' + path + '）');
+    }
+  }
+
+  // 测试连接：只做一次 PROPFIND，确认地址与凭证可用（不改动任何文件）
+  async function davTest(cfg) {
+    const base = davBaseUrl(cfg);
+    if (!base) throw new Error('请先填写服务器地址');
+    // PROPFIND 是 WebDAV 的标准"问一下这个目录有什么"，用 depth:0 只看自身
+    const r = await davRequest('PROPFIND', base, {
+      cfg: cfg,          // 用调用方传入的（可能是表单里刚填、还没保存的）
+      headers: { Depth: '0', 'Content-Type': 'application/xml; charset=utf-8' },
+      body: '<?xml version="1.0" encoding="utf-8"?>'
+        + '<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>'
+    });
+    if (r.status === 401) throw new Error('用户名或密码不对（HTTP 401）');
+    if (r.status === 403) throw new Error('没有权限访问该目录（HTTP 403）');
+    if (r.status === 404) {
+      throw new Error('目录不存在（HTTP 404）。点「保存」会让脚本尝试自动创建');
+    }
+    // 207 是 WebDAV 正常响应；部分服务对根目录返回 200
+    if (r.status !== 207 && r.status !== 200 && r.status !== 301 && r.status !== 302) {
+      throw new Error('连接失败 HTTP ' + r.status + '（该地址可能不是 WebDAV）');
+    }
+    return true;
+  }
+
+  // WebDAV 设置对话框
+  // 记录里用的短时间格式：今天只显示时分，更早显示月-日 时:分
+  function davFmtTime(ts) {
+    const t = Number(ts) || 0;
+    if (!t) return '';
+    const d = new Date(t);
+    const now = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    const hm = p(d.getHours()) + ':' + p(d.getMinutes());
+    const sameDay = d.getFullYear() === now.getFullYear()
+      && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    if (sameDay) return hm;
+    return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + hm;
+  }
+
+  // 会话列表里的"日期"列：只到天，今年省略年份，读起来更短
+  function davFmtDay(ts) {
+    const t = Number(ts) || 0;
+    if (!t) return '';
+    const d = new Date(t);
+    const p = (n) => String(n).padStart(2, '0');
+    const md = p(d.getMonth() + 1) + '-' + p(d.getDate());
+    return d.getFullYear() === new Date().getFullYear() ? md : (d.getFullYear() + '-' + md);
+  }
+
+  function davOpenConfig() {
+    const cfg = davLoad();
+    folderClosePjify();
+
+    const box = folderEl('div', 'craber-dav');
+
+    /* ---- 区块 1：连接配置 ---- */
+    const secConn = folderEl('section', 'craber-dav-sec');
+    secConn.append(folderEl('div', 'craber-dav-sectitle', '连接'));
+
+    const mkField = (label, value, ph, type) => {
+      const w = folderEl('div', 'craber-dav-field');
+      w.append(folderEl('div', 'craber-dav-label', label));
+      const inp = document.createElement('input');
+      inp.type = type || 'text';
+      inp.className = 'craber-dlg-input';
+      inp.value = value || '';
+      if (ph) inp.placeholder = ph;
+      w.append(inp);
+      secConn.append(w);
+      return inp;
+    };
+
+    // placeholder 只作输入格式提示，不再堆示例地址
+    const urlIn = mkField('服务器地址', cfg.url, 'https://');
+    const userIn = mkField('用户名', cfg.user, '');
+    const passIn = mkField('密码 / 应用密码', cfg.pass, '', 'password');
+
+    // 测试连接的结果显示在这里（贴在"连接"区块底部）
+    const status = folderEl('div', 'craber-dav-status', '');
+    secConn.append(status);
+    box.append(secConn);
+
+    /* ---- 区块 2：同步记录 ---- */
+    const secLog = folderEl('section', 'craber-dav-sec');
+    const logHead = folderEl('div', 'craber-dav-loghead');
+    const logTitle = folderEl('span', 'craber-dav-logtitle', '同步记录');
+    const logMeta = folderEl('span', 'craber-dav-logmeta',
+      cfg.lastSync ? '上次 ' + davFmtTime(cfg.lastSync) : '');
+    const clearBtn = folderEl('button', 'craber-dav-clear', '清空');
+    clearBtn.type = 'button';
+    logHead.append(logTitle, logMeta, clearBtn);
+
+    const logList = folderEl('div', 'craber-dav-loglist');
+    const renderLog = () => {
+      const rows = davLogLoad();
+      logList.innerHTML = '';
+      if (!rows.length) {
+        logList.append(folderEl('div', 'craber-dav-logempty', '还没有同步记录'));
+        return;
+      }
+      for (const r of rows) {
+        const row = folderEl('div', 'craber-dav-logrow' + (r.ok ? '' : ' err'));
+        const dot = folderEl('span', 'craber-dav-logdot');
+        const main = folderEl('div', 'craber-dav-logmain');
+
+        // 标题行：✓ 动作 +（若有）变更徽标
+        const line = folderEl('div', 'craber-dav-logline');
+        line.append(folderEl('span', 'craber-dav-logname',
+          (r.ok ? '✓ ' : '✗ ') + (r.action || '同步')));
+
+        const add = Number(r.add) || 0;
+        const del = Number(r.del) || 0;
+        if (add > 0) line.append(folderEl('span', 'craber-dav-chip add', '+' + add));
+        if (del > 0) line.append(folderEl('span', 'craber-dav-chip del', '-' + del));
+
+        main.append(line);
+        if (r.detail) main.append(folderEl('div', 'craber-dav-logdetail', r.detail));
+        const time = folderEl('span', 'craber-dav-logtime', davFmtTime(r.at));
+        row.append(dot, main, time);
+        logList.append(row);
+      }
+    };
+    renderLog();
+
+    clearBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      davLogClear();
+      renderLog();
+    });
+
+    secLog.append(logHead, logList);
+    box.append(secLog);
+
+    // 把当前表单写进配置
+    const collect = () => {
+      const c = davLoad();
+      c.url = urlIn.value.trim();
+      c.user = userIn.value.trim();
+      c.pass = passIn.value;
+      return c;
+    };
+
+    const setStatus = (msg, kind) => {
+      status.textContent = msg;
+      status.className = 'craber-dav-status' + (kind ? ' ' + kind : '');
+    };
+
+    craberDialog({
+      title: 'WebDAV 同步',
+      subtitle: '在多台设备之间同步侧栏文件夹',
+      body: box,
+      cancelText: '取消',
+      confirmText: '保存',
+      extraButtons: [{
+        label: '测试连接',
+        onClick: async ({ button }) => {
+          const c = collect();
+          if (!c.url) { setStatus('请先填写服务器地址', 'err'); return; }
+          const old = button.textContent;
+          button.disabled = true;
+          button.textContent = '测试中…';
+          setStatus('正在连接…', '');
+          try {
+            await davTest(c);
+            setStatus('连接成功 ✓ 地址与凭证可用', 'ok');
+          } catch (e) {
+            setStatus(e && e.message ? e.message : '连接失败', 'err');
+          } finally {
+            button.disabled = false;
+            button.textContent = old;
+          }
+        }
+      }],
+      onConfirm: (close) => {
+        const c = collect();
+        davSave(c);
+        close();
+        // 保存后直接同步一次，省得再点一次「立即同步」
+        davSync();
+      }
+    });
+  }
+
+  // 双向同步：比时间戳，谁新用谁
+  // direction: 'both'（默认双向合并）| 'pull'（只取远端）| 'push'（只发本地）
+  async function davSync(direction) {
+    const dir = direction || 'both';
+    const cfg = davLoad();
+    if (!cfg.url) { navToast('还没配置 WebDAV'); davOpenConfig(); return; }
+    craberProgressOpen('WebDAV 同步');
+    try {
+      craberProgressUpdate(1, 3, '读取远端…');
+      const remote = await davPull(cfg);
+
+      if (!remote) {
+        // 远端为空：直接把本地传上去
+        if (dir === 'pull') {
+          craberProgressFinish(true, '远端还没有数据，本地保持不变');
+          return;
+        }
+        craberProgressUpdate(2, 3, '远端为空，上传本地…');
+        await davPush(cfg);
+        cfg.lastSync = Date.now(); davSave(cfg);
+        const n0 = (folderData.folders || []).length;
+        davLogPush({
+          ok: true, action: '首次上传',
+          add: n0, del: 0,
+          detail: n0 + ' 个文件夹'
+        });
+        craberProgressFinish(true, '已上传到 WebDAV');
+        return;
+      }
+
+      // 按名合并（不再整份覆盖）：
+      // 两边各有的文件夹都保留，同名的把 items 并起来。
+      craberProgressUpdate(2, 3, '合并中…');
+      const localList = (folderData && folderData.folders) || [];
+      // 先合并墓碑：这样"一方删除、另一方还有"的情况才能正确收敛
+      const tombMerged = davMergeTombstones(folderData.tombstones, remote.tombstones);
+      const mergedList = davMergeFolders(localList, remote.folders || [], tombMerged);
+
+      const before = JSON.stringify(localList);
+      const after = JSON.stringify(mergedList);
+      // 变更量：给记录用，让人一眼看到"这次同步动了多少"
+      const diff = davDiff(localList, mergedList);
+      const changed = before !== after
+        || JSON.stringify(folderData.tombstones || {}) !== JSON.stringify(tombMerged);
+
+      if (changed) {
+        folderData.folders = mergedList;
+        folderData.tombstones = tombMerged;
+        // projNames 也取并集：id -> 名字，不冲突就直接合并
+        const rp = remote.projNames && typeof remote.projNames === 'object' ? remote.projNames : {};
+        if (!folderData.projNames) folderData.projNames = Object.create(null);
+        for (const k of Object.keys(rp)) {
+          if (!folderData.projNames[k]) folderData.projNames[k] = rp[k];
+        }
+        saveFolders();
+        folderRenderedSig = '';
+        renderFolders();
+      }
+
+      // 方向控制：pull 只落到本地，push/both 才回写远端
+      if (dir === 'pull') {
+        cfg.lastSync = Date.now(); davSave(cfg);
+        craberProgressFinish(true, changed
+          ? '已从远端拉取（' + mergedList.length + ' 个文件夹）'
+          : '本地已是最新');
+      } else {
+        craberProgressUpdate(3, 3, '同步到远端…');
+        await davPush(cfg);
+        cfg.lastSync = Date.now(); davSave(cfg);
+        craberProgressFinish(true, changed
+          ? '已合并并同步（' + mergedList.length + ' 个文件夹）'
+          : '两边一致，无需同步');
+      }
+      davLogPush({
+        ok: true,
+        action: changed ? '合并同步' : '检查',
+        // diff 里的数字直接用于界面上的 +N / -N
+        add: diff.itemAdd + diff.folderAdd,
+        del: diff.itemDel + diff.folderDel,
+        diff: diff,
+        detail: mergedList.length + ' 个文件夹'
+          + (changed ? '' : '（无变化）')
+      });
+    } catch (e) {
+      const msg = e && e.message ? e.message : '未知错误';
+      davLogPush({ ok: false, action: '同步', detail: msg });
+      craberProgressFinish(false, '同步失败：' + msg);
+    }
+  }
+
+  // 生成带 updatedAt 的本地快照（davPush 需要）
+  function davLocalUpdatedAt() {
+    return Number(folderDataUpdatedAt) || 0;
+  }
+
+  // 从 WebDAV 取回文件夹数据
+  async function davPull(cfg) {
+    const base = davBaseUrl(cfg);
+    if (!base) throw new Error('未配置 WebDAV 地址');
+    const r = await davRequest('GET', base + DAV_REMOTE_NAME, { cfg: cfg });
+    if (r.status === 404) return null;            // 远端还没有，正常
+    if (r.status < 200 || r.status >= 300) {
+      throw new Error('读取失败 HTTP ' + r.status
+        + (r.status === 401 ? '（用户名或密码不对）' : ''));
+    }
+    try {
+      const j = JSON.parse(r.text);
+      if (!j || !Array.isArray(j.folders)) return null;
+      return j;
+    } catch (e) {
+      throw new Error('远端文件不是有效的 JSON');
+    }
+  }
+
   const FOLDERS_KEY = 'gpt_craber_folders';
   const FOLDERS_VER = 1;
   const FOLDER_KID_MAX = 200;   // 单个文件夹最多展示的条目数，超出的只显示计数
@@ -4387,6 +6278,8 @@
   let foldersHostNav = null;    // 当前挂在哪个 nav 上，换了要重挂
   let folderRenderedSig = '';   // 上次渲染的数据指纹，原生重渲染时不重复重建
   let folderPjifyEl = null;     // 「归入文件夹」弹出菜单
+  // 二级浮层的关闭句柄：主菜单关闭时必须一并收起，否则会孤零零留在屏幕上
+  let folderPjifySubClose = null;
   let folderDndKind = null;     // 拖拽中的条目类型（'conv' | 'proj'）
   let folderDndId = null;
   let folderDndKey = null;    // 拖拽源的完整 key（含 kind 前缀）
@@ -4402,18 +6295,26 @@
     return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
 
+  let folderDataUpdatedAt = 0;   // 本地数据最后修改时间（同步用）
+
   function loadFolders() {
     try {
       const raw = localStorage.getItem(FOLDERS_KEY);
-      if (!raw) return { ver: FOLDERS_VER, projNames: {}, folders: [] };
+      if (!raw) return { ver: FOLDERS_VER, projNames: {}, folders: [], tombstones: {} };
       const j = JSON.parse(raw);
       const list = Array.isArray(j && j.folders) ? j.folders : [];
+      // 读回时间戳，供同步比较（不放进 folderData，避免被再次写回时干扰）
+      folderDataUpdatedAt = Number(j && j.updatedAt) || 0;
       // projNames: "proj:<id>" -> 项目名。项目进文件夹时连名字一起存，
       // 之后显示与"是否已添加"都靠它，不必再反查接口。
       const projNames = (j && j.projNames && typeof j.projNames === 'object') ? j.projNames : {};
+      // 墓碑：记录"什么时候删掉了什么"，让删除也能跨设备传播。
+      // 并集合并只会做加法，没有墓碑的话删掉的东西下次同步就回来了。
+      const tombstones = (j && j.tombstones && typeof j.tombstones === 'object') ? j.tombstones : {};
       return {
         ver: FOLDERS_VER,
         projNames: projNames,
+        tombstones: tombstones,
         folders: list.filter((f) => f && typeof f.id === 'string').map((f) => ({
           id: f.id,
           name: typeof f.name === 'string' && f.name ? f.name : '文件夹',
@@ -4423,12 +6324,16 @@
       };
     } catch (e) {
       console.warn('[gpt-craber] 文件夹数据损坏，已重置', e);
-      return { ver: FOLDERS_VER, projNames: {}, folders: [] };
+      return { ver: FOLDERS_VER, projNames: {}, folders: [], tombstones: {} };
     }
   }
 
   function saveFolders() {
-    try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(folderData)); } catch (e) {}
+    try {
+      // 打上时间戳：WebDAV 同步靠它判断哪边更新
+      const snapshot = Object.assign({}, folderData, { updatedAt: Date.now() });
+      localStorage.setItem(FOLDERS_KEY, JSON.stringify(snapshot));
+    } catch (e) {}
     folderRenderedSig = '';   // 数据变了，下一轮必须重画
   }
 
@@ -4501,6 +6406,8 @@
 
     if (f.items.indexOf(key) >= 0) return false;
     f.items.push(key);
+    // 重新加入：解除该条目的移除墓碑
+    folderUntombstone(folderTombKeyItem(f.name, key));
     return true;
   }
 
@@ -4574,8 +6481,15 @@
     const f = folderFind(folderId);
     if (!f) return false;
     const i = f.items.indexOf(key);
-    if (i >= 0) f.items.splice(i, 1);
-    else f.items.push(key);
+    if (i >= 0) {
+      f.items.splice(i, 1);
+      // 移出也留墓碑，否则同步时会被并集带回来
+      folderTombstone(folderTombKeyItem(f.name, key));
+    } else {
+      f.items.push(key);
+      // 重新加入：解除这条的移除墓碑
+      folderUntombstone(folderTombKeyItem(f.name, key));
+    }
     saveFolders();
     renderFolders();
     return i < 0;   // true = 刚加进去
@@ -4598,10 +6512,18 @@
       value: f.name,
       confirmText: '保存',
       onOk: (v) => {
-        f.name = v;
+        const oldName = f.name;
+        const newName = String(v || '').trim();
+        if (!newName || newName === oldName) return;
+        // 改名 = 旧名留墓碑 + 新名解除墓碑。
+        // 不这样的话，另一台设备会把旧名当成"它独有的"再建一个，
+        // 结果两个文件夹并存、内容还重复。
+        folderTombstone(folderTombKeyFolder(oldName));
+        f.name = newName;
+        folderUntombstone(folderTombKeyFolder(newName));
         saveFolders();
         renderFolders();
-        navToast('已重命名为「' + v + '」');
+        navToast('已重命名为「' + newName + '」');
       }
     });
   }
@@ -4618,8 +6540,51 @@
     });
   }
 
+  /* ---------- 墓碑：让删除/改名能跨设备传播 ----------
+   * 键的格式：
+   *   folder:<名称>                整个文件夹被删除
+   *   item:<文件夹名>|<条目 key>    某条目从某文件夹移出
+   *
+   * 值是该动作发生的时间戳。合并时：
+   *   - 两侧墓碑取并集（较新的时间戳胜出）
+   *   - 按墓碑过滤掉对应内容
+   *
+   * 为什么按"名字"而不是文件夹 id：同一文件夹在不同设备上 id 不同，
+   * 名字才是能对齐的标识。
+   */
+  function folderTombKeyFolder(name) {
+    return 'folder:' + String(name || '').trim();
+  }
+  function folderTombKeyItem(folderName, itemKey) {
+    return 'item:' + String(folderName || '').trim() + '|' + String(itemKey || '');
+  }
+
+  function folderTombstone(key) {
+    if (!folderData.tombstones) folderData.tombstones = Object.create(null);
+    folderData.tombstones[key] = Date.now();
+  }
+
+  function folderTombOf(key) {
+    const t = folderData.tombstones && folderData.tombstones[key];
+    return Number(t) || 0;
+  }
+
+  // 清掉墓碑（当同一名字/条目又被重新创建时，旧墓碑必须失效，
+  // 否则新建的文件夹会被自己上一次的删除标记再次干掉）
+  function folderUntombstone(key) {
+    if (!folderData.tombstones) return;
+    if (key in folderData.tombstones) {
+      delete folderData.tombstones[key];
+      saveFolders();
+    }
+  }
+
   function folderDeleteConfirmed(id) {
+    const f = folderFind(id);
+    const nm = f ? f.name : '';
     folderData.folders = folderData.folders.filter((x) => x.id !== id);
+    // 留墓碑：否则另一台设备同步时会把"并集"又把它带回来
+    if (nm) folderTombstone(folderTombKeyFolder(nm));
     saveFolders();
     renderFolders();
   }
@@ -4692,27 +6657,43 @@
   /* ---------- 图标 ---------- */
 
   // 图标统一 stroke-width 1.7、viewBox 24，尺寸靠 CSS 控制（文件夹行 14px / 子项 13px）。
+  // 侧栏行内的小号螃蟹（复用 CRAB_SVG 的路径，只改尺寸）
+  const CRAB_SMALL = CRAB_SVG
+    .replace('width="26" height="26"', 'width="15" height="15"');
+
+  /* 图标统一构造器
+   * 全脚本的线性图标都从这里出：同一个 24 视框、同一套圆角与端点、
+   * 同一条 1.8 描边 —— 16~18px 下 1.7 会发虚，1.8 才结实。
+   */
+  const mi = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"'
+    + ' stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+
+  /* 文件夹：开口朝上的梯形文件夹，与系统/原生列表同构。
+   * 原来是 1.5 圆角 + 斜切标签，18px 下左侧那道斜线几乎看不见，
+   * 于是"文件夹"和"卡片"分不开。改成 2.2 圆角 + 明确的标签片。 */
+  const FOLDER_PATH = 'M3 8.5A2.5 2.5 0 0 1 5.5 6h3.1a2 2 0 0 1 1.6.8l.9 1.2h7.4A2.5 2.5 0 0 1 21 10.5v6A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z';
+  // 18px 显示，描边回到 1.7（同样的线条在更大尺寸下不需要更粗）
   const FOLDER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"'
-    + ' stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a1.5 1.5 0 0 1 1.5-1.5H9l2 2h7.5A1.5 1.5 0 0 1 21 9v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17z"/></svg>';
+    + ' stroke-linecap="round" stroke-linejoin="round"><path d="' + FOLDER_PATH + '"/></svg>';
+
+  // 折叠箭头：比原来的 2.4 细一点，和图标整体重量对齐
   const FOLDER_CHEV = '<svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor"'
-    + ' stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
-  // 会话 = 对话气泡
-  const FOLDER_CONV_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"'
-    + ' stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H8l-4 2.5V12a7 7 0 0 1 7-7h2a7 7 0 0 1 7 7z"/></svg>';
-  // 项目 = 公文包（和文件夹图标明显不同）
-  const FOLDER_PROJ_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"'
-    + ' stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.5" width="18" height="11.5" rx="2"/>'
-    + '<path d="M8.5 7.5V6a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v1.5"/><path d="M3 12h18"/></svg>';
-  const FOLDER_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"'
-    + ' stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.5 5.5L20 6.5"/></svg>';
+    + ' stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 5.5L16 12l-6.5 6.5"/></svg>';
+
+  // 会话 = 对话气泡（闭合、圆角统一，尾巴自然收口）
+  const FOLDER_CONV_ICON = mi('<path d="M12 3.5c-4.7 0-8.5 3.1-8.5 7 0 2.2 1.2 4.1 3.1 5.4v3.6c0 .5.6.8 1 .5l3-2.1c.5.1 1 .1 1.4.1 4.7 0 8.5-3.1 8.5-7s-3.8-7-8.5-7z"/>');
+
+  // 项目 = 公文包（和文件夹明显区分：有提手、有横向分隔线）
+  const FOLDER_PROJ_ICON = mi('<rect x="3" y="7.5" width="18" height="11.5" rx="2.5"/>'
+    + '<path d="M8.5 7.5V6.2a2.2 2.2 0 0 1 2.2-2.2h2.6a2.2 2.2 0 0 1 2.2 2.2v1.3"/>'
+    + '<path d="M3 12.5h18"/>');
+
+  const FOLDER_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"'
+    + ' stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5L19.5 6.5"/></svg>';
 
   // 文件夹行上的"添加"图标（+）
   const FOLDER_PLUS = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"'
-    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
-
-  // 菜单图标：与原生菜单同风格（1.7 描边、16px）
-  const mi = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"'
-    + ' stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5.5v13M5.5 12h13"/></svg>';
   // 图标全部按原版菜单的样式与尺寸（16px、1.7 描边）
   const MENU_ICON = {
     // 导出（下载箭头到托盘）
@@ -4720,7 +6701,7 @@
     // 打开（外链箭头）
     open: mi('<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>'),
     // 展开/收起
-    expand: mi('<path d="M6 9l6 6 6-6"/>'),
+    expand: mi('<path d="M6 9.5l6 6 6-6"/>'),
     // 重命名（铅笔，与原版一致）
     rename: mi('<path d="M16.5 4.5a2.12 2.12 0 0 1 3 3L8 19l-4 1 1-4z"/>'),
     // 置顶（图钉）
@@ -4729,19 +6710,22 @@
     share: mi('<path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>'),
     // 归档（盒子）
     archive: mi('<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/>'),
+    // 文件夹（用于"添加到文件夹"入口）：与侧栏同一枚轮廓
+    folder: mi('<path d="' + FOLDER_PATH + '"/>'),
     // 删除（垃圾桶，原版样式）
     remove: mi('<path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12"/>'),
     // 移入文件夹
-    move: mi('<path d="M3 7a1.5 1.5 0 0 1 1.5-1.5H9l2 2h7.5A1.5 1.5 0 0 1 20 9v8a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 17z"/><path d="M12 11v5"/><path d="M9.5 13.5L12 16l2.5-2.5"/>'),
+    move: mi('<path d="' + FOLDER_PATH + '"/><path d="M12 12v3.6"/><path d="M10.6 14 12 15.4 13.4 14"/>'),
     // 从文件夹移除
-    unmove: mi('<path d="M3 7a1.5 1.5 0 0 1 1.5-1.5H9l2 2h7.5A1.5 1.5 0 0 1 20 9v8a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 17z"/><path d="M10 11l4 4M14 11l-4 4"/>'),
+    unmove: mi('<path d="' + FOLDER_PATH + '"/><path d="M10.7 12.4l2.6 2.6M13.3 12.4l-2.6 2.6"/>'),
     // 更多（三个点，用于"打开原生菜单"）
     more: mi('<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/>'
       + '<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>'
       + '<circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>'),
-    // 右侧子菜单箭头
-    chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
-      + ' stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>'
+    // 向右箭头：二级菜单入口用（原生菜单就是向右弹）
+    // 两支箭头原本一个 1.8 一个 2.0，粗细不一致，这里统一
+    chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"'
+      + ' stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 5.5L16 12l-6.5 6.5"/></svg>'
   };
 
   function folderEl(tag, cls, text) {
@@ -5846,7 +7830,8 @@
   function folderOpenAddPicker(anchor, f) {
     folderClosePjify();
 
-    const body = folderEl('div', 'craber-dlg-body');
+    // picker-body：页签/筛选固定，列表自己滚动，弹窗整体不滚动
+    const body = folderEl('div', 'craber-dlg-body craber-picker-body');
 
     // 两个页签：会话 / 项目。各自独立列表，但共享同一个"已选"集合。
     // 混在一个列表里时项目常被会话挤到很下面，找项目要滚半天。
@@ -5858,10 +7843,8 @@
 
     // 搜索 + 日期筛选（只在"会话"页签有意义，切到项目页签时隐藏）
     const filterBar = folderEl('div', 'craber-dlg-filter');
-    const searchEl = document.createElement('input');
-    searchEl.type = 'text';
-    searchEl.className = 'craber-dlg-search';
-    searchEl.placeholder = '搜索标题…';
+    const searchBox = craberSearchBox('搜索标题…');
+    const searchEl = searchBox.input;
     const chips = folderEl('div', 'craber-dlg-chips');
     const DATE_OPTS = [
       { v: 'all', t: '全部' }, { v: '7', t: '近7天' },
@@ -5901,7 +7884,7 @@
     fromEl.addEventListener('change', () => renderAll());
     toEl.addEventListener('change', () => renderAll());
     searchEl.addEventListener('input', () => renderAll());
-    filterBar.append(searchEl, chips, customRow);
+    filterBar.append(searchBox.el, chips, customRow);
 
     const tabBar = folderEl('div', 'craber-dlg-tabs');
     const tabBtns = {};
@@ -5990,8 +7973,6 @@
       if (!okBtn) return;
       okBtn.textContent = picked.size ? ('添加 ' + picked.size + ' 项') : '添加';
       okBtn.disabled = picked.size === 0;
-      okBtn.style.opacity = picked.size === 0 ? '.45' : '1';
-      okBtn.style.cursor = picked.size === 0 ? 'default' : 'pointer';
     };
     syncOk();
 
@@ -6149,12 +8130,12 @@
 
     folderPickerLastError = '';
     folderPickerItemsFromApi((items) => {
-      if (!craberDialogEl) return;
+      if (!craberDialogStack.length) return;
       if (!items.length) return;
       pickerLoading = false;
       mergeIn(items);
     }).then((items) => {
-      if (!craberDialogEl) return;
+      if (!craberDialogStack.length) return;
       pickerLoading = false;
       if (items.length) mergeIn(items);
       renderAll();
@@ -6168,74 +8149,163 @@
     });
   }
 
+  // 关闭按钮的 ×：用描边 SVG 而不是字符，各平台字体下粗细一致
+  const DLG_CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
+
   /* ---------- 仿原生的对话框组件 ---------- */
   // 原版对话框特征（按截图还原）：居中、白色圆角卡片、大标题 + 灰色副标题、
   // 输入框蓝框聚焦、右下角「取消」（浅底）+「保存」（黑色实心）按钮。
   // 统一在这里实现，替换掉 window.prompt / window.confirm，避免丑陋的原生弹窗。
 
-  let craberDialogEl = null;
+  /* 对话框栈
+   * 之前是单例：开新对话框会先把旧的关掉。于是"设置中心里点【选择项目】"
+   * 会连带关掉设置中心 —— 子对话框必须能叠在父对话框之上。
+   * 现在用栈：每层记录自己的容器节点与关闭回调，Esc / 点遮罩只作用于最上层。
+   */
+  const craberDialogStack = [];
 
-  function craberDialogClose() {
-    if (craberDialogEl && craberDialogEl.parentElement) craberDialogEl.remove();
-    craberDialogEl = null;
-    document.removeEventListener('keydown', craberDialogKeydown, true);
+  function craberDialogTop() {
+    return craberDialogStack.length ? craberDialogStack[craberDialogStack.length - 1] : null;
+  }
+
+  // 关闭最上层对话框；不传 layer 就关栈顶
+  function craberDialogClose(layer) {
+    const target = layer || craberDialogTop();
+    if (!target) return;
+    const idx = craberDialogStack.indexOf(target);
+    if (idx >= 0) craberDialogStack.splice(idx, 1);
+    if (target.el && target.el.parentElement) target.el.remove();
+    // 恢复下层对话框的可交互状态
+    const below = craberDialogTop();
+    if (below && below.el) below.el.classList.remove('craber-dlg-behind');
+    if (!craberDialogStack.length) {
+      document.removeEventListener('keydown', craberDialogKeydown, true);
+    }
+    const cb = target.onClose;
+    target.onClose = null;
+    if (cb) { try { cb(); } catch (e) { /* 忽略 */ } }
   }
 
   function craberDialogKeydown(e) {
-    if (e.key === 'Escape') { e.preventDefault(); craberDialogClose(); }
+    if (e.key !== 'Escape') return;
+    const top = craberDialogTop();
+    if (!top) return;
+    // 输入框里的 Esc 也当关闭处理，和原生弹层一致
+    e.preventDefault();
+    e.stopPropagation();
+    craberDialogClose(top);
   }
 
   // opts: { title, subtitle, body(el), confirmText, cancelText, onConfirm(close), danger }
   function craberDialog(opts) {
-    craberDialogClose();
     const o = opts || {};
 
+    // 压栈后才登记回调：关闭时按层取，互不干扰
+    const layer = { el: null, onClose: typeof o.onClose === 'function' ? o.onClose : null };
+    craberDialogStack.push(layer);
+
+    // 下层对话框压暗，视觉上区分层级
+    const below = craberDialogStack.length > 1
+      ? craberDialogStack[craberDialogStack.length - 2] : null;
+    if (below && below.el) below.el.classList.add('craber-dlg-behind');
+
     const mask = folderEl('div', 'craber-dlg-mask');
-    const dlg = folderEl('div', 'craber-dlg');
+    // wide：设置中心这类双栏页面需要更宽的容器
+    const dlg = folderEl('div', 'craber-dlg' + (o.wide ? ' craber-dlg-wide' : ''));
     mask.append(dlg);
 
+    // 标题栏：可选图标 + 标题/副标题（叠成一组，副标题不再单独占一行）+ 右侧关闭 ×
     const hd = folderEl('div', 'craber-dlg-hd');
-    hd.append(folderEl('div', 'craber-dlg-title', o.title || ''));
-    const x = folderEl('button', 'craber-dlg-x', '×');
+    if (o.icon) {
+      const mark = folderEl('div', 'craber-dlg-mark');
+      mark.innerHTML = o.icon;
+      hd.append(mark);
+    }
+    const headText = folderEl('div', 'craber-dlg-headtext');
+    headText.append(folderEl('div', 'craber-dlg-title', o.title || ''));
+    if (o.subtitle) headText.append(folderEl('div', 'craber-dlg-sub', o.subtitle));
+    hd.append(headText);
+    if (o.badge) hd.append(folderEl('span', 'craber-dlg-badge', o.badge));
+    const x = folderEl('button', 'craber-dlg-x');
     x.type = 'button';
+    x.innerHTML = DLG_CLOSE_SVG;
     x.setAttribute('aria-label', '关闭');
-    x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); craberDialogClose(); });
+    x.title = '关闭（Esc）';
+    x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); craberDialogClose(layer); });
     hd.append(x);
     dlg.append(hd);
-
-    if (o.subtitle) dlg.append(folderEl('div', 'craber-dlg-sub', o.subtitle));
 
     if (o.body) dlg.append(o.body);
 
     const ft = folderEl('div', 'craber-dlg-ft');
+    // cancelText === null 表示不要"取消"（例如设置中心：标题栏的 × / Esc / 点遮罩都能关）
+    const hasCancel = o.cancelText !== null;
     const cancel = folderEl('button', 'craber-dlg-btn', o.cancelText || '取消');
     cancel.type = 'button';
-    cancel.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); craberDialogClose(); });
+    cancel.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); craberDialogClose(layer); });
+    // confirmText === null 表示"只有关闭按钮"，用于纯展示/操作面板
+    const hasOk = o.confirmText !== null;
     const ok = folderEl('button', 'craber-dlg-btn craber-dlg-primary' + (o.danger ? ' craber-dlg-danger' : ''),
       o.confirmText || '保存');
     ok.type = 'button';
     ok.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
       if (o.onConfirm) o.onConfirm(craberDialogClose);
-      else craberDialogClose();
+      else craberDialogClose(layer);
     });
-    ft.append(cancel, ok);
-    dlg.append(ft);
+    // 额外的次级按钮（如"测试连接"），排在取消/确认左侧
+    // 先挂上取消/确认，再插额外的次级按钮 —— 顺序不能反，
+    // insertBefore 要求参照节点已经是子节点，否则抛 NotFoundError。
+    if (hasCancel) ft.append(cancel);
+    if (hasOk) ft.append(ok);
+
+    if (Array.isArray(o.extraButtons)) {
+      const extras = [];
+      for (const eb of o.extraButtons) {
+        if (!eb) continue;
+        const btn = folderEl('button', 'craber-dlg-btn' + (eb.cls ? ' ' + eb.cls : ''),
+          eb.label || '');
+        btn.type = 'button';
+        btn.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          if (eb.onClick) eb.onClick({ close: craberDialogClose, button: btn });
+        });
+        extras.push(btn);
+      }
+      if (extras.length) {
+        // 顺序：[次级按钮…] [弹性空白] [取消] [保存]
+        // 先插按钮、再插空白，否则空白会跑到最左边。
+        // 没有取消按钮时，次级按钮直接追加即可。
+        for (const b of extras) {
+          if (hasCancel) ft.insertBefore(b, cancel);
+          else ft.append(b);
+        }
+        if (hasCancel) ft.insertBefore(folderEl('div', 'craber-dlg-ft-spacer'), cancel);
+        else ft.insertBefore(folderEl('div', 'craber-dlg-ft-spacer'), ft.firstChild);
+      }
+    }
+    // 一个按钮都没有时不画底栏，卡片底部也不留白（设置中心那种"整页"面板）
+    if (ft.childElementCount) {
+      dlg.append(ft);
+    } else {
+      dlg.classList.add('craber-dlg-plain');
+    }
 
     // 点遮罩关闭，点卡片内部不关闭
     mask.addEventListener('click', (e) => {
-      if (e.target === mask) craberDialogClose();
+      if (e.target === mask) craberDialogClose(layer);
     });
 
+    layer.el = mask;
     document.body.appendChild(mask);
-    craberDialogEl = mask;
     document.addEventListener('keydown', craberDialogKeydown, true);
 
     // 自动聚焦输入框
     const input = dlg.querySelector('input, textarea');
     if (input) setTimeout(() => { try { input.focus(); input.select && input.select(); } catch (e) {} }, 30);
 
-    return { el: mask, root: dlg, close: craberDialogClose };
+    return { el: mask, root: dlg, close: () => craberDialogClose(layer) };
   }
 
   // 单行输入对话框（替代 window.prompt）
@@ -6283,7 +8353,7 @@
       confirmText: o.confirmText || '确认',
       cancelText: o.cancelText || '取消',
       danger: !!o.danger,
-      onConfirm: () => { craberDialogClose(); if (o.onOk) o.onOk(); }
+      onConfirm: (close) => { close(); if (o.onOk) o.onOk(); }
     });
   }
 
@@ -6635,6 +8705,50 @@
   }
 
   // 文件夹内条目的「⋯」菜单：风格对齐原生（左侧图标 + 右侧快捷键位 + 危险项红字）
+  /* ---------- 导出进度浮层（菜单导出用） ---------- */
+  // 菜单导出没有面板可显示状态，这里给一个轻量浮层：
+  // 标题 + 当前阶段 + 进度条 + 计数，完成/失败后自动收起。
+  let craberProgEl = null;
+
+  function craberProgressOpen(title) {
+    craberProgressClose();
+    const el = folderEl('div', 'craber-prog');
+    const hd = folderEl('div', 'craber-prog-hd', title || '导出中');
+    const bar = folderEl('div', 'craber-prog-bar');
+    const fill = folderEl('div', 'craber-prog-fill');
+    bar.append(fill);
+    const txt = folderEl('div', 'craber-prog-txt', '准备中…');
+    el.append(hd, bar, txt);
+    document.body.appendChild(el);
+    craberProgEl = { el, fill, txt };
+    return craberProgEl;
+  }
+
+  function craberProgressUpdate(done, total, note) {
+    if (!craberProgEl) return;
+    const { fill, txt } = craberProgEl;
+    const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+    fill.style.width = pct + '%';
+    txt.textContent = note || ('导出中 ' + done + ' / ' + total);
+  }
+
+  function craberProgressClose() {
+    if (!craberProgEl) return;
+    const { el } = craberProgEl;
+    try { el.remove(); } catch (e) {}
+    craberProgEl = null;
+  }
+
+  // 延迟收起：让用户看一眼「完成 ✓」
+  function craberProgressFinish(ok, msg) {
+    if (!craberProgEl) return;
+    const { fill, txt } = craberProgEl;
+    fill.style.width = '100%';
+    fill.classList.toggle('err', !ok);
+    txt.textContent = msg || (ok ? '完成 ✓' : '导出失败');
+    setTimeout(craberProgressClose, ok ? 1200 : 3200);
+  }
+
   /* ---------- 从菜单直接导出 ---------- */
 
   // 导出单个会话为 Markdown（带图片目录，打包成 zip）。
@@ -6642,12 +8756,14 @@
   async function craberExportConvById(convId, title) {
     if (!convId) { navToast('找不到会话 ID，无法导出'); return; }
     const meta = { id: convId, title: title || '会话' };
+    craberProgressOpen('导出会话：' + (title || '会话'));
     try {
-      navToast('正在导出…');
-      await exportConversations([meta]);
-      navToast('已导出「' + (title || '会话') + '」');
+      await exportConversations([meta], (done, total, note) => {
+        craberProgressUpdate(done, total, note);
+      }, { zipName: title || '会话' });
+      craberProgressFinish(true, '已导出「' + (title || '会话') + '」');
     } catch (e) {
-      navToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
+      craberProgressFinish(false, '导出失败：' + (e && e.message ? e.message : '未知错误'));
     }
   }
 
@@ -6671,12 +8787,14 @@
     }).filter((m) => m.id);
 
     if (!metas.length) { navToast('该项目没有可导出的会话'); return; }
+    craberProgressOpen('导出项目：' + name + '（' + metas.length + ' 个会话）');
     try {
-      navToast('正在导出 ' + metas.length + ' 个会话…');
-      await exportConversations(metas);
-      navToast('已导出「' + name + '」');
+      await exportConversations(metas, (done, total, note) => {
+        craberProgressUpdate(done, total, note);
+      }, { zipName: name });
+      craberProgressFinish(true, '已导出「' + name + '」');
     } catch (e) {
-      navToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
+      craberProgressFinish(false, '导出失败：' + (e && e.message ? e.message : '未知错误'));
     }
   }
 
@@ -7181,20 +9299,22 @@
     host.classList.add('craber-pj-host');
     const btn = folderEl('button', 'craber-pj-btn');
     btn.type = 'button';
-    btn.innerHTML = FOLDER_ICON;
-    btn.title = '归入文件夹';
-    btn.setAttribute('aria-label', '归入文件夹');
+    // 🦀 图标：点开后是一个菜单，里面放「添加到文件夹」和「导出」。
+    // 用螃蟹而不是文件夹图标，是因为它现在不只管"归入文件夹"了。
+    btn.innerHTML = CRAB_SMALL;
+    btn.title = '更多操作（文件夹 / 导出）';
+    btn.setAttribute('aria-label', '更多操作');
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      folderOpenPjify(btn, entry, title);
+      folderOpenPjify(btn, entry, title, a);
     });
-    // 右键原生行也弹同一个菜单：比每次去够那个小按钮顺手
+    // 右键原生行也弹同一个菜单（比去够小按钮顺手）
     host.addEventListener('contextmenu', (ev) => {
       if (!uiPrefs.folders) return;
       if (a && !ev.target.closest('a')) return;      // 链接行只认点在链接上
       ev.preventDefault();
-      folderOpenPjify(btn, entry, title);
+      folderOpenPjify(btn, entry, title, a);
     });
     // 插到"文字块"之后、原生操作按钮之前：原生右侧按钮在 hover 时才出现，
     // 我们排在它前面就不会被它盖住（绝对定位到右缘实测会点成原生菜单）。
@@ -7576,50 +9696,145 @@
     m.append(expRow);
     m.append(folderEl('div', 'craber-pjify-sep'));
 
-    if (!folderData.folders.length) {
-      m.append(folderEl('div', 'craber-pjify-hd', '还没有文件夹，先新建一个'));
-    }
-    for (const f of folderData.folders) {
-      const on = f.items.indexOf(key) >= 0;
-      const row = folderEl('button', 'craber-pjify-row');
-      row.type = 'button';
-      row.title = on ? '从「' + f.name + '」移出' : '加入「' + f.name + '」';
-      row.append(folderEl('span', null, f.name));
-      if (on) {
-        const ck = folderEl('span', 'craber-pjify-check');
-        ck.innerHTML = FOLDER_CHECK;
-        row.append(ck);
-      }
-      row.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const added = folderToggleItem(f.id, key);
-        navToast(added ? '已加入「' + f.name + '」' : '已从「' + f.name + '」移出');
-        folderClosePjify();
-      });
-      m.append(row);
+    /* ---- 添加到文件夹：二级菜单 ----
+     * 之前把文件夹列表直接摊平在主菜单里，文件夹一多菜单就长得没法看。
+     * 改成一行入口，展开后才是列表；已加入的显示勾。
+     */
+    const subRow = folderEl('button', 'craber-pjify-row craber-pjify-hassub');
+    subRow.type = 'button';
+    const subIco = folderEl('span', 'craber-pjify-ico');
+    subIco.innerHTML = MENU_ICON.folder;
+    const subLabel = folderEl('span', null, '添加到文件夹');
+    // 原生是向右的箭头（›），不是向下 —— 因为它往右侧弹出独立浮层
+    const subArrow = folderEl('span', 'craber-pjify-arrow');
+    subArrow.innerHTML = MENU_ICON.chevron;
+
+    // 三个子元素必须挂上去，否则这行是空的（踩过：替换代码时被漏掉）
+    subRow.append(subIco, subLabel, subArrow);
+
+    // 二级浮层：独立定位，挂在 body 上，和主菜单并排
+    const subPanel = folderEl('div', 'craber-pjify-sub');
+    const subInner = folderEl('div', 'craber-pjify-subinner');
+    subPanel.append(subInner);
+
+    // 已加入的文件夹数量，作为入口右侧的小提示
+    const joined = folderData.folders.filter((f) => f.items.indexOf(key) >= 0).length;
+    if (joined > 0) {
+      subRow.append(folderEl('span', 'craber-pjify-count', String(joined)));
     }
 
-    m.append(folderEl('div', 'craber-pjify-sep'));
-    const nw = folderEl('button', 'craber-pjify-row craber-pjify-new', '＋ 新建文件夹并放入');
-    nw.type = 'button';
-    nw.addEventListener('click', (e) => {
+    const buildSub = () => {
+      subInner.innerHTML = '';
+      if (!folderData.folders.length) {
+        subInner.append(folderEl('div', 'craber-pjify-subempty', '还没有文件夹'));
+      }
+      for (const f of folderData.folders) {
+        const on = f.items.indexOf(key) >= 0;
+        const row = folderEl('button', 'craber-pjify-row craber-pjify-subrow');
+        row.type = 'button';
+        row.title = on ? '从「' + f.name + '」移出' : '加入「' + f.name + '」';
+        row.append(folderEl('span', null, f.name));
+        if (on) {
+          const ck = folderEl('span', 'craber-pjify-check');
+          ck.innerHTML = FOLDER_CHECK;
+          row.append(ck);
+        }
+        row.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // 不关菜单：可以连续往多个文件夹里放
+          const added = folderToggleItem(f.id, key);
+          navToast(added ? '已加入「' + f.name + '」' : '已从「' + f.name + '」移出');
+          buildSub();
+          // 同步入口上的计数
+          const n = folderData.folders.filter((x) => x.items.indexOf(key) >= 0).length;
+          const old = subRow.querySelector('.craber-pjify-count');
+          if (old) old.remove();
+          if (n > 0) subRow.append(folderEl('span', 'craber-pjify-count', String(n)));
+        });
+        subInner.append(row);
+      }
+      subInner.append(folderEl('div', 'craber-pjify-sep'));
+      const nw = folderEl('button', 'craber-pjify-row craber-pjify-new');
+      nw.type = 'button';
+      nw.append(folderEl('span', null, '＋ 新建文件夹并放入'));
+      nw.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        folderClosePjify();
+        craberPromptDialog({
+          title: '新建文件夹并放入',
+          subtitle: '新建后把该项直接放进去',
+          value: '',
+          placeholder: '文件夹名称',
+          confirmText: '创建',
+          onOk: (v) => {
+            folderCreate(v, key);
+            navToast('已新建并放入');
+          }
+        });
+      });
+      subInner.append(nw);
+    };
+    buildSub();
+
+    /* 二级浮层开关：定位到主菜单右侧，垂直对齐入口行 */
+    let subOpen = false;
+    function positionSub() {
+      const r = subRow.getBoundingClientRect();
+      const sw = subPanel.offsetWidth;
+      const sh = subPanel.offsetHeight;
+      // 优先放右侧；右边放不下就翻到左侧（原生菜单也是这个行为）
+      let left = r.right + 4;
+      if (left + sw > window.innerWidth - 8) left = Math.max(8, r.left - sw - 4);
+      let top = r.top - 6;
+      if (top + sh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - sh - 8);
+      if (top < 8) top = 8;
+      subPanel.style.left = Math.round(left) + 'px';
+      subPanel.style.top = Math.round(top) + 'px';
+    }
+    function openSub() {
+      if (subOpen) return;
+      subOpen = true;
+      document.body.appendChild(subPanel);
+      // 挂上后才能量到尺寸
+      positionSub();
+      subPanel.classList.add('craber-open');
+      subRow.classList.add('subon');
+      subRow.setAttribute('aria-expanded', 'true');
+    }
+    function closeSub() {
+      if (!subOpen) return;
+      subOpen = false;
+      subPanel.classList.remove('craber-open');
+      subPanel.remove();
+      subRow.classList.remove('subon');
+      subRow.setAttribute('aria-expanded', 'false');
+    }
+    // 主菜单关闭时二级也要跟着消失，否则会留在屏幕上
+    folderPjifySubClose = closeSub;
+    // 窗口尺寸变化后浮层位置会失效，直接收起更稳妥
+    window.addEventListener('resize', () => { closeSub(); }, { passive: true });
+
+    // 悬停入口即展开；离开入口与浮层区域后收起（留出移动时间）
+    let hideTimer = 0;
+    const cancelHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; } };
+    const scheduleHide = () => {
+      cancelHide();
+      hideTimer = setTimeout(() => { closeSub(); }, 160);
+    };
+    subRow.addEventListener('mouseenter', () => { cancelHide(); openSub(); });
+    subRow.addEventListener('mouseleave', scheduleHide);
+    subPanel.addEventListener('mouseenter', cancelHide);
+    subPanel.addEventListener('mouseleave', scheduleHide);
+    // 点击入口：固定展开/收起（触屏或不想悬停时用）
+    subRow.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      folderClosePjify();
-      craberPromptDialog({
-        title: '新建文件夹并放入',
-        subtitle: '新建后把该项直接放进去',
-        value: '',
-        placeholder: '文件夹名称',
-        confirmText: '创建',
-        onOk: (v) => {
-          folderCreate(v, key);
-          navToast('已新建并放入');
-        }
-      });
+      if (subOpen) closeSub(); else { cancelHide(); openSub(); }
     });
-    m.append(nw);
+
+    m.append(subRow);
 
     document.body.appendChild(m);
     const r = anchor.getBoundingClientRect();
@@ -7637,6 +9852,10 @@
   }
 
   function folderClosePjify() {
+    if (folderPjifySubClose) {
+      try { folderPjifySubClose(); } catch (e) { /* 忽略 */ }
+      folderPjifySubClose = null;
+    }
     if (folderPjifyEl && folderPjifyEl.parentElement) folderPjifyEl.remove();
     folderPjifyEl = null;
   }
@@ -7841,7 +10060,6 @@
   // 固定右下角会挡内容，改成用户可随手拖到不碍事的位置。
   // 导出按钮与它的下拉菜单（都挂在原生顶栏里，见 mountFab）。
   let fabEl = null;
-  let fabMenuEl = null;
 
   // 界面增强开关。默认都开，用户可各自关掉。
   // 关掉必须真的卸载（移除已注入的节点 + 停掉后续挂载），而不是只隐藏 ——
@@ -7983,8 +10201,7 @@
     // 能导出内容的地方有意义。
     if (!isConvPage()) {
       if (fabEl && fabEl.isConnected) fabEl.remove();
-      if (fabMenuEl) fabCloseMenu();
-      applyHeaderSpacing();   // 顺路保持吸顶条让位（同一处维护）
+        applyHeaderSpacing();   // 顺路保持吸顶条让位（同一处维护）
       return false;
     }
     const host = fabHost();
@@ -8003,88 +10220,14 @@
       fabEl.setAttribute('aria-haspopup', 'true');
       fabEl.setAttribute('aria-expanded', 'false');
       fabEl.addEventListener('click', (e) => {
-        // 点在按钮上只切菜单；不要冒泡到页面（顶栏里有别的手势处理）
+        // 点在按钮上只开面板；不要冒泡到页面（顶栏里有别的手势处理）
         e.stopPropagation();
-        fabToggleMenu();
+        craberOpenSettings();
       });
     }
     host.appendChild(fabEl);
 
-    if (!fabMenuEl) {
-      fabMenuEl = el('div', 'craber-fab-menu');
-      const panel = el('div', 'craber-fab-panel');
 
-      const mk = (label, title, handler, cls) => {
-        const b = el('button', 'craber-fab-item' + (cls ? ' ' + cls : ''));
-        b.type = 'button';
-        b.textContent = label;
-        b.title = title;
-        b.addEventListener('click', () => { fabCloseMenu(); handler(); });
-        return b;
-      };
-      panel.append(
-        mk('会话列表', '获取并导出多个会话', openConvPanel),
-        mk('导出当前', '导出当前会话的回合', openPanel)
-      );
-
-      // 界面增强开关：关掉后对应功能立即卸载，不留半个残件。
-      // 状态存 localStorage，刷新后保持。
-      panel.append(el('div', 'craber-fab-sep'));
-      const mkToggle = (key, label, title) => {
-        const row = el('button', 'craber-fab-item craber-fab-toggle');
-        row.type = 'button';
-        row.title = title;
-        row.setAttribute('role', 'switch');
-        const lab = el('span', 'craber-fab-toggle-label', label);
-        const sw = el('span', 'craber-fab-switch');
-        row.append(lab, sw);
-        const sync = () => {
-          const on = !!uiPrefs[key];
-          row.setAttribute('aria-checked', on ? 'true' : 'false');
-          row.classList.toggle('on', on);
-        };
-        row.addEventListener('click', (e) => {
-          // 切换开关不收起菜单，方便连着拨两个
-          e.stopPropagation();
-          setUiPref(key, !uiPrefs[key]);
-          sync();
-        });
-        sync();
-        return row;
-      };
-      panel.append(
-        mkToggle('navRail', '节点导航', '在会话左侧显示回合节点轨道，可悬停预览、点击跳转'),
-        mkToggle('projectUI', '项目 UI 优化', '在顶栏里显示项目对话入口与当前对话位置'),
-        mkToggle('notify', '完成通知', '回复生成完成后发送浏览器通知（首次开启需允许通知权限）'),
-        mkToggle('folders', '侧栏文件夹', '在侧栏「项目」下方显示自定义文件夹，可把项目与会话归入其中'),
-        mkToggle('lockProjExpand', '锁定项目展开', '阻止原生「项目」区自动展开：进入项目内会话时保持你手动收起的状态（需开启侧栏文件夹）')
-      );
-
-      panel.append(el('div', 'craber-fab-sep'));
-      panel.append(mk('收起', '收起菜单', () => {}, 'craber-fab-collapse'));
-      // 版本脚注：一眼确认装的是哪版，省得"改了没生效"时来回猜。
-      // 优先取 GM_info（脚本管理器登记的真实版本），拿不到退回头部常量。
-      let ver = '';
-      try {
-        const info = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script : null;
-        ver = info ? (info.version || '') : '';
-      } catch (e) { /* GM_info 不可用 */ }
-      if (!ver) ver = CRABER_VERSION;
-      const foot = el('div', 'craber-fab-ver', 'craber v' + ver);
-      foot.title = '脚本版本';
-      panel.append(foot);
-      fabMenuEl.append(panel);
-      document.body.appendChild(fabMenuEl);
-
-      // 点空白处收起
-      document.addEventListener('click', (e) => {
-        if (!fabMenuEl.classList.contains('craber-open')) return;
-        if (fabMenuEl.contains(e.target)) return;
-        if (fabEl && fabEl.contains(e.target)) return;
-        fabCloseMenu();
-      }, true);
-      window.addEventListener('resize', fabCloseMenu);
-    }
 
     // 必须在 appendChild 之后再设主题色：元素尚未入 DOM 时先跑一次 transition
     // 注册会生成一个 currentTime 停在 0 的动画，而"运行中的动画"优先级高于内联
@@ -8121,30 +10264,1598 @@
     return true;
   }
 
-  function fabToggleMenu() {
-    if (!fabMenuEl || !fabEl) return;
-    if (fabMenuEl.classList.contains('craber-open')) { fabCloseMenu(); return; }
-    // 按钮在顶栏最右，菜单右对齐才不会溢出视口。
-    //
-    // 不能读 offsetWidth 来算对齐 —— 布局未必已生效，读到的可能是 0，于是 left
-    // 退化成 r.right，菜单整个甩到视口右侧之外被裁掉（实测 left=1349 而视口只有
-    // 1280，菜单完全看不见）。菜单宽度来自 CSS 的 min-width 与内边距，是确定值；
-    // 且现在关着的菜单也常驻布局（opacity 隐藏，非 display:none），开前就能量准。
-    const r = fabEl.getBoundingClientRect();
-    const rect = fabMenuEl.getBoundingClientRect();
-    const mw = Math.round(rect.width) || 170;   // 兜底：CSS 里 min-width 是 170
-    let left = r.right - mw;                              // 右对齐，与按钮右缘齐平
-    left = Math.min(left, window.innerWidth - mw - 8);    // 夹住右边界（关键）
-    left = Math.max(8, left);                             // 再夹住左边界
-    fabMenuEl.style.top = (r.bottom + 6) + 'px';
-    fabMenuEl.style.left = Math.round(left) + 'px';
-    menuAnimateOpen(fabMenuEl);
-    fabEl.setAttribute('aria-expanded', 'true');
+  /* ============================================================
+   * 🦀 设置中心：左侧导航 + 右侧内容（多层级）
+   *
+   * 结构：左侧一级导航（不分组）+ 右侧内容，五个页面平铺：
+   *   会话列表 / 功能开关 / 连接设置 / 文件夹同步 / 会话备份
+   *
+   * 页面用「渲染函数」表达：切页时右栏整体重绘，各自持有自己的状态。
+   * 这样每个页面的代码是独立的，不会互相牵连。
+   * ========================================================== */
+
+  const CRAB_PAGES = [
+    { id: 'conv-list', label: '会话列表', render: () => craberPageConvList() },
+    { id: 'features', label: '功能开关', render: () => craberPageFeatures() },
+    { id: 'dav-conn', label: '连接设置', render: () => craberPageDavConn() },
+    { id: 'dav-sync', label: '文件夹同步', render: () => craberPageDavSync() },
+    { id: 'dav-backup', label: '会话备份', render: () => craberPageDavBackup() }
+  ];
+
+  /* 设置中心的导航图标
+   * 全部按 24 视框精确绘制，共用同一套圆角与端点，缩到 16px 依然清楚。
+   * 之前几枚是手搓的近似路径（链条两端弧长不等、同步箭头的钩子角度对不上、
+   * 云朵边缘不闭合），小尺寸下显得毛糙；这里换成几何规整的标准造型。
+   */
+  const SET_ICON = {
+    // 列表：三条等长横线 + 左侧圆点（点用 0.01 短线 + 圆头端点，直径与描边一致）
+    'conv-list': mi('<path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/>'
+      + '<path d="M4 6h.01"/><path d="M4 12h.01"/><path d="M4 18h.01"/>'),
+    // 开关：标准胶囊 + 实心旋钮（空心小圆圈在 16px 下会糊成点）
+    features: mi('<rect x="2.5" y="6.5" width="19" height="11" rx="5.5"/>'
+      + '<circle cx="8" cy="12" r="2.6" fill="currentColor" stroke="none"/>'),
+    // 连接：45° 双环链条，两段 5 半径圆弧对称，中间自然咬合
+    'dav-conn': mi('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>'
+      + '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'),
+    // 同步：环形双箭头，箭尾钩与圆弧相切，方向感直接
+    'dav-sync': mi('<path d="M21 12a9 9 0 0 0-9-9 9.7 9.7 0 0 0-6.7 2.7L3 8"/>'
+      + '<path d="M3 3.5V8h4.5"/>'
+      + '<path d="M3 12a9 9 0 0 0 9 9 9.7 9.7 0 0 0 6.7-2.7L21 16"/>'
+      + '<path d="M21 20.5V16h-4.5"/>'),
+    // 备份：闭合云体 + 云内上传箭头（箭头不越出云外，16px 下仍清楚）
+    'dav-backup': mi('<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9Z"/>'
+      + '<path d="M12 12v6"/><path d="m9 15 3-3 3 3"/>')
+  };
+
+  // 打开设置中心。pageId 可指定初始页。
+  function craberOpenSettings(pageId) {
+    folderClosePjify();
+
+    let active = pageId || 'features';
+    if (!CRAB_PAGES.some((p) => p.id === active)) active = CRAB_PAGES[0].id;
+
+    const wrap = folderEl('div', 'craber-set');
+    const nav = folderEl('nav', 'craber-set-nav');
+    const body = folderEl('div', 'craber-set-body');
+
+    const navBtns = {};
+    for (const p of CRAB_PAGES) {
+      const b = folderEl('button', 'craber-set-item');
+      b.type = 'button';
+      const ic = folderEl('span', 'craber-set-itemico');
+      ic.innerHTML = SET_ICON[p.id] || '';
+      b.append(ic, folderEl('span', 'craber-set-itemlabel', p.label));
+      b.addEventListener('click', (e) => {
+        e.preventDefault();
+        go(p.id);
+      });
+      nav.append(b);
+      navBtns[p.id] = b;
+    }
+
+    function go(id) {
+      active = id;
+      for (const k of Object.keys(navBtns)) navBtns[k].classList.toggle('on', k === id);
+      body.innerHTML = '';
+      const page = CRAB_PAGES.find((p) => p.id === id);
+      if (page) {
+        const el = page.render();
+        if (el) body.append(el);
+      }
+      body.scrollTop = 0;
+    }
+
+    wrap.append(nav, body);
+
+    craberDialog({
+      title: 'craber',
+      subtitle: '导出、界面增强与 WebDAV',
+      icon: CRAB_SVG,
+      badge: CRABER_VERSION ? 'v' + CRABER_VERSION : '',
+      body: wrap,
+      confirmText: null,
+      // 标题栏的 ×、Esc、点遮罩都能关，底部不再重复放一个「关闭」按钮
+      cancelText: null,
+      wide: true
+    });
+
+    go(active);
   }
 
-  function fabCloseMenu() {
-    menuAnimateClose(fabMenuEl);
-    if (fabEl) fabEl.setAttribute('aria-expanded', 'false');
+  // 工具栏搜索框：图标 + 无边框输入，聚焦时整块亮起
+  function craberSearchBox(placeholder, onInput) {
+    const wrap = folderEl('div', 'craber-set-searchwrap');
+    const ic = folderEl('span', 'craber-set-searchicon');
+    ic.innerHTML = mi('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>');
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.placeholder = placeholder || '';
+    inp.addEventListener('input', () => { if (onInput) onInput(inp.value); });
+    wrap.append(ic, inp);
+    return { el: wrap, input: inp };
+  }
+
+  /* 自绘下拉（替代原生 <select>）
+   * 原生 select 的弹层由系统绘制：方角、蓝色高亮、字号跟系统走，
+   * 在深色主题下还会突然变成白底，和面板整体完全不是一套。
+   * 这里用触发器 + 浮层菜单自己画：
+   *   - 菜单用 fixed 定位挂到 body 上，避开面板的 overflow 裁切
+   *   - 键盘：↑↓ 移动、Enter 选中、Esc 关闭
+   *   - 选中项左侧打勾 + 蟹绿淡底，和设置页的 chip 选中态同一套语言
+   * 返回 { el, setOptions, getValue, setValue, setDisabled }
+   */
+  // 所有自绘下拉的浮层菜单（挂在 body 上，需要跟着宿主一起回收）
+  const craberMenus = new Set();
+  function craberSweepMenus() {
+    for (const m of [...craberMenus]) {
+      if (m._craberTrigger && m._craberTrigger.isConnected) continue;
+      m.remove();
+      craberMenus.delete(m);
+    }
+  }
+
+  function craberDropdown(opts) {
+    opts = opts || {};
+    let options = (opts.options || []).slice();
+    let value = opts.value != null ? opts.value : (options[0] ? options[0].value : '');
+    let open = false;
+    let hoverIdx = -1;
+
+    const wrap = folderEl('div', 'craber-sel');
+    const trigger = folderEl('button', 'craber-sel-trigger');
+    trigger.type = 'button';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    const label = folderEl('span', 'craber-sel-label', '');
+    const caret = folderEl('span', 'craber-sel-caret');
+    caret.innerHTML = mi('<path d="M6 9.5l6 6 6-6"/>');
+    trigger.append(label, caret);
+    wrap.append(trigger);
+
+    const menu = folderEl('div', 'craber-selmenu');
+    menu.setAttribute('role', 'listbox');
+    menu.hidden = true;
+    // 挂在 body 上：面板有 overflow/transform，放里面会被裁切或定位错乱
+    document.body.append(menu);
+    // 触发器被移除（关面板 / 切页）后菜单会留在 body 上，
+    // 这里登记一下，下次创建或打开下拉时顺手清掉（不做 DOM 监听，避免性能开销）
+    craberSweepMenus();
+    menu._craberTrigger = trigger;
+    craberMenus.add(menu);
+
+    const curLabel = () => {
+      const hit = options.find((o) => String(o.value) === String(value));
+      return hit ? hit.label : (options[0] ? options[0].label : '');
+    };
+    const syncLabel = () => {
+      label.textContent = curLabel();
+      trigger.title = curLabel();
+      // 没有可选项时禁用，别留一个点开是空的触发器
+      const empty = !options.length;
+      trigger.disabled = !!opts.disabled || empty;
+      wrap.classList.toggle('craber-sel-empty', empty);
+    };
+
+    const placeMenu = () => {
+      const r = trigger.getBoundingClientRect();
+      const vh = window.innerHeight;
+      menu.style.minWidth = Math.round(r.width) + 'px';
+      menu.style.maxWidth = Math.max(Math.round(r.width), 260) + 'px';
+      menu.style.left = Math.round(r.left) + 'px';
+      // 先给个上限，量完高度再决定朝上还是朝下
+      let below = vh - r.bottom - 8;
+      let above = r.top - 8;
+      const h = menu.scrollHeight + 2;
+      const up = below < Math.min(h, 140) && above > below;
+      menu.style.maxHeight = Math.max(80, Math.min(260, up ? above : below)) + 'px';
+      if (up) {
+        menu.style.top = '';
+        menu.style.bottom = Math.round(vh - r.top + 6) + 'px';
+        menu.classList.add('craber-selmenu-up');
+      } else {
+        menu.style.bottom = '';
+        menu.style.top = Math.round(r.bottom + 6) + 'px';
+        menu.classList.remove('craber-selmenu-up');
+      }
+    };
+
+    const paintMenu = () => {
+      menu.innerHTML = '';
+      options.forEach((o, i) => {
+        const on = String(o.value) === String(value);
+        const item = folderEl('div', 'craber-selopt' + (on ? ' on' : '')
+          + (i === hoverIdx ? ' hi' : ''));
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', on ? 'true' : 'false');
+        const t = folderEl('span', 'craber-selopt-txt', o.label);
+        const tick = folderEl('span', 'craber-selopt-tick');
+        tick.innerHTML = FOLDER_CHECK;
+        item.append(t, tick);
+        item.addEventListener('mouseenter', () => {
+          hoverIdx = i;
+          menu.querySelectorAll('.craber-selopt').forEach((n, k) => n.classList.toggle('hi', k === i));
+        });
+        item.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          choose(o.value);
+        });
+        menu.append(item);
+      });
+      if (!options.length) menu.append(folderEl('div', 'craber-selopt-none', '没有可选项'));
+    };
+
+    const openMenu = () => {
+      if (open || trigger.disabled) return;
+      craberSweepMenus();
+      open = true;
+      hoverIdx = options.findIndex((o) => String(o.value) === String(value));
+      paintMenu();
+      menu.hidden = false;
+      placeMenu();
+      // 选中项滚进可视区：几十个项目时否则一打开看不见当前选的是哪个
+      const on = menu.querySelector('.craber-selopt.on');
+      if (on) {
+        const mt = menu.getBoundingClientRect().top;
+        const ot = on.getBoundingClientRect().top;
+        menu.scrollTop = Math.max(0, menu.scrollTop + (ot - mt) - 6);
+      }
+      wrap.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+      requestAnimationFrame(() => menu.classList.add('show'));
+    };
+
+    const closeMenu = () => {
+      if (!open) return;
+      open = false;
+      menu.classList.remove('show');
+      wrap.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+      // 等淡出结束再隐藏，避免"啪"地消失
+      const m = menu;
+      setTimeout(() => { if (!open) m.hidden = true; }, 120);
+    };
+
+    const choose = (v) => {
+      value = v;
+      syncLabel();
+      closeMenu();
+      trigger.focus();
+      if (opts.onChange) opts.onChange(v);
+    };
+
+    trigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (open) closeMenu(); else openMenu();
+    });
+    // 键盘操作：方向键在菜单里移动，Enter 选中，Esc 收起
+    trigger.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { closeMenu(); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!open) { openMenu(); return; }
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        hoverIdx = (hoverIdx + step + options.length) % options.length;
+        const items = menu.querySelectorAll('.craber-selopt');
+        items.forEach((n, k) => n.classList.toggle('hi', k === hoverIdx));
+        if (items[hoverIdx]) items[hoverIdx].scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === ' ') && open) {
+        e.preventDefault();
+        if (options[hoverIdx]) choose(options[hoverIdx].value);
+      }
+    });
+
+    // 点别处 / 滚动 / 缩放 / Esc：菜单必须收起，否则会飘在错位的地方
+    const onDocDown = (e) => {
+      if (!open) return;
+      if (wrap.contains(e.target) || menu.contains(e.target)) return;
+      closeMenu();
+    };
+    document.addEventListener('pointerdown', onDocDown, true);
+    window.addEventListener('scroll', (e) => {
+      if (!open) return;
+      // 菜单自身滚动（把选中项滚进视野）不能算页面滚动，否则一打开就自己关掉
+      const t = e.target;
+      if (t === menu) return;
+      if (t && t.nodeType === 1 && menu.contains(t)) return;
+      closeMenu();
+    }, true);
+    window.addEventListener('resize', () => { if (open) closeMenu(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && open) closeMenu();
+    }, true);
+
+    syncLabel();
+
+    return {
+      el: wrap,
+      menu,
+      getValue: () => value,
+      setValue: (v) => { value = v; syncLabel(); },
+      setOptions: (list) => {
+        options = (list || []).slice();
+        // 选中项没了就退回第一项
+        if (!options.some((o) => String(o.value) === String(value)) && options.length) {
+          value = options[0].value;
+        }
+        syncLabel();
+        if (open) { paintMenu(); placeMenu(); }
+      },
+      setDisabled: (d) => { opts.disabled = !!d; syncLabel(); },
+      close: closeMenu
+    };
+  }
+
+  // 加载中的占位行：转圈 + 文案，居中显示在列表区域
+  function craberLoadingRow(text) {
+    const w = folderEl('div', 'craber-set-loading');
+    w.append(folderEl('span', 'craber-spin'));
+    w.append(folderEl('span', 'craber-set-loadingtext', text || '加载中…'));
+    return w;
+  }
+
+  // 页面公共外壳：标题 + 说明 + 内容
+  function craberPage(title, desc, ...kids) {
+    const p = folderEl('div', 'craber-set-page');
+    const hd = folderEl('div', 'craber-set-pagehd');
+    hd.append(folderEl('h3', 'craber-set-pagetitle', title));
+    if (desc) hd.append(folderEl('div', 'craber-set-pagedesc', desc));
+    p.append(hd);
+    for (const k of kids) if (k) p.append(k);
+    return p;
+  }
+
+  /* ---------- 设置中心：各页面 ---------- */
+
+  // 页面 1：会话列表（在设置中心内直接勾选并批量导出）
+  function craberPageConvList() {
+    const p = craberPage('会话列表', '按时间与项目筛选后勾选导出；列表有缓存，需要最新数据时点刷新。');
+    p.classList.add('craber-set-fill');
+
+    let metas = [];
+    let loading = false;
+    let loadErr = null;
+    let kw = '';
+    let cacheHit = false;
+
+    /* 筛选状态
+     * 原来这页只有搜索框，旧「多会话导出」面板里的项目 / 日期筛选没跟着搬过来，
+     * 于是按项目挑会话的功能就丢了。这里按同样的语义补回：
+     *   projFilter: 'all' | 'none' | <gizmo_id>
+     *   dateRange : 0（全部）| 7 | 15 | 30 | 'custom'
+     */
+    let projFilter = convFilter.projFilter;
+    let dateRange = convFilter.dateRange;
+    let dateFrom = convFilter.dateFrom;
+    let dateTo = convFilter.dateTo;
+    // 任何一项变化都写回模块级状态，切到别的页再回来还是同一套筛选
+    const saveFilter = () => {
+      convFilter.projFilter = projFilter;
+      convFilter.dateRange = dateRange;
+      convFilter.dateFrom = dateFrom;
+      convFilter.dateTo = dateTo;
+    };
+
+    // 工具栏：搜索 + 全选/全不选 + 刷新 + 导出
+    const toolbar = folderEl('div', 'craber-set-toolbar');
+    const search = craberSearchBox('搜索标题…', (v) => {
+      kw = String(v || '').trim().toLowerCase();
+      paint();
+    });
+    toolbar.append(search.el);
+
+    const selAll = folderEl('button', 'craber-set-btn', '全选');
+    selAll.type = 'button';
+    const selNone = folderEl('button', 'craber-set-btn', '全不选');
+    selNone.type = 'button';
+
+    // 刷新：只在需要时重新拉列表（默认走缓存）
+    const refreshBtn = folderEl('button', 'craber-set-btn craber-set-iconbtn');
+    refreshBtn.type = 'button';
+    refreshBtn.title = '重新拉取会话列表';
+    refreshBtn.setAttribute('aria-label', '刷新会话列表');
+    refreshBtn.innerHTML = mi('<path d="M20 11a8 8 0 0 1-13.7 5.6"/>'
+      + '<path d="M4 13a8 8 0 0 1 13.7-5.6"/>'
+      + '<path d="M4 5v4h4"/><path d="M20 19v-4h-4"/>');
+
+    const expBtn = folderEl('button', 'craber-set-btn craber-set-btn-primary', '导出所选');
+    expBtn.type = 'button';
+    toolbar.append(selAll, selNone, refreshBtn, expBtn);
+    p.append(toolbar);
+
+    /* 筛选条：日期快捷档 + 项目下拉
+     * 日期用 chip（和备份页"备份方式"同一套控件），项目用下拉——
+     * 项目数量不定且名字可能很长，chip 会撑成两三行。
+     */
+    const filterBar = folderEl('div', 'craber-set-filters');
+
+    // 日期
+    const dateWrap = folderEl('div', 'craber-set-filter');
+    dateWrap.append(folderEl('span', 'craber-set-filterlbl', '时间'));
+    const dateChips = folderEl('div', 'craber-dlg-chips');
+    const mkDateChip = (val, text) => {
+      const lab = folderEl('label', 'craber-dlg-chip');
+      const r = document.createElement('input');
+      r.type = 'radio';
+      r.name = 'craber-conv-date';
+      r.value = String(val);
+      // 'all' 在状态里存成 0，不能直接比字符串
+      const isCur = val === 'all' ? dateRange === 0 : String(dateRange) === String(val);
+      if (isCur) r.checked = true;
+      lab.append(r, folderEl('span', null, text));
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        dateRange = val === 'all' ? 0 : (val === 'custom' ? 'custom' : Number(val));
+        dateCustom.hidden = val !== 'custom';
+        saveFilter();
+        paint();
+      });
+      dateChips.append(lab);
+      return lab;
+    };
+    mkDateChip('all', '全部');
+    mkDateChip(7, '近 7 天');
+    mkDateChip(15, '近 15 天');
+    mkDateChip(30, '近 30 天');
+    mkDateChip('custom', '自定义');
+
+    // 自定义区间：只在选中「自定义」时出现（回到本页时保持上次的状态）
+    const dateCustom = folderEl('div', 'craber-set-datecustom');
+    dateCustom.hidden = dateRange !== 'custom';
+    const mkDateInput = (val, onPick) => {
+      const i = document.createElement('input');
+      i.type = 'date';
+      i.className = 'craber-set-dateinput';
+      i.value = val || '';
+      i.addEventListener('change', () => { onPick(i.value); saveFilter(); paint(); });
+      return i;
+    };
+    const fromIn = mkDateInput(dateFrom, (v) => { dateFrom = v; });
+    const toIn = mkDateInput(dateTo, (v) => { dateTo = v; });
+    dateCustom.append(fromIn, folderEl('span', 'craber-set-datesep', '至'), toIn);
+    // 自定义行自己占一行（宽度不够时不再把「项目」顶到第三行）
+    dateWrap.append(dateChips);
+    const dateRow = folderEl('div', 'craber-set-filterrow');
+    dateRow.append(dateWrap, dateCustom);
+
+    // 项目：自绘下拉（原生 select 的弹层是系统白框 + 蓝底，跟面板完全不是一套）
+    const projWrap = folderEl('div', 'craber-set-filter');
+    projWrap.append(folderEl('span', 'craber-set-filterlbl', '项目'));
+    const projDD = craberDropdown({
+      options: [{ value: 'all', label: '全部项目' }, { value: 'none', label: '无项目' }],
+      value: projFilter,
+      onChange: (v) => {
+        projFilter = v || 'all';
+        saveFilter();
+        paint();
+      }
+    });
+    projDD.el.setAttribute('aria-label', '按项目筛选');
+    projWrap.append(projDD.el);
+
+    filterBar.append(dateRow, projWrap);
+    p.append(filterBar);
+
+    // 项目名缓存：gizmo_id -> 名字（异步补，不阻塞首屏）
+    const projNames = Object.create(null);
+    let projFilled = '';
+    const fillProjectOptions = () => {
+      const gids = [];
+      const seen = Object.create(null);
+      for (const m of metas) {
+        const gid = getProjectGizmoId(m);
+        if (gid && !seen[gid]) { seen[gid] = 1; gids.push(gid); }
+      }
+      // 没有项目会话时整行隐藏，别留一个只有"全部/无项目"的空下拉
+      const sig = gids.slice().sort().join(',');
+      projWrap.hidden = !gids.length;
+      if (!gids.length) { projFilter = 'all'; return; }
+      if (sig === projFilled) return;
+      projFilled = sig;
+
+      const build = () => {
+        const opts = gids
+          .map((gid) => ({ gid, name: projNames[gid] || API._gizmoCache[gid] || gid }))
+          .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+        // 之前选的项目若已不在列表里就退回"全部"（setOptions 内部也会兜这个底）
+        if (projFilter !== 'all' && projFilter !== 'none'
+          && !opts.some((o) => o.gid === projFilter)) {
+          projFilter = 'all';
+        }
+        projDD.setOptions([
+          { value: 'all', label: '全部项目' },
+          { value: 'none', label: '无项目' },
+          ...opts.map((o) => ({ value: o.gid, label: o.name }))
+        ]);
+        projDD.setValue(projFilter);
+        // 名字补齐后重绘一次（行内要显示项目名）
+        if (!loading) paint();
+      };
+
+      // 先就地渲染（有缓存的名字直接用），再异步补齐缺失的
+      build();
+      const missing = gids.filter((gid) => !projNames[gid] && !API._gizmoCache[gid]);
+      if (!missing.length) return;
+      Promise.all(missing.map((gid) => API.getGizmoName(gid)
+        .then((nm) => { if (nm) projNames[gid] = nm; })
+        .catch(() => null))).then(() => { projFilled = ''; fillProjectOptions(); });
+    };
+
+    const listBox = folderEl('div', 'craber-set-convlist');
+    const status = folderEl('div', 'craber-dav-status', '');
+    p.append(listBox, status);
+
+    const setStatus = (m, k) => {
+      status.textContent = m;
+      status.className = 'craber-dav-status' + (k ? ' ' + k : '');
+    };
+
+    // 勾选状态存模块级：切到别的页面再回来、或刷新列表后都还在
+    const isSel = (id) => !convSelOff.has(id);
+
+    // 会话的更新时间是否落在当前档位内（'all' 时不做判断）
+    const inDateRange = (m) => {
+      if (dateRange === 0) return true;
+      const ts = Number(m.update_time) || 0;
+      // 没有时间的会话只在「全部」时才显示，否则无从判断
+      if (!ts) return false;
+      if (dateRange === 'custom') {
+        if (dateFrom) {
+          const f = new Date(dateFrom + 'T00:00:00').getTime();
+          if (ts < f) return false;
+        }
+        if (dateTo) {
+          const t = new Date(dateTo + 'T23:59:59').getTime();
+          if (ts > t) return false;
+        }
+        return true;
+      }
+      return ts >= Date.now() - Number(dateRange) * 864e5;
+    };
+
+    const shown = () => metas.filter((m) => {
+      if (kw && String(m.title || '').toLowerCase().indexOf(kw) < 0) return false;
+      if (!inDateRange(m)) return false;
+      if (projFilter !== 'all') {
+        const gid = getProjectGizmoId(m);
+        if (projFilter === 'none') return !gid;
+        if (gid !== projFilter) return false;
+      }
+      return true;
+    });
+
+    // 是否有任意筛选生效（用于状态行的"筛选 N"提示）
+    const filterActive = () => !!kw || dateRange !== 0 || projFilter !== 'all';
+
+    // 已选数量：始终可见，勾选/取消即时刷新
+    const selCount = folderEl('span', 'craber-set-selcount', '');
+    toolbar.append(selCount);
+    const syncCount = () => {
+      const n = metas.filter((m) => isSel(m.id)).length;
+      const visible = shown().length;
+      const filtered = filterActive() && visible !== metas.length;
+      selCount.textContent = metas.length
+        ? ('已选 ' + n + ' / ' + metas.length + (filtered ? ' · 筛选 ' + visible : ''))
+        : '';
+      expBtn.disabled = !n || loading;
+      selAll.disabled = loading || !metas.length;
+      selNone.disabled = loading || !metas.length;
+    };
+
+    // 数据时间提示：缓存命中时说明"这是什么时候的"，刚拉完则说明"已更新"
+    const setCacheStatus = () => {
+      const c = convCacheLoad();
+      if (!c || !c.at) { setStatus(''); return; }
+      setStatus('缓存 · ' + davFmtTime(c.at) + ' · 点右侧刷新可重新拉取');
+    };
+
+    const paint = () => {
+      listBox.innerHTML = '';
+      if (loading) {
+        listBox.append(craberLoadingRow('正在读取会话列表…'));
+        syncCount();
+        return;
+      }
+      if (loadErr) {
+        listBox.append(folderEl('div', 'craber-set-note', loadErr));
+        syncCount();
+        return;
+      }
+      if (!metas.length) {
+        listBox.append(folderEl('div', 'craber-set-note', '没有会话'));
+        syncCount();
+        return;
+      }
+      const rows = shown();
+      if (!rows.length) { listBox.append(folderEl('div', 'craber-set-note', '没有匹配的会话')); syncCount(); return; }
+      rows.forEach((m) => {
+        const row = folderEl('label', 'craber-set-convrow');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = isSel(m.id);
+        cb.addEventListener('change', () => {
+          if (cb.checked) convSelOff.delete(m.id); else convSelOff.add(m.id);
+          syncCount();
+        });
+        // 自绘复选框：原生控件在深色主题下几乎不可见
+        const box = folderEl('span', 'craber-box');
+        const main = folderEl('div', 'craber-set-turnmain');
+        main.append(folderEl('span', 'craber-set-turnq', m.title || m.id));
+        // 项目会话补一行项目名：多项目混在一起时，光看标题分不出归属
+        const gid = getProjectGizmoId(m);
+        const pname = gid ? (projNames[gid] || API._gizmoCache[gid] || '') : '';
+        if (pname) main.append(folderEl('span', 'craber-set-turnproj', pname));
+        const ts = Number(m.update_time) || 0;
+        // 日期挪到行尾只到天：标题一行放得下更多字，右侧一列也便于扫读
+        row.append(cb, box, main);
+        if (ts) row.append(folderEl('span', 'craber-set-rowdate', davFmtDay(ts)));
+        listBox.append(row);
+      });
+      syncCount();
+    };
+
+    // 拉取（force=true 时忽略缓存）
+    const load = async (force) => {
+      if (!force) {
+        const c = convCacheLoad();
+        if (convCacheFresh(c)) {
+          metas = c.items.slice();
+          cacheHit = true;
+          loading = false;
+          fillProjectOptions();
+          paint();
+          setCacheStatus();
+          return;
+        }
+      }
+      cacheHit = false;
+      loading = true;
+      loadErr = null;
+      refreshBtn.classList.add('craber-spinning');
+      refreshBtn.disabled = true;
+      paint();
+      setStatus(force ? '正在刷新…' : '正在读取会话列表…', '');
+      try {
+        metas = await fetchAllConversations((n, total) => {
+          setStatus('读取中 ' + n + '/' + (total || '…'), '');
+        });
+        convCacheSave(metas);
+        // 列表变了：把已经不存在的 id 从"取消勾选"集合里清掉，
+        // 免得同名 id 之后再出现时莫名其妙是未勾选状态
+        const alive = new Set(metas.map((m) => m.id));
+        for (const id of [...convSelOff]) if (!alive.has(id)) convSelOff.delete(id);
+        fillProjectOptions();
+      } catch (e) {
+        loadErr = '读取失败：' + (e && e.message ? e.message : '未知错误');
+        // 有缓存就先用缓存顶着，总比一片空白好
+        const c = convCacheLoad();
+        if (c && c.items.length) {
+          metas = c.items.slice();
+          cacheHit = true;
+          loadErr = null;
+          fillProjectOptions();
+        }
+      } finally {
+        loading = false;
+        refreshBtn.classList.remove('craber-spinning');
+        refreshBtn.disabled = false;
+        paint();
+        if (loadErr) setStatus('刷新失败，请稍后重试', 'err');
+        else if (cacheHit) setCacheStatus();
+        else {
+          const c = convCacheLoad();
+          setStatus('已更新 · ' + davFmtTime(c ? c.at : Date.now()), 'ok');
+        }
+      }
+    };
+
+    load(false);
+
+    refreshBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (loading) return;
+      load(true);
+    });
+
+    selAll.addEventListener('click', (e) => {
+      e.preventDefault();
+      shown().forEach((m) => convSelOff.delete(m.id));
+      paint();
+    });
+    selNone.addEventListener('click', (e) => {
+      e.preventDefault();
+      shown().forEach((m) => convSelOff.add(m.id));
+      paint();
+    });
+    expBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const picked = metas.filter((m) => isSel(m.id));
+      if (!picked.length) { setStatus('没有勾选任何会话', 'err'); return; }
+      expBtn.disabled = true;
+      expBtn.textContent = '导出中…';
+      try {
+        await exportConversations(picked, (done, total, note) => {
+          setStatus(note || ('导出中 ' + done + '/' + total), '');
+        });
+        setStatus('已导出 ' + picked.length + ' 个会话', 'ok');
+      } catch (err) {
+        setStatus('导出失败：' + (err && err.message ? err.message : '未知错误'), 'err');
+      } finally {
+        syncCount();
+      }
+    });
+
+    return p;
+  }
+
+  // 页面 2：功能开关
+  function craberPageFeatures() {
+    const p = craberPage('功能开关', '关掉后对应功能立即卸载，刷新后保持。');
+    const list = folderEl('div', 'craber-set-list');
+    /* 每行一枚图标：都按 24 视框同一套圆角绘制。
+     * 原来"项目 UI 优化"画成信用卡、锁的锁体偏胖，和导航那套不像一家人。
+     */
+    const items = [
+      // 节点导航：竖向轨道 + 两个节点 + 对应的展开行
+      ['navRail', '节点导航', '在会话左侧显示回合节点轨道，可悬停预览、点击跳转',
+        '<path d="M6.5 4v16"/>'
+          + '<circle cx="6.5" cy="8.5" r="2" fill="currentColor" stroke="none"/>'
+          + '<circle cx="6.5" cy="15.5" r="2" fill="currentColor" stroke="none"/>'
+          + '<path d="M11.5 8.5H20"/><path d="M11.5 15.5H20"/>'],
+      // 项目 UI：顶栏 + 内容区（版式示意）
+      ['projectUI', '项目 UI 优化', '在顶栏里显示项目对话入口与当前对话位置',
+        '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/>'
+          + '<path d="M3 9.5h18"/>'
+          + '<path d="M6.5 6.9h3"/><path d="M6.5 12.8h6"/><path d="M6.5 16h4"/>'],
+      // 完成通知：铃铛（钟形 + 底部铃舌，下缘收窄成真实铃口）
+      ['notify', '完成通知', '回复生成完成后发送浏览器通知',
+        '<path d="M18 9.5a6 6 0 1 0-12 0c0 4-1.5 5.5-2.5 6.5h17c-1-1-2.5-2.5-2.5-6.5z"/>'
+          + '<path d="M10 19.5a2.2 2.2 0 0 0 4 0"/>'],
+      // 侧栏文件夹：与侧栏一致的小文件夹
+      ['folders', '侧栏文件夹', '在侧栏「项目」上方显示自定义文件夹',
+        '<path d="' + FOLDER_PATH + '"/>'],
+      // 锁定项目展开：锁（锁体 14 高、锁梁与锁体同宽，比例标准）
+      ['lockProjExpand', '锁定项目展开', '阻止原生「项目」区自动展开',
+        '<rect x="4" y="10" width="16" height="10.5" rx="2.6"/>'
+          + '<path d="M8 10V7.6a4 4 0 0 1 8 0V10"/>'
+          + '<path d="M12 14v3"/>']
+    ];
+    for (const [key, label, desc, iconPath] of items) {
+      // craber-fab-toggle 是开关选中态的选择器前缀（.craber-fab-toggle.on），
+      // 缺了它开关永远显示为关闭
+      const row = folderEl('button', 'craber-set-row craber-set-switch craber-fab-toggle');
+      row.type = 'button';
+      row.setAttribute('role', 'switch');
+      const ico = folderEl('span', 'craber-set-ico');
+      ico.innerHTML = mi(iconPath);
+      const main = folderEl('div', 'craber-set-rowmain');
+      main.append(folderEl('span', 'craber-set-rowlabel', label));
+      main.append(folderEl('span', 'craber-set-rowdesc', desc));
+      const sw = folderEl('span', 'craber-fab-switch');
+      row.append(ico, main, sw);
+      const sync = () => {
+        const on = !!uiPrefs[key];
+        row.setAttribute('aria-checked', on ? 'true' : 'false');
+        row.classList.toggle('on', on);
+      };
+      row.addEventListener('click', (e) => {
+        e.preventDefault();
+        setUiPref(key, !uiPrefs[key]);
+        sync();
+      });
+      sync();
+      list.append(row);
+    }
+    p.append(list);
+    return p;
+  }
+
+  // 页面 3：WebDAV 连接设置
+  function craberPageDavConn() {
+    const cfg = davLoad();
+    const p = craberPage('连接设置', '数据存在你自己的网盘里，只同步文件夹结构。');
+
+    const box = folderEl('div', 'craber-set-form');
+    // 横向行：左边标签+说明，右边输入框
+    const mkField = (label, hint, value, ph, type) => {
+      const w = folderEl('div', 'craber-set-field');
+      const col = folderEl('div', 'craber-set-fieldcol');
+      col.append(folderEl('div', 'craber-set-label', label));
+      if (hint) col.append(folderEl('div', 'craber-set-hint', hint));
+      const ctrl = folderEl('div', 'craber-set-ctrl');
+      const inp = document.createElement('input');
+      inp.type = type || 'text';
+      inp.className = 'craber-dlg-input';
+      inp.value = value || '';
+      if (ph) inp.placeholder = ph;
+      ctrl.append(inp);
+      w.append(col, ctrl);
+      box.append(w);
+      return inp;
+    };
+    const urlIn = mkField('服务器地址', 'WebDAV 的根地址', cfg.url, 'https://example.com/dav/');
+    const userIn = mkField('用户名', '', cfg.user, '一般就是 WebDAV 的登录名');
+    const passIn = mkField('密码', '部分服务要填应用密码', cfg.pass, '••••••••', 'password');
+
+    const status = folderEl('div', 'craber-dav-status', '');
+    const setStatus = (m, k) => {
+      status.textContent = m;
+      status.className = 'craber-dav-status' + (k ? ' ' + k : '');
+    };
+    p.append(box, status);
+
+    const collect = () => {
+      const c = davLoad();
+      c.url = urlIn.value.trim();
+      c.user = userIn.value.trim();
+      c.pass = passIn.value;
+      return c;
+    };
+
+    const bar = folderEl('div', 'craber-set-actions');
+    const testBtn = folderEl('button', 'craber-set-btn', '测试连接');
+    testBtn.type = 'button';
+    testBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const c = collect();
+      if (!c.url) { setStatus('请先填写服务器地址', 'err'); return; }
+      const old = testBtn.textContent;
+      testBtn.disabled = true;
+      testBtn.textContent = '测试中…';
+      setStatus('正在连接…', '');
+      try {
+        await davTest(c);
+        setStatus('连接成功 ✓ 地址与凭证可用', 'ok');
+      } catch (err) {
+        setStatus(err && err.message ? err.message : '连接失败', 'err');
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = old;
+      }
+    });
+
+    const saveBtn = folderEl('button', 'craber-set-btn craber-set-btn-primary', '保存');
+    saveBtn.type = 'button';
+    saveBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      davSave(collect());
+      setStatus('已保存', 'ok');
+    });
+
+    bar.append(testBtn, saveBtn);
+    p.append(bar);
+    return p;
+  }
+
+  /* ---------- 页面 4：文件夹同步 ---------- */
+  function craberPageDavSync() {
+    const cfg = davLoad();
+    const p = craberPage('文件夹同步', '按文件夹名合并：两边各有的都保留，同名的把条目并起来。');
+
+    const notReady = () => {
+      if (!cfg.url) {
+        p.append(folderEl('div', 'craber-set-note', '还没配置服务器，请先到「连接设置」填写地址与账号。'));
+        return true;
+      }
+      if (!uiPrefs.folders) {
+        p.append(folderEl('div', 'craber-set-note', '「侧栏文件夹」功能当前是关闭的，开启后才有内容可同步。'));
+      }
+      return false;
+    };
+
+    // 本地概况：让用户知道"同步的是什么东西"
+    const folders = (folderData && folderData.folders) || [];
+    const itemCount = folders.reduce((n, f) => n + (Array.isArray(f.items) ? f.items.length : 0), 0);
+    const info = folderEl('div', 'craber-set-stats');
+    const stat = (label, value) => {
+      const c = folderEl('div', 'craber-set-stat');
+      c.append(folderEl('div', 'craber-set-statnum', String(value)));
+      c.append(folderEl('div', 'craber-set-statlbl', label));
+      return c;
+    };
+    info.append(
+      stat('文件夹', folders.length),
+      stat('条目', itemCount),
+      stat('上次同步', cfg.lastSync ? davFmtTime(cfg.lastSync) : '—')
+    );
+    p.append(info);
+
+    if (notReady()) return p;
+
+    const status = folderEl('div', 'craber-dav-status', '');
+    const setStatus = (m, k) => {
+      status.textContent = m;
+      status.className = 'craber-dav-status' + (k ? ' ' + k : '');
+    };
+
+    // 三种方向：合并 / 只拉 / 只推
+    const bar = folderEl('div', 'craber-set-actions');
+    const runBtn = (label, dir, primary, title) => {
+      const b = folderEl('button', 'craber-set-btn' + (primary ? ' craber-set-btn-primary' : ''), label);
+      b.type = 'button';
+      if (title) b.title = title;
+      b.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const all = bar.querySelectorAll('button');
+        all.forEach((x) => { x.disabled = true; });
+        const old = b.textContent;
+        b.textContent = '同步中…';
+        setStatus('');
+        try {
+          await davSync(dir);
+          setStatus('完成', 'ok');
+        } catch (err) {
+          setStatus(err && err.message ? err.message : '同步失败', 'err');
+        } finally {
+          all.forEach((x) => { x.disabled = false; });
+          b.textContent = old;
+        }
+      });
+      return b;
+    };
+    bar.append(
+      runBtn('双向同步', 'both', true, '取远端并合并，然后回写'),
+      runBtn('仅从远端拉取', 'pull', false, '只把远端变更应用到本地'),
+      runBtn('仅推送到远端', 'push', false, '只把本地变更写到远端')
+    );
+    p.append(bar, status);
+
+    // 同步记录（带详细变更）
+    const logHead = folderEl('div', 'craber-dav-loghead');
+    logHead.append(folderEl('span', 'craber-dav-logtitle', '同步记录'));
+    const logMeta = folderEl('span', 'craber-dav-logmeta', '');
+    const clearBtn = folderEl('button', 'craber-dav-clear', '清空');
+    clearBtn.type = 'button';
+    logHead.append(logMeta, clearBtn);
+
+    const logList = folderEl('div', 'craber-dav-loglist');
+    const renderLog = () => {
+      const rows = davLogLoad();
+      logList.innerHTML = '';
+      logMeta.textContent = rows.length ? (rows.length + ' 条') : '';
+      if (!rows.length) {
+        logList.append(folderEl('div', 'craber-dav-logempty', '还没有同步记录'));
+        return;
+      }
+      for (const r of rows) {
+        const row = folderEl('div', 'craber-dav-logrow' + (r.ok ? '' : ' err'));
+        row.append(folderEl('span', 'craber-dav-logdot'));
+        const main = folderEl('div', 'craber-dav-logmain');
+        const line = folderEl('div', 'craber-dav-logline');
+        line.append(folderEl('span', 'craber-dav-logname',
+          (r.ok ? '✓ ' : '✗ ') + (r.action || '同步')));
+        const add = Number(r.add) || 0;
+        const del = Number(r.del) || 0;
+        if (add > 0) line.append(folderEl('span', 'craber-dav-chip add', '+' + add));
+        if (del > 0) line.append(folderEl('span', 'craber-dav-chip del', '-' + del));
+        main.append(line);
+        // 细分：文件夹与条目分别计数，比笼统一个数字有用
+        const d = r.diff;
+        if (d && (d.folderAdd || d.folderDel || d.itemAdd || d.itemDel)) {
+          const det = [];
+          if (d.folderAdd) det.push('文件夹 +' + d.folderAdd);
+          if (d.folderDel) det.push('文件夹 -' + d.folderDel);
+          if (d.itemAdd) det.push('条目 +' + d.itemAdd);
+          if (d.itemDel) det.push('条目 -' + d.itemDel);
+          main.append(folderEl('div', 'craber-dav-logdetail', det.join(' · ')));
+        } else if (r.detail) {
+          main.append(folderEl('div', 'craber-dav-logdetail', r.detail));
+        }
+        row.append(main, folderEl('span', 'craber-dav-logtime', davFmtTime(r.at)));
+        logList.append(row);
+      }
+    };
+    renderLog();
+    clearBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      davLogClear();
+      renderLog();
+    });
+
+    p.append(logHead, logList);
+    return p;
+  }
+
+  // 选择项目 / 会话的多选对话框。返回 Promise<string[]>，取消时返回 null。
+  function craberPickScope(kind, selected) {
+    return new Promise((resolve) => {
+      const cur = new Set(selected || []);
+      const meta = {};          // value -> 展示用标签（chip 要用）
+      (selected || []).forEach((v) => { meta[v] = { label: v, meta: '' }; });
+
+      const box = folderEl('div', 'craber-pick');
+      const listBox = folderEl('div', 'craber-pick-list');
+      const status = folderEl('div', 'craber-dav-status', '');
+      // 注意：kw / paint 在搜索回调里被引用，声明必须先于 craberSearchBox，
+      // 否则回调执行时命中暂时死区（TDZ）。
+      let items = [];
+      let kw = '';
+      let loading = true;
+      let finished = false;
+
+      // 工具条：[搜索框] [全选] [清空]，与列表里的可勾选行同高
+      const tools = folderEl('div', 'craber-pick-tools');
+      const search = craberSearchBox(kind === 'projects' ? '搜索项目…' : '搜索会话…',
+        (v) => {
+          kw = String(v || '').trim().toLowerCase();
+          paint();
+        });
+      const allBtn = folderEl('button', 'craber-set-btn craber-set-btn-sm', '全选');
+      allBtn.type = 'button';
+      allBtn.title = '勾选当前筛选出的全部条目';
+      const noneBtn = folderEl('button', 'craber-set-btn craber-set-btn-sm', '清空');
+      noneBtn.type = 'button';
+      noneBtn.title = '取消全部勾选';
+      tools.append(search.el, allBtn, noneBtn);
+
+      // 已选区：勾了哪些一眼可见，点 × 直接移除
+      const pickedWrap = folderEl('div', 'craber-pick-pickedwrap');
+      const pickedHd = folderEl('div', 'craber-pick-pickedhd');
+      const pickedCount = folderEl('span', 'craber-pick-pickedcount', '');
+      pickedHd.append(pickedCount);
+      const pickedBar = folderEl('div', 'craber-pick-picked');
+      pickedWrap.append(pickedHd, pickedBar);
+      pickedWrap.hidden = true;
+      box.append(tools, pickedWrap, listBox, status);
+
+      // 确定按钮上的数量：paint 里会调用，先声明好
+      let okBtn = null;
+      const syncOk = () => {
+        if (!okBtn) return;
+        okBtn.textContent = cur.size ? ('确定（' + cur.size + '）') : '确定';
+      };
+
+      const finish = (val) => {
+        if (finished) return;
+        finished = true;
+        resolve(val);
+      };
+
+      const shownRows = () => items.filter((it) => {
+        if (!kw) return true;
+        return String(it.label || '').toLowerCase().indexOf(kw) >= 0;
+      });
+
+      // 已选 chip 区：有勾选才显示；右侧「清空」已由工具条提供
+      const paintPicked = () => {
+        pickedBar.innerHTML = '';
+        const pickedList = items.filter((it) => cur.has(it.value));
+        // 传进来时已选、但不在本次列表里的：只在数据回来后按缓存名显示，
+        // 否则会把 id（conv-xxxx）当成名字画出来。
+        const extra = loading
+          ? []
+          : [...cur].filter((v) => !items.some((it) => it.value === v));
+        const total = pickedList.length + extra.length;
+        pickedWrap.hidden = !total;
+        if (!total) return;
+        pickedCount.textContent = '已选 ' + total + ' 项';
+        for (const it of pickedList) {
+          pickedBar.append(craberSelChip(it.label, () => {
+            cur.delete(it.value);
+            paint();
+          }));
+        }
+        for (const v of extra) {
+          const m = meta[v] || {};
+          pickedBar.append(craberSelChip(m.label || v, () => {
+            cur.delete(v);
+            paint();
+          }));
+        }
+      };
+
+      const syncTools = () => {
+        const rows = shownRows();
+        const remaining = rows.filter((it) => !cur.has(it.value)).length;
+        allBtn.disabled = loading || !rows.length || remaining === 0;
+        noneBtn.disabled = loading || cur.size === 0;
+      };
+
+      const paint = () => {
+        listBox.innerHTML = '';
+        if (loading) {
+          listBox.append(craberLoadingRow(
+            kind === 'projects' ? '正在读取项目列表…' : '正在读取会话列表…'));
+          paintPicked();
+          syncOk();
+          syncTools();
+          return;
+        }
+        const rows = shownRows();
+        if (!rows.length) {
+          listBox.append(folderEl('div', 'craber-set-note', '没有匹配项'));
+        }
+        for (const it of rows) {
+          const row = folderEl('label', 'craber-set-convrow');
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = cur.has(it.value);
+          cb.addEventListener('change', () => {
+            if (cb.checked) cur.add(it.value); else cur.delete(it.value);
+            paintPicked();
+            syncOk();
+            syncTools();
+          });
+          const boxEl = folderEl('span', 'craber-box');
+          const main = folderEl('div', 'craber-set-turnmain');
+          main.append(folderEl('span', 'craber-set-turnq', it.label));
+          if (it.meta) main.append(folderEl('span', 'craber-set-turnmeta', it.meta));
+          row.append(cb, boxEl, main);
+          listBox.append(row);
+        }
+        paintPicked();
+        syncOk();
+        syncTools();
+      };
+
+      (async () => {
+        try {
+          if (kind === 'projects') {
+            const list = await craberListProjects();
+            items = (list || []).map((p) => ({ value: p.name, label: p.name, meta: '' }));
+          } else {
+            const all = await fetchAllConversations();
+            items = all.map((c) => ({
+              value: c.id,
+              label: c.title || c.id,
+              meta: c.update_time ? davFmtDay(c.update_time) : ''
+            }));
+          }
+          items.forEach((it) => {
+            meta[it.value] = it;
+            craberRememberPickLabel(it.value, it.label);
+          });
+          status.textContent = items.length + (kind === 'projects' ? ' 个项目' : ' 个会话');
+        } catch (e) {
+          items = [];
+          status.textContent = '读取失败：' + (e && e.message ? e.message : '未知错误');
+          status.className = 'craber-dav-status err';
+        } finally {
+          loading = false;
+          paint();
+        }
+      })();
+
+      allBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        shownRows().forEach((it) => cur.add(it.value));
+        paint();
+      });
+      noneBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        cur.clear();
+        paint();
+      });
+      // 先画出加载态：否则从打开到数据回来这段时间列表是空白的，
+      // 看起来像"没有内容"而不是"正在读"。
+      paint();
+
+      let confirmed = false;
+      const dlg = craberDialog({
+        title: kind === 'projects' ? '选择项目' : '选择会话',
+        subtitle: '只备份勾选的范围',
+        icon: kind === 'projects'
+          ? mi('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>')
+          : mi('<path d="M20 12a7 7 0 0 1-7 7H8l-4 2.5V12a7 7 0 0 1 7-7h2a7 7 0 0 1 7 7z"/>'),
+        body: box,
+        cancelText: '取消',
+        confirmText: '确定',
+        onConfirm: (close) => {
+          confirmed = true;
+          close();
+        },
+        // 任何关闭路径都会走到这里；没点确定就算取消
+        onClose: () => finish(confirmed ? [...cur] : null)
+      });
+      okBtn = dlg.root.querySelector('.craber-dlg-primary');
+      paint();
+    });
+  }
+
+  // 选择器读到过的 value -> 显示名。备份页的 chip 只有 id 时靠它还原标题。
+  // 落盘保存：否则刷新后"已保存的范围"会显示成一串 id。
+  const PICK_LABEL_KEY = 'gpt_craber_pick_labels';
+  const craberPickLabelCache = (() => {
+    try {
+      const j = JSON.parse(localStorage.getItem(PICK_LABEL_KEY) || '{}');
+      return (j && typeof j === 'object') ? j : Object.create(null);
+    } catch (e) { return Object.create(null); }
+  })();
+  let pickLabelDirty = false;
+  function craberRememberPickLabel(value, label) {
+    if (!value || !label) return;
+    if (craberPickLabelCache[value] === label) return;
+    craberPickLabelCache[value] = label;
+    pickLabelDirty = true;
+    // 简单节流：每次记忆都写一次体积很小，但连着勾几十个会略频繁，交给微任务合并
+    if (!craberRememberPickLabel._t) {
+      craberRememberPickLabel._t = setTimeout(() => {
+        craberRememberPickLabel._t = null;
+        if (!pickLabelDirty) return;
+        pickLabelDirty = false;
+        try {
+          // 只保留最近 800 条，避免长期使用后无限膨胀
+          const keys = Object.keys(craberPickLabelCache);
+          if (keys.length > 800) {
+            for (const k of keys.slice(0, keys.length - 800)) delete craberPickLabelCache[k];
+          }
+          localStorage.setItem(PICK_LABEL_KEY, JSON.stringify(craberPickLabelCache));
+        } catch (e) { /* 存储满了就算了，下次仍能按需重建 */ }
+      }, 400);
+    }
+  }
+
+  // 已选项 chip：文字截断 + × 移除。选择对话框与备份范围预览共用。
+  function craberSelChip(label, onRemove) {
+    const chip = folderEl('span', 'craber-selchip');
+    const t = folderEl('span', 'craber-selchip-txt', String(label || ''));
+    t.title = String(label || '');
+    const x = folderEl('button', 'craber-selchip-x');
+    x.type = 'button';
+    x.setAttribute('aria-label', '移除');
+    x.title = '移除';
+    x.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"'
+      + ' stroke-linecap="round"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
+    x.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (onRemove) onRemove();
+    });
+    chip.append(t, x);
+    return chip;
+  }
+
+  /* ---------- 页面 5：会话备份 ---------- */
+  function craberPageDavBackup() {
+    const cfg = davLoad();
+    const bcfg = davBackupCfgLoad();
+    const state = davBackupStateLoad();
+    const doneCount = Object.keys(state.done || {}).length;
+    const blog = davBackupLogLoad();
+
+    const p = craberPage('会话备份', '把会话导出成 zip 存到 WebDAV，按账号与日期分目录。');
+
+    // 概况：已备份多少、上次什么时候、最近一次多大
+    const lastOk = blog.find((x) => x.ok);
+    const info = folderEl('div', 'craber-set-stats');
+    const stat = (label, value) => {
+      const c = folderEl('div', 'craber-set-stat');
+      c.append(folderEl('div', 'craber-set-statnum', String(value)));
+      c.append(folderEl('div', 'craber-set-statlbl', label));
+      return c;
+    };
+    const fmtBytes = (n) => {
+      const b = Number(n) || 0;
+      if (!b) return '—';
+      if (b < 1024) return b + ' B';
+      if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
+      return (b / 1024 / 1024).toFixed(1) + ' MB';
+    };
+    info.append(
+      stat('已备份会话', doneCount),
+      stat('上次备份', bcfg.lastRun ? davFmtTime(bcfg.lastRun) : '—'),
+      stat('最近体积', lastOk ? fmtBytes(lastOk.bytes) : '—')
+    );
+    p.append(info);
+
+    if (!cfg.url) {
+      p.append(folderEl('div', 'craber-set-note', '还没配置服务器，请先到「连接设置」填写地址与账号。'));
+      return p;
+    }
+
+    /* 设置区 */
+    const box = folderEl('div', 'craber-set-form');
+
+    /* 备份位置：账号 + 目录 + 实际落盘路径，合成一块
+     * 原来拆成「当前账号 / 备份目录 / 远端位置」三行，太占高度，
+     * 而且三者本来就是一件事：这个账号的备份会写到哪。
+     */
+    const fLoc = folderEl('div', 'craber-set-field craber-set-field-stack');
+    const locCol = folderEl('div', 'craber-set-fieldcol');
+    locCol.append(folderEl('div', 'craber-set-label', '备份位置'));
+    const locHint = folderEl('div', 'craber-set-hint',
+      '按账号名分文件夹，多账号互不覆盖');
+    locCol.append(locHint);
+    fLoc.append(locCol);
+
+    // 一行：账号徽标 + 目录输入 + 实际路径
+    const locRow = folderEl('div', 'craber-locrow');
+
+    const acctVal = folderEl('div', 'craber-acct');
+    const acctIcon = folderEl('span', 'craber-acct-ico');
+    acctIcon.innerHTML = mi('<circle cx="12" cy="8.5" r="3.6"/>'
+      + '<path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>');
+    const acctName = folderEl('span', 'craber-acct-name', '识别中…');
+    acctVal.append(acctIcon, acctName);
+    acctVal.title = '备份目录会按这个账号名分文件夹';
+
+    const dirIn = document.createElement('input');
+    dirIn.type = 'text';
+    dirIn.className = 'craber-dlg-input craber-locrow-input';
+    dirIn.value = bcfg.dir || 'craber-backup';
+    dirIn.setAttribute('aria-label', '备份目录');
+    dirIn.title = '备份根目录名（位于 WebDAV 地址下）';
+
+    const pathPrev = folderEl('div', 'craber-pathprev');
+    const pathLabel = folderEl('span', 'craber-pathprev-label', '远端');
+    const pathCode = folderEl('span', 'craber-pathprev-path', '');
+    pathPrev.append(pathLabel, pathCode);
+
+    locRow.append(acctVal, dirIn, pathPrev);
+    fLoc.append(locRow);
+    box.append(fLoc);
+
+    let acctLabel = sanitizeRemoteSeg(bcfg.account || '');
+    const paintPathPrev = () => {
+      const root = (dirIn.value.trim() || 'craber-backup').replace(/^\/+|\/+$/g, '');
+      const who = acctLabel || '<账号>';
+      const full = root + '/' + who + '/' + davDateStr() + '/';
+      pathCode.textContent = full;
+      pathCode.title = root + '/' + who + '/<日期>/';
+    };
+    paintPathPrev();
+    dirIn.addEventListener('input', paintPathPrev);
+
+    // 名字可能来自网络：先显示缓存，再异步刷新
+    (async () => {
+      const cached = craberAccountLoad();
+      if (cached && cached.name) {
+        acctLabel = sanitizeRemoteSeg(cached.name);
+        acctName.textContent = cached.name;
+        paintPathPrev();
+      }
+      try {
+        const info = await craberAccountInfo(false);
+        if (info && info.name) {
+          acctLabel = sanitizeRemoteSeg(info.name);
+          acctName.textContent = info.name;
+          acctName.title = (info.email || info.name) + ' · 备份目录会按它分文件夹';
+          paintPathPrev();
+        } else if (!acctLabel) {
+          acctName.textContent = '未识别到账号';
+          acctName.classList.add('craber-acct-name-warn');
+          locHint.textContent = '没读到账号名，备份会先停下；刷新页面可重试';
+          paintPathPrev();
+        }
+      } catch (e) {
+        if (!acctLabel) acctName.textContent = '未识别到账号';
+      }
+    })();
+
+    /* 备份范围（要备份哪些）
+     * 项目与会话是两个并行的选择器，不是互斥模式：
+     * 都不选 = 全部；选了任意一组 = 只备份该范围（两组取并集）。
+     */
+    let scopeProjects = (bcfg.scopeProjects || []).slice();
+    let scopeConvs = (bcfg.scopeConvs || []).slice();
+
+    // 范围字段：标签+说明在上，右侧是"选择…"，下方直接铺已选 chip
+    // （之前只在说明文字里塞前几个名字，选多了完全看不全，也没法单独移除）
+    const mkScopeField = (label, hintDefault, pickLabel) => {
+      const field = folderEl('div', 'craber-set-field craber-set-field-stack');
+      const hd = folderEl('div', 'craber-set-fieldhd');
+      const col = folderEl('div', 'craber-set-fieldcol');
+      col.append(folderEl('div', 'craber-set-label', label));
+      const hint = folderEl('div', 'craber-set-hint', hintDefault);
+      col.append(hint);
+      const ctrl = folderEl('div', 'craber-set-ctrl');
+      const pickBtn = folderEl('button', 'craber-set-btn craber-set-btn-sm', pickLabel);
+      pickBtn.type = 'button';
+      ctrl.append(pickBtn);
+      hd.append(col, ctrl);
+      const bar = folderEl('div', 'craber-set-chipbar');
+      field.append(hd, bar);
+      box.append(field);
+      return { field, hint, bar, pickBtn, hintDefault };
+    };
+    const projScope = mkScopeField('限定项目', '不选则包含全部项目', '选择项目…');
+    const convScope = mkScopeField('限定会话', '不选则包含全部会话', '选择会话…');
+
+
+    const syncScopeUI = () => {
+      const fill = (scope, picker) => {
+        picker.bar.innerHTML = '';
+        if (!scope.length) {
+          picker.bar.hidden = true;
+          picker.hint.textContent = picker.hintDefault;
+          return;
+        }
+        picker.bar.hidden = false;
+        picker.hint.textContent = '已选 ' + scope.length + ' 项';
+        for (const v of scope) {
+          picker.bar.append(craberSelChip(craberPickLabelCache[v] || v, () => {
+            const i = scope.indexOf(v);
+            if (i >= 0) scope.splice(i, 1);
+            syncScopeUI();
+          }));
+        }
+      };
+      fill(scopeProjects, projScope);
+      fill(scopeConvs, convScope);
+    };
+
+    projScope.pickBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const picked = await craberPickScope('projects', scopeProjects);
+      if (picked === null) return;
+      scopeProjects = picked;
+      syncScopeUI();
+    });
+    convScope.pickBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const picked = await craberPickScope('convs', scopeConvs);
+      if (picked === null) return;
+      scopeConvs = picked;
+      syncScopeUI();
+    });
+    syncScopeUI();
+
+    // 备份方式（怎么备份）—— 增量 / 全量
+    let mode = bcfg.mode;
+    const fMode = folderEl('div', 'craber-set-field');
+    const cMode = folderEl('div', 'craber-set-fieldcol');
+    cMode.append(folderEl('div', 'craber-set-label', '备份方式'));
+    cMode.append(folderEl('div', 'craber-set-hint', '增量只备份没备过或之后更新过的会话'));
+    const cModeCtrl = folderEl('div', 'craber-set-ctrl');
+    const chips = folderEl('div', 'craber-dlg-chips');
+    const mkChip = (val, text, hint) => {
+      const lab = folderEl('label', 'craber-dlg-chip');
+      const r = document.createElement('input');
+      r.type = 'radio';
+      r.name = 'craber-set-bmode';
+      r.value = val;
+      if (mode === val) r.checked = true;
+      lab.title = hint || '';
+      lab.append(r, folderEl('span', null, text));
+      r.addEventListener('change', () => { if (r.checked) mode = val; });
+      chips.append(lab);
+    };
+    mkChip('incremental', '增量', '只备份有变化的会话');
+    mkChip('full', '全量', '每次都备份全部会话');
+    cModeCtrl.append(chips);
+    fMode.append(cMode, cModeCtrl);
+    box.append(fMode);
+
+    // 单次上限
+    const fMax = folderEl('div', 'craber-set-field');
+    const cMax = folderEl('div', 'craber-set-fieldcol');
+    cMax.append(folderEl('div', 'craber-set-label', '单次上限'));
+    cMax.append(folderEl('div', 'craber-set-hint', '避免一次拉太多被限流，剩余部分下次继续'));
+    const cMaxCtrl = folderEl('div', 'craber-set-ctrl');
+    const maxIn = document.createElement('input');
+    maxIn.type = 'number';
+    maxIn.min = '1';
+    maxIn.max = '500';
+    maxIn.className = 'craber-dlg-input';
+    // 数字框不需要占满整列，但也不能被 flex:1 拉伸
+    maxIn.style.flex = 'none';
+    maxIn.style.width = '88px';
+    maxIn.value = String(bcfg.max || 50);
+    cMaxCtrl.append(maxIn, folderEl('span', 'craber-set-unit', '个会话'));
+    fMax.append(cMax, cMaxCtrl);
+    box.append(fMax);
+
+    p.append(box);
+
+    const status = folderEl('div', 'craber-dav-status', '');
+    p.append(status);
+    const setStatus = (m, k) => {
+      status.textContent = m;
+      status.className = 'craber-dav-status' + (k ? ' ' + k : '');
+    };
+
+    const collect = () => {
+      const c = davBackupCfgLoad();
+      c.dir = dirIn.value.trim() || 'craber-backup';
+      if (acctLabel) c.account = acctLabel;
+      c.mode = mode;
+      c.scopeProjects = scopeProjects.slice();
+      c.scopeConvs = scopeConvs.slice();
+      c.max = Math.max(1, Math.min(500, parseInt(maxIn.value, 10) || 50));
+      return c;
+    };
+
+    const bar = folderEl('div', 'craber-set-actions');
+    const saveBtn = folderEl('button', 'craber-set-btn', '保存设置');
+    saveBtn.type = 'button';
+    saveBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      davBackupCfgSave(collect());
+      setStatus('设置已保存', 'ok');
+    });
+
+    const runBtn = folderEl('button', 'craber-set-btn craber-set-btn-primary', '开始备份');
+    runBtn.type = 'button';
+    runBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      davBackupCfgSave(collect());
+      const old = runBtn.textContent;
+      runBtn.disabled = true;
+      saveBtn.disabled = true;
+      runBtn.textContent = '备份中…';
+      setStatus('准备中…');
+      try {
+        const r = await davBackupRun({
+          onProgress: (done, total, note) => {
+            setStatus(note || ('备份中 ' + done + '/' + total));
+          }
+        });
+        if (r.skipped) {
+          setStatus('没有需要备份的会话（增量模式）', 'ok');
+        } else {
+          let msg = '已备份 ' + r.count + ' 个会话 → ' + (r.path || r.file);
+          if (r.pending > 0) msg += '（还有 ' + r.pending + ' 个待下次）';
+          setStatus(msg, 'ok');
+        }
+        // 刷新概况与历史
+        const nb = davBackupLogLoad();
+        const nstate = davBackupStateLoad();
+        info.children[0].querySelector('.craber-set-statnum').textContent =
+          String(Object.keys(nstate.done || {}).length);
+        renderHistory(nb);
+      } catch (err) {
+        setStatus('备份失败：' + (err && err.message ? err.message : '未知错误'), 'err');
+        davBackupLogPush({ ok: false, detail: err && err.message ? err.message : '未知错误' });
+        renderHistory(davBackupLogLoad());
+      } finally {
+        runBtn.disabled = false;
+        saveBtn.disabled = false;
+        runBtn.textContent = old;
+      }
+    });
+
+    bar.append(saveBtn, runBtn);
+    p.append(bar);
+
+    /* 备份历史 */
+    const hHead = folderEl('div', 'craber-dav-loghead');
+    hHead.append(folderEl('span', 'craber-dav-logtitle', '备份历史'));
+    const hMeta = folderEl('span', 'craber-dav-logmeta', '');
+    const hClear = folderEl('button', 'craber-dav-clear', '清空');
+    hClear.type = 'button';
+    hHead.append(hMeta, hClear);
+
+    const hList = folderEl('div', 'craber-dav-loglist');
+    function renderHistory(rows) {
+      hList.innerHTML = '';
+      hMeta.textContent = rows.length ? (rows.length + ' 条') : '';
+      if (!rows.length) {
+        hList.append(folderEl('div', 'craber-dav-logempty', '还没有备份记录'));
+        return;
+      }
+      for (const r of rows) {
+        const row = folderEl('div', 'craber-dav-logrow' + (r.ok ? '' : ' err'));
+        row.append(folderEl('span', 'craber-dav-logdot'));
+        const main = folderEl('div', 'craber-dav-logmain');
+        const line = folderEl('div', 'craber-dav-logline');
+        line.append(folderEl('span', 'craber-dav-logname',
+          (r.ok ? '✓ ' : '✗ ') + (r.ok ? '备份' : '失败')
+          + (r.mode === 'full' ? '（全量）' : '')));
+        if (r.ok && r.count) line.append(folderEl('span', 'craber-dav-chip add', '+' + r.count));
+        main.append(line);
+        const det = [];
+        if (r.path) det.push(r.path);
+        else if (r.file) det.push(r.file);
+        if (r.bytes) det.push(fmtBytes(r.bytes));
+        if (r.failCount) det.push(r.failCount + ' 个失败');
+        if (!r.ok && r.detail) det.push(r.detail);
+        if (det.length) main.append(folderEl('div', 'craber-dav-logdetail', det.join(' · ')));
+        row.append(main, folderEl('span', 'craber-dav-logtime', davFmtTime(r.at)));
+        hList.append(row);
+      }
+    }
+    renderHistory(blog);
+    hClear.addEventListener('click', (e) => {
+      e.preventDefault();
+      davBackupLogClear();
+      renderHistory([]);
+    });
+
+    p.append(hHead, hList);
+    return p;
   }
 
   // 从操作栏按钮回溯到它所属回合的 key，用该 id 在 nodeIndex 里定位对应回合。
@@ -8173,38 +11884,155 @@
     return null;
   }
 
-  // 挂在 body 上的共享 tooltip 元素（逃出操作栏的 overflow 裁切）
+  /* ============ tooltip ============
+   * 为什么不用原生 title：浏览器白框样式不受控、显示延迟 1s 左右、深色主题下非常刺眼。
+   * 为什么不用 ::after：操作栏有 overflow 裁切，气泡会被切掉一半。
+   * 所以统一用一个挂在 body 上的浮层，按目标元素的位置定位，永远逃出父级裁切。
+   */
   let _tipEl = null;
+  let _tipTimer = null;
+  let _tipOwner = null;
+
   function getTipEl() {
     if (!_tipEl) {
       _tipEl = document.createElement('div');
       _tipEl.className = 'craber-tip';
+      _tipEl.setAttribute('role', 'tooltip');
       document.body.appendChild(_tipEl);
     }
     return _tipEl;
   }
-  // 给元素绑定深色 tooltip：hover 时按元素位置把气泡定位到其下方居中。
+
+  // 把气泡摆到目标元素下方；下方放不下就翻到上方。
+  // 水平方向以元素中心对齐，再夹到视口内，箭头单独跟着元素中心走。
+  function craberTipPlace(el, text) {
+    const tip = getTipEl();
+    tip.textContent = text;
+    tip.classList.toggle('craber-tip-multiline', text.length > 26);
+    // 先量尺寸再定位：需要 display 参与布局
+    tip.classList.remove('show');
+    tip.style.visibility = 'hidden';
+    tip.style.display = 'block';
+    tip.classList.remove('craber-tip-up');
+
+    // 目标在自家模态里 → 抬高层级；在页面正文里 → 保持低调，别盖住原生菜单
+    tip.classList.toggle('craber-tip-modal', !!el.closest('.craber-dlg-mask'));
+
+    const r = el.getBoundingClientRect();
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    const gap = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // 下方不够、上方够 → 翻上去
+    const belowFits = r.bottom + gap + th <= vh - 8;
+    const up = !belowFits && r.top - gap - th >= 8;
+    tip.classList.toggle('craber-tip-up', up);
+
+    let left = r.left + r.width / 2 - tw / 2;
+    left = Math.max(8, Math.min(left, vw - tw - 8));
+    let top = up ? (r.top - th - gap) : (r.bottom + gap);
+    top = Math.max(8, Math.min(top, vh - th - 8));
+
+    // 箭头指向元素中心：换算成气泡内的坐标并夹住
+    const cx = Math.max(10, Math.min(r.left + r.width / 2 - left, tw - 10));
+    tip.style.setProperty('--craber-arrow-x', cx + 'px');
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+    tip.style.visibility = '';
+    requestAnimationFrame(() => tip.classList.add('show'));
+    _tipOwner = el;
+  }
+
+  function craberTipHide() {
+    if (_tipTimer) { clearTimeout(_tipTimer); _tipTimer = null; }
+    _tipOwner = null;
+    if (!_tipEl) return;
+    _tipEl.classList.remove('show');
+    _tipEl.style.display = 'none';
+  }
+
+  // delay：给"路过"的鼠标一点缓冲，避免一路扫过去闪一片
+  function craberTipShow(el, text, delay) {
+    if (!text) return;
+    if (_tipTimer) { clearTimeout(_tipTimer); _tipTimer = null; }
+    // 先登记 owner：延迟期间鼠标移走时，mouseout 要凭它把计时器取消掉
+    _tipOwner = el;
+    if (!delay) { craberTipPlace(el, text); return; }
+    _tipTimer = setTimeout(() => {
+      _tipTimer = null;
+      // 延迟期间元素可能已经被移除（列表重绘很常见）
+      if (!el.isConnected || _tipOwner !== el) return;
+      craberTipPlace(el, text);
+    }, delay);
+  }
+
+  // 显式绑定（调用方自己有文案，比如工具条里的导出按钮）
   function bindTooltip(el, text) {
-    el.addEventListener('mouseenter', () => {
-      const tip = getTipEl();
-      tip.textContent = text;
-      const r = el.getBoundingClientRect();
-      tip.style.display = 'block';
-      // 先显示以取得尺寸，再定位到按钮下方居中
-      const tw = tip.offsetWidth;
-      let left = r.left + r.width / 2 - tw / 2;
-      left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
-      tip.style.left = left + 'px';
-      tip.style.top = (r.bottom + 6) + 'px';
-      requestAnimationFrame(() => tip.classList.add('show'));
-    });
-    const hide = () => {
-      if (!_tipEl) return;
-      _tipEl.classList.remove('show');
-      _tipEl.style.display = 'none';
-    };
-    el.addEventListener('mouseleave', hide);
-    el.addEventListener('click', hide);
+    el.addEventListener('mouseenter', () => craberTipShow(el, text, 90));
+    el.addEventListener('mouseleave', craberTipHide);
+    el.addEventListener('click', craberTipHide);
+    el.addEventListener('blur', craberTipHide);
+  }
+
+  /* title 属性统一接管
+   * 脚本里大量用 el.title = '…' 写提示（刷新、全选、更多操作…），
+   * 那些都会走浏览器自带的白框，和自定义气泡两套风格并存很难看。
+   * 这里在冒泡阶段截住 hover：把 title 收进 data-craber-title 并摘掉属性
+   * （否则原生白框还是会弹），改用统一气泡；移开时还原，不影响脚本再次改 title。
+   * 只处理我们自己创建的节点（class 带 craber-），原生按钮保持原样。
+   */
+  const TIP_OWN_ATTR = 'data-craber-title';
+  function isOwnUi(el) {
+    if (!el) return false;
+    const c = el.className;
+    if (typeof c === 'string') return c.indexOf('craber-') >= 0;
+    // SVG 元素的 className 是 SVGAnimatedString；closest('[title]') 也可能落到 path 上
+    if (c && typeof c.baseVal === 'string') return c.baseVal.indexOf('craber-') >= 0;
+    // 兜底：按钮里嵌的 svg 没有 class，往上找一层
+    const host = el.closest('.craber-tip, [class*="craber-"]');
+    return !!host;
+  }
+
+  function installTitleTooltip() {
+    if (installTitleTooltip._done) return;
+    installTitleTooltip._done = true;
+
+    document.addEventListener('mouseover', (e) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      const el = t.closest('[title]');
+      if (!el || !isOwnUi(el)) return;
+      const text = el.getAttribute('title');
+      if (!text) return;
+      el.setAttribute(TIP_OWN_ATTR, text);
+      el.removeAttribute('title');       // 摘掉，禁用原生白框
+      craberTipShow(el, text, 350);
+    }, true);
+
+    document.addEventListener('mouseout', (e) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      const el = t.closest('[' + TIP_OWN_ATTR + ']');
+      if (!el) return;
+      // 还在本元素内部移动（进出子节点）就忽略
+      const to = e.relatedTarget;
+      if (to && el.contains(to)) return;
+      const text = el.getAttribute(TIP_OWN_ATTR);
+      el.removeAttribute(TIP_OWN_ATTR);
+      if (text != null && !el.getAttribute('title')) el.setAttribute('title', text);
+      if (_tipOwner === el) craberTipHide();
+    }, true);
+
+    // 滚动/尺寸变化时气泡会飘到别处，直接收掉最省事。
+    // 点击也收：元素被移除（关对话框）时 mouseout 根本不会触发，
+    // 否则气泡会僵在屏幕上一整块。
+    const off = () => craberTipHide();
+    window.addEventListener('scroll', off, true);
+    window.addEventListener('resize', off);
+    document.addEventListener('pointerdown', off, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') off(); }, true);
   }
 
   // 收集"助手回复的操作栏"。
@@ -8267,7 +12095,8 @@
         } catch (err) {
           label.textContent = '⚠️';
           console.error('[gpt-craber]', err);
-          alert('导出失败：' + err.message);
+          // 与其它导出入口保持一致：用页面内提示，不弹 alert 打断操作
+          navToast('导出失败：' + (err && err.message ? err.message : '未知错误'));
         } finally {
           setTimeout(() => { label.innerHTML = old; b.disabled = false; }, 1200);
         }
@@ -8322,11 +12151,14 @@
     foldersTick();
   }, 1000);
 
+  // 统一接管脚本自己节点的 title 提示（原生白框 → 自定义气泡）
+  installTitleTooltip();
+
   mountFab();
   injectSingleButtons();
   // 等 ChatGPT 自己的首屏请求先跑，避免和它的 paginated_conversation 撞车触发 429
   scheduleNavRender(NAV_SWITCH_DELAY);
   pbarTick();
-  window.addEventListener('resize', () => { pbarCloseMenu(); fabCloseMenu(); });
+  window.addEventListener('resize', () => { pbarCloseMenu(); });
   console.log('[gpt-craber] 对话导出脚本已加载');
 })();
