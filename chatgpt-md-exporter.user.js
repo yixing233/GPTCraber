@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.15.0
+// @version      0.15.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.15.0';
+  const CRABER_VERSION = '0.15.1';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -5322,7 +5322,17 @@
    *   合并规则反而容易产生难解释的结果
    */
   const DAV_KEY = 'gpt_craber_webdav';
+  // 旧版公共文件名：仅在没有账号名时使用（保证老用户仍读得到自己的数据）
   const DAV_REMOTE_NAME = 'craber-folders.json';
+
+  /* 远端文件名：craber-folders.<账号>.json
+   * 同一个 WebDAV 被多个账号用时，不分开会互相覆盖文件夹结构。
+   * 用点分隔而不是 @：@ 在 URL 里要编成 %40，部分 WebDAV 后端处理不一致。
+   */
+  function davRemoteName() {
+    const who = craberAccountKey();
+    return who ? 'craber-folders.' + who + '.json' : DAV_REMOTE_NAME;
+  }
 
   function davLoad() {
     try {
@@ -5385,8 +5395,9 @@
     if (!base) throw new Error('未配置 WebDAV 地址');
     // 覆盖前先在本地留一份快照：万一合并逻辑出问题，还能找回上一次的样子
     try {
-      const old = localStorage.getItem(FOLDERS_KEY);
-      if (old) localStorage.setItem(FOLDERS_KEY + '_bak', old);
+      const key = folderStoreKey();
+      const old = localStorage.getItem(key);
+      if (old) localStorage.setItem(key + '_bak', old);
     } catch (e) {}
     const payload = JSON.stringify({
       ver: 1,
@@ -5402,7 +5413,7 @@
     // 目录已存在时 MKCOL 返回 405，davEnsureDir 内部会忽略。
     await davEnsureDir(cfg);
 
-    const r = await davRequest('PUT', base + DAV_REMOTE_NAME, {
+    const r = await davRequest('PUT', base + davRemoteName(), {
       cfg: cfg,
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
       body: payload
@@ -5500,6 +5511,7 @@
       projNames: remote.projNames && typeof remote.projNames === 'object' ? remote.projNames : {},
       tombstones: (remote.tombstones && typeof remote.tombstones === 'object') ? remote.tombstones : {}
     };
+    folderDataOwner = craberAccountKey();
     saveFolders();
     folderRenderedSig = '';
     renderFolders();
@@ -6254,7 +6266,19 @@
   async function davPull(cfg) {
     const base = davBaseUrl(cfg);
     if (!base) throw new Error('未配置 WebDAV 地址');
-    const r = await davRequest('GET', base + DAV_REMOTE_NAME, { cfg: cfg });
+    let r = await davRequest('GET', base + davRemoteName(), { cfg: cfg });
+    // 本账号还没有专属文件时，再找一次旧版公共文件：
+    // 否则升级后会"看不到以前同步上去的文件夹"。
+    if (r.status === 404 && davRemoteName() !== DAV_REMOTE_NAME) {
+      const legacy = await davRequest('GET', base + DAV_REMOTE_NAME, { cfg: cfg });
+      if (legacy.status >= 200 && legacy.status < 300) {
+        try {
+          const j = JSON.parse(legacy.text);
+          if (j && Array.isArray(j.folders)) return j;
+        } catch (e) { /* 旧文件坏了就当没有 */ }
+      }
+      return null;
+    }
     if (r.status === 404) return null;            // 远端还没有，正常
     if (r.status < 200 || r.status >= 300) {
       throw new Error('读取失败 HTTP ' + r.status
@@ -6271,9 +6295,29 @@
 
   const FOLDERS_KEY = 'gpt_craber_folders';
   const FOLDERS_VER = 1;
+
+  /* 文件夹数据按账号隔离
+   * 同一个 WebDAV 可能被多个 ChatGPT 账号共用：远端文件若不分开，
+   * A 账号推送就会覆盖 B 账号的文件夹结构；本地若不分开，
+   * 换账号后还会看到别人的文件夹。
+   * 这里用一个"账号键"同时作用在本地键名与远端文件名上。
+   * 拿不到账号名时返回 ''（沿用旧键/旧文件名），保证老用户不丢数据。
+   */
+  function craberAccountKey() {
+    const a = craberAccountLoad();
+    const nm = a && a.name ? String(a.name) : '';
+    return sanitizeRemoteSeg(nm);
+  }
+
+  // 本地存储键：有账号名 → gpt_craber_folders@<账号>；否则沿用旧键
+  function folderStoreKey() {
+    const who = craberAccountKey();
+    return who ? FOLDERS_KEY + '@' + who : FOLDERS_KEY;
+  }
   const FOLDER_KID_MAX = 200;   // 单个文件夹最多展示的条目数，超出的只显示计数
 
   let folderData = null;        // { ver, folders: [{ id, name, open, items: [] }] }
+  let folderDataOwner = null;   // folderData 属于哪个账号（切换账号时据此重载）
   let foldersEl = null;         // 区块根节点（挂在原生 nav 里）
   let foldersHostNav = null;    // 当前挂在哪个 nav 上，换了要重挂
   let folderRenderedSig = '';   // 上次渲染的数据指纹，原生重渲染时不重复重建
@@ -6299,7 +6343,17 @@
 
   function loadFolders() {
     try {
-      const raw = localStorage.getItem(FOLDERS_KEY);
+      const key = folderStoreKey();
+      let raw = localStorage.getItem(key);
+      // 升级后第一次运行：本账号还没有专属数据，把旧键（未分账号）的内容接过来
+      if (!raw && key !== FOLDERS_KEY) {
+        const legacy = localStorage.getItem(FOLDERS_KEY);
+        if (legacy) {
+          raw = legacy;
+          // 复制而不是搬走：万一用户切回旧版本还能读到
+          try { localStorage.setItem(key, legacy); } catch (e) {}
+        }
+      }
       if (!raw) return { ver: FOLDERS_VER, projNames: {}, folders: [], tombstones: {} };
       const j = JSON.parse(raw);
       const list = Array.isArray(j && j.folders) ? j.folders : [];
@@ -6332,7 +6386,7 @@
     try {
       // 打上时间戳：WebDAV 同步靠它判断哪边更新
       const snapshot = Object.assign({}, folderData, { updatedAt: Date.now() });
-      localStorage.setItem(FOLDERS_KEY, JSON.stringify(snapshot));
+      localStorage.setItem(folderStoreKey(), JSON.stringify(snapshot));
     } catch (e) {}
     folderRenderedSig = '';   // 数据变了，下一轮必须重画
   }
@@ -9979,7 +10033,11 @@
 
   function foldersTick() {
     if (!uiPrefs.folders) { folderUnmount(); return; }
-    if (!folderData) folderData = loadFolders();
+    if (!folderData || folderDataOwner !== craberAccountKey()) {
+      folderData = loadFolders();
+      folderDataOwner = craberAccountKey();
+      folderRenderedSig = '';
+    }
     folderScanRows();
     folderBindProjRowClick();
     folderAutoExpand();   // 当前会话所在文件夹自动展开（每个只自动开一次）
@@ -11135,6 +11193,44 @@
     const cfg = davLoad();
     const p = craberPage('文件夹同步', '按文件夹名合并：两边各有的都保留，同名的把条目并起来。');
 
+    /* 每个账号一个远端文件：同一个 WebDAV 多账号用时互不覆盖。
+     * 页面上直接写清楚"同步的是哪个文件"，换账号后发现看不到旧数据时不会以为丢东西。
+     */
+    const remoteInfo = folderEl('div', 'craber-set-field craber-set-field-stack');
+    const rCol = folderEl('div', 'craber-set-fieldcol');
+    rCol.append(folderEl('div', 'craber-set-label', '远端文件'));
+    const rHint = folderEl('div', 'craber-set-hint', '');
+    rCol.append(rHint);
+    const rRow = folderEl('div', 'craber-locrow');
+    const rBadge = folderEl('div', 'craber-acct');
+    const rIco = folderEl('span', 'craber-acct-ico');
+    rIco.innerHTML = mi('<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>');
+    const rName = folderEl('span', 'craber-acct-name', '识别中…');
+    rBadge.append(rIco, rName);
+    const rPath = folderEl('div', 'craber-pathprev');
+    const rPathCode = folderEl('span', 'craber-pathprev-path', '');
+    rPath.append(folderEl('span', 'craber-pathprev-label', '远端'), rPathCode);
+    rRow.append(rBadge, rPath);
+    remoteInfo.append(rCol, rRow);
+    p.append(remoteInfo);
+
+    const paintRemoteInfo = () => {
+      const who = craberAccountKey();
+      const file = davRemoteName();
+      rName.textContent = who || '未识别账号';
+      if (!who) rName.classList.add('craber-acct-name-warn');
+      else rName.classList.remove('craber-acct-name-warn');
+      rName.title = who ? ('文件夹数据按账号分开存放：' + who) : '没读到账号名，将沿用旧的公共文件';
+      rPathCode.textContent = file;
+      rPathCode.title = file;
+      rHint.textContent = who
+        ? '每个账号一个文件，同一台 WebDAV 上多账号互不覆盖'
+        : '没读到账号名，暂时沿用旧的公共文件 craber-folders.json';
+    };
+    paintRemoteInfo();
+    // 缓存里可能还没有账号名：异步补一次
+    craberAccountInfo(false).then(() => paintRemoteInfo()).catch(() => {});
+
     const notReady = () => {
       if (!cfg.url) {
         p.append(folderEl('div', 'craber-set-note', '还没配置服务器，请先到「连接设置」填写地址与账号。'));
@@ -11557,7 +11653,7 @@
     const locCol = folderEl('div', 'craber-set-fieldcol');
     locCol.append(folderEl('div', 'craber-set-label', '备份位置'));
     const locHint = folderEl('div', 'craber-set-hint',
-      '按账号名分文件夹，多账号互不覆盖');
+      '备份按账号名分文件夹，多账号互不覆盖');
     locCol.append(locHint);
     fLoc.append(locCol);
 
