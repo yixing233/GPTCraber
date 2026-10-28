@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.17.1
+// @version      0.17.2
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.17.1';
+  const CRABER_VERSION = '0.17.2';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -4073,14 +4073,44 @@
       .toLowerCase();
   }
 
+  /* 该回合在页面上的容器，按可靠程度收集。
+   * 关键点：不能只拿"答案那条消息的 id"去找 ——
+   * 新版 DOM 里回合容器挂在**提问**的 id 上（[data-turn-key] = 用户消息 id），
+   * 回答本身不一定带 data-message-id，findMsgEl(答案 id) 很可能返回 null，
+   * 于是标题永远找不到、点了只滚到回合开头（用户体感就是"只能看不能跳"）。 */
+  function craberHeadingScopes(turn) {
+    const out = [];
+    const push = (el) => {
+      if (!el || out.indexOf(el) >= 0) return;
+      out.push(el);
+    };
+    // 1) 提问所在节点 → 往上取整个回合容器（提问与回答都在里面）
+    const qid = turn.question && turn.question.message && turn.question.message.id;
+    if (qid) {
+      const el = findMsgEl(qid);
+      if (el) push(el.closest(TURN_SEL) || el.closest('[data-testid^="conversation-turn"]') || el);
+    }
+    // 2) 每条答案自己的容器（旧版把提问与回答分成两个 section）
+    for (let i = turn.answers.length - 1; i >= 0; i--) {
+      const n = turn.answers[i];
+      const id = n.message && n.message.id;
+      if (!id) continue;
+      const el = findMsgEl(id);
+      if (el) push(el.closest('[data-testid^="conversation-turn"]') || el);
+    }
+    return out;
+  }
+
   // 在某个回合的回复 DOM 里按文字找标题节点
   function craberFindHeadingEl(turn, heading) {
-    if (!turn) return null;
+    if (!turn || !heading) return null;
     const want = craberNormHeading(heading.text);
     if (!want) return null;
+    // 标题在页面上的形态不止 <h1>…<h6>：有的版本用 [role=heading] 或 class 标记
+    const HS = 'h1,h2,h3,h4,h5,h6,[role="heading"]';
     const tryIn = (node) => {
       if (!node) return null;
-      const hs = node.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      const hs = node.querySelectorAll(HS);
       let loose = null;
       for (let i = 0; i < hs.length; i++) {
         const t = craberNormHeading(hs[i].textContent);
@@ -4090,15 +4120,24 @@
       }
       return loose;
     };
-    for (let i = turn.answers.length - 1; i >= 0; i--) {
-      const n = turn.answers[i];
-      const role = n.message.author && n.message.author.role;
-      const ct = n.message.content && n.message.content.content_type;
-      if (role !== 'assistant' || (ct !== 'text' && ct !== 'multimodal_text')) continue;
-      const hit = tryIn(findMsgEl(n.message.id));
+    const scopes = craberHeadingScopes(turn);
+    for (const node of scopes) {
+      const hit = tryIn(node);
       if (hit) return hit;
     }
-    return null;
+    /* 兜底：属性一旦改版，上面的 id 匹配会整条失效。此时在全文里找一个
+     * 文字完全一致的标题 —— 只有当它唯一时才采纳，避免跳到别的回合去。 */
+    const all = document.querySelectorAll(HS);
+    let only = null;
+    let count = 0;
+    for (let i = 0; i < all.length; i++) {
+      if (!all[i].offsetHeight) continue;
+      if (craberNormHeading(all[i].textContent) !== want) continue;
+      count++;
+      only = all[i];
+      if (count > 1) break;
+    }
+    return count === 1 ? only : null;
   }
 
   /* 跳到某一节。回合本身可能还没挂载，先走一遍 navigateToTurn 把它拉出来，
@@ -4110,8 +4149,18 @@
     const turn = state.turns && state.turns[idx];
     if (!turn || !heading) return;
     await navigateToTurn(idx);
-    const target = craberFindHeadingEl(turn, heading);
-    if (!target) { navToast('没找到「' + heading.text.slice(0, 20) + '」这一节，已停在回合开头'); return; }
+    /* 回合刚挂载时正文可能还没渲染完（React 分两步：先挂容器再填内容），
+     * 立刻查标题会扑空。给几轮重试，每轮 120ms —— 总等待上限 1.2s，
+     * 比"直接放弃、只停在回合开头"有用得多。 */
+    let target = craberFindHeadingEl(turn, heading);
+    for (let i = 0; i < 10 && !target; i++) {
+      await navSleep(120);
+      target = craberFindHeadingEl(turn, heading);
+    }
+    if (!target) {
+      navToast('没找到「' + heading.text.slice(0, 20) + '」这一节，已停在回合开头');
+      return;
+    }
     const sc = getScrollContainer();
     const prev = sc.style.scrollBehavior;
     sc.style.scrollBehavior = 'auto';
@@ -4432,6 +4481,7 @@
         const turn = state.turns && state.turns[idx];
         const heading = turn ? craberTurnOutline(turn)[j] : null;
         if (heading) navigateToSection(idx, heading);
+        else navToast('这一节已失效，试试刷新会话');
       });
     });
 
