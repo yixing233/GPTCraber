@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.16.1
+// @version      0.17.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.16.1';
+  const CRABER_VERSION = '0.17.0';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -1862,10 +1862,11 @@
       cursor:pointer;font-family:system-ui,sans-serif;
       transform:translate3d(var(--cx,0px),var(--cy,0px),0);
       transition:transform var(--cdur,160ms) cubic-bezier(.22,.85,.3,1)}
-    .craber-nav-card-in{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;
+    .craber-nav-card-in{display:flex;flex-direction:column;padding:10px 12px;
       background:var(--craber-nav-card);border:1px solid var(--craber-nav-card-line);
       border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.16);
       animation:craber-card-in .18s cubic-bezier(.2,.8,.25,1)}
+    .craber-nav-card-top{display:flex;align-items:flex-start;gap:10px}
     /* 换节点时文字是瞬间替换的，卡片还没滑到位就已经显示新内容 —— 这一帧最露馅，
        用一次短促淡入盖掉。动画式而非状态式，连续快速切换也不会卡在半透明。 */
     .craber-nav-card.swap .craber-nav-card-in{animation:craber-card-swap .16s ease-out}
@@ -1929,6 +1930,8 @@
     .craber-nav-panel-list{flex:1;overflow-y:auto;padding:4px 0;scrollbar-width:thin}
     .craber-nav-panel-item{padding:8px 12px;max-height:68px;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:3px;
       transition:background .12s;border-left:3px solid transparent;overflow:hidden}
+    /* 展开大纲时放开高度限制，否则 40 条会被 68px 直接裁断 */
+    .craber-nav-panel-item.open{max-height:none;overflow:visible}
     .craber-nav-panel-item:hover{background:var(--craber-hover)}
     .craber-nav-panel-item.active{background:var(--craber-hover);border-left-color:var(--craber-accent)}
     .craber-nav-panel-item-hd{display:flex;align-items:baseline;gap:6px;min-width:0}
@@ -1938,6 +1941,39 @@
     .craber-nav-panel-item-preview{font-size:11px;color:var(--craber-sub);line-height:1.4;
       display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
     .craber-nav-panel-empty{padding:28px 16px;text-align:center;font-size:12px;color:var(--craber-sub)}
+    /* 面板里的分节标记：有这个回合才展开得出大纲 */
+    .craber-nav-panel-item-sec{flex:none;font-size:10.5px;font-weight:600;color:var(--craber-accent);
+      background:color-mix(in srgb,var(--craber-accent) 12%,transparent);
+      padding:1px 6px;border-radius:8px;cursor:pointer;white-space:nowrap}
+    .craber-nav-panel-item-sec:hover{background:color-mix(in srgb,var(--craber-accent) 22%,transparent)}
+    .craber-nav-panel-outline{display:flex;flex-direction:column;gap:1px;margin:4px 0 2px 8px;
+      padding-left:8px;border-left:1px solid var(--craber-line)}
+    .craber-nav-panel-sub{display:flex;gap:6px;align-items:baseline;padding:4px 6px;border-radius:6px;
+      cursor:pointer;font-size:11.5px;line-height:1.4;color:var(--craber-sub)}
+    .craber-nav-panel-sub:hover{background:var(--craber-hover);color:var(--craber-fg)}
+
+    /* ============ 消息内大纲（回合卡片里的二级节点） ============
+     * 长回复经常分节，回合级节点只能定位到"这一问"，进来还得自己滚。
+     * 卡片里列出该回复的标题，点一下直接落到那一节。
+     */
+    .craber-nav-outline{margin-top:8px;padding-top:8px;border-top:1px solid var(--craber-nav-card-line);
+      display:flex;flex-direction:column;gap:2px;min-width:0}
+    .craber-nav-outline[hidden]{display:none}
+    .craber-nav-outline-list{display:flex;flex-direction:column;gap:1px;
+      max-height:170px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+    .craber-nav-ol-item{display:flex;align-items:baseline;gap:6px;width:100%;box-sizing:border-box;
+      padding:3px 6px;border:none;background:none;border-radius:6px;cursor:pointer;
+      font-family:inherit;font-size:11.5px;line-height:1.45;
+      color:color-mix(in srgb,var(--craber-nav-strong) 78%,transparent);
+      text-align:left;-webkit-tap-highlight-color:transparent}
+    .craber-nav-ol-item:hover{background:var(--craber-hover);color:var(--craber-nav-strong)}
+    .craber-nav-ol-item:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px}
+    .craber-nav-ol-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    /* 放在滚动区外面：始终可见，也不会被容器的 overflow 裁掉半行 */
+    .craber-nav-ol-more{width:100%;box-sizing:border-box;padding:5px 6px;border:none;
+      border-radius:6px;cursor:pointer;text-align:left;font-family:inherit;
+      font-size:11px;color:var(--craber-nav-muted);opacity:.95;background:none}
+    .craber-nav-ol-more:hover{background:var(--craber-hover);color:var(--craber-accent);opacity:1}
 
     /* 轻提示条：次要反馈（如目标消息尚未挂载）用它，不再用 alert 打断阅读 */
     .craber-toast{position:fixed;left:50%;bottom:84px;z-index:var(--craber-z-tip);pointer-events:none;
@@ -3852,23 +3888,30 @@
     navCardEl.className = 'craber-nav-card';
     navCardEl.hidden = true;
     // 结构只建一次，之后只改文字：hover 时重建 innerHTML 会白造垃圾、也让文字闪一下。
+    // 卡片：标题 + 预览 + 编号；下方是"消息内大纲"，有分节时才出现
     navCardEl.innerHTML =
       '<div class="craber-nav-card-in">' +
-        '<span class="craber-nav-main">' +
-          '<div class="craber-nav-title"></div><div class="craber-nav-preview"></div>' +
-        '</span>' +
-        '<span class="craber-nav-num"></span>' +
+        '<div class="craber-nav-card-top">' +
+          '<span class="craber-nav-main">' +
+            '<div class="craber-nav-title"></div><div class="craber-nav-preview"></div>' +
+          '</span>' +
+          '<span class="craber-nav-num"></span>' +
+        '</div>' +
+        '<div class="craber-nav-outline" hidden><div class="craber-nav-outline-list"></div></div>' +
       '</div>';
     navCardRefs = {
       title: navCardEl.querySelector('.craber-nav-title'),
       preview: navCardEl.querySelector('.craber-nav-preview'),
-      num: navCardEl.querySelector('.craber-nav-num')
+      num: navCardEl.querySelector('.craber-nav-num'),
+      outline: navCardEl.querySelector('.craber-nav-outline')
     };
     document.body.appendChild(navCardEl);
 
     navCardEl.addEventListener('mouseenter', () => clearTimeout(navCardHideTimer));
     navCardEl.addEventListener('mouseleave', scheduleHideNavCard);
-    navCardEl.addEventListener('click', () => {
+    navCardEl.addEventListener('click', (e) => {
+      // 大纲条目自己处理跳转，别让它顺带把整个回合再跳一次
+      if (e.target && e.target.closest && e.target.closest('.craber-nav-ol-item')) return;
       if (navCardTurnIdx >= 0) navigateToTurn(navCardTurnIdx);
     });
     // 滚动联动：ChatGPT 的滚动容器是 main 内部的 div，window 上收不到 scroll，
@@ -3930,6 +3973,197 @@
     b.focus();
   }
 
+  /* ---------- 消息内大纲（二级节点） ----------
+   * 长回复常常分节（"一、…"、"3.1 …" 这样的标题），回合级节点只能定位到
+   * "这一问"，点进去还得自己滚几百屏。这里从该回合的回复正文里抽出标题，
+   * 作为二级节点挂到卡片和全量面板里。
+   *
+   * 只解析 markdown 的 ATX 标题（# 到 ######）：ChatGPT 的正文就是 markdown，
+   * 页面渲染出来的 <h1>…<h6> 也正好由它生成，两边能一一对上。
+   * 代码块里的 # 注释必须排除，否则一段 Python 就能抽出几十个假标题 ——
+   * 所以围栏状态要自己走一遍，正则一律用 \u0060 写反引号，避免转义麻烦。
+   */
+  const OUTLINE_CACHE = new Map();     // msgId -> { len, list }
+  const OUTLINE_MAX = 40;              // 单个回复最多列 40 条，再多就不是"大纲"了
+  const OUTLINE_MAX_LEVEL = 4;         // h5/h6 一般是排版细节，列出来只会淹没有效层级
+
+  function craberHeadingsFromMarkdown(md) {
+    const out = [];
+    if (!md) return out;
+    const lines = String(md).split('\n');
+    let fence = null;                  // 当前所在的代码围栏（反引号 或 波浪号）
+    for (const raw of lines) {
+      const line = raw.replace(/\r$/, '');
+      const f = line.match(/^\s*(\u0060{3,}|~{3,})/);
+      if (f) {
+        const ch = f[1].charAt(0);
+        if (!fence) fence = ch;
+        else if (ch === fence) fence = null;
+        continue;
+      }
+      if (fence) continue;
+      const m = line.match(/^(#{1,6})\s+(.*\S)\s*$/);
+      if (!m) continue;
+      const level = m[1].length;
+      if (level > OUTLINE_MAX_LEVEL) continue;
+      // 去掉行内的粗体、行内代码、链接等标记，只留可读文字
+      let text = m[2]
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/[*_~]/g, '')
+        .replace(/\u0060/g, '')
+        .trim();
+      if (!text) continue;
+      out.push({ level: level, text: text });
+      if (out.length >= OUTLINE_MAX) break;
+    }
+    return out;
+  }
+
+  // 取某个回合的大纲：以最后一条有文字的助手回复为准（分叉会话里可能有多个答案）
+  function craberTurnOutline(turn) {
+    if (!turn || !turn.answers || !turn.answers.length) return [];
+    let picked = null;
+    for (let i = turn.answers.length - 1; i >= 0; i--) {
+      const n = turn.answers[i];
+      const role = n.message.author && n.message.author.role;
+      const ct = n.message.content && n.message.content.content_type;
+      if (role === 'assistant' && (ct === 'text' || ct === 'multimodal_text')) {
+        if (extractText(n)) { picked = n; break; }
+      }
+    }
+    if (!picked) return [];
+    const id = picked.message.id;
+    const content = picked.message.content;
+    /* 命中判据用 content 的对象身份，而不是长度：抽文本 + 解析标题都是
+     * O(正文长度) 的操作，而面板每敲一个字符就要把所有回合过一遍。
+     * state 每次重新拉取都会产生新对象，所以身份不同就等于内容变了；
+     * 同样的对象则一定还是同一份内容，可以 O(1) 直接返回。 */
+    const hit = OUTLINE_CACHE.get(id);
+    if (hit && hit.content === content) return hit.list;
+    const md = extractText(picked);
+    const list = craberHeadingsFromMarkdown(md);
+    // 只有一条标题时不算"分节"，不给用户添噪
+    const final = list.length >= 2 ? list : [];
+    OUTLINE_CACHE.set(id, { content: content, list: final });
+    return final;
+  }
+
+  // 正文里的标题文字和 markdown 源码可能差一点点（行内代码、上下标、emoji 前空格），
+  // 比对时统一去掉空白与常见标点，再做包含判断。
+  function craberNormHeading(s) {
+    return String(s || '')
+      .replace(/[\s\u00a0]+/g, '')
+      .replace(/[：:．.、,，;；!！?？\-—_·]/g, '')
+      .toLowerCase();
+  }
+
+  // 在某个回合的回复 DOM 里按文字找标题节点
+  function craberFindHeadingEl(turn, heading) {
+    if (!turn) return null;
+    const want = craberNormHeading(heading.text);
+    if (!want) return null;
+    const tryIn = (node) => {
+      if (!node) return null;
+      const hs = node.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      let loose = null;
+      for (let i = 0; i < hs.length; i++) {
+        const t = craberNormHeading(hs[i].textContent);
+        if (!t || !hs[i].offsetHeight) continue;
+        if (t === want) return hs[i];
+        if (!loose && t.indexOf(want) >= 0) loose = hs[i];
+      }
+      return loose;
+    };
+    for (let i = turn.answers.length - 1; i >= 0; i--) {
+      const n = turn.answers[i];
+      const role = n.message.author && n.message.author.role;
+      const ct = n.message.content && n.message.content.content_type;
+      if (role !== 'assistant' || (ct !== 'text' && ct !== 'multimodal_text')) continue;
+      const hit = tryIn(findMsgEl(n.message.id));
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  /* 跳到某一节。回合本身可能还没挂载，先走一遍 navigateToTurn 把它拉出来，
+   * 再在它的 DOM 里定位标题。定位失败就退回到"跳到该回合开头"，
+   * 至少不会把人留在原地。 */
+  async function navigateToSection(idx, heading) {
+    hideNavCard();
+    hideNavPanel();
+    const turn = state.turns && state.turns[idx];
+    if (!turn || !heading) return;
+    await navigateToTurn(idx);
+    const target = craberFindHeadingEl(turn, heading);
+    if (!target) { navToast('没找到「' + heading.text.slice(0, 20) + '」这一节，已停在回合开头'); return; }
+    const sc = getScrollContainer();
+    const prev = sc.style.scrollBehavior;
+    sc.style.scrollBehavior = 'auto';
+    try {
+      for (let i = 0; i < 6; i++) {
+        const delta = contentTopOf(sc, target) - NAV_SCROLL_OFFSET;
+        const m = navScrollMetrics(sc);
+        if (Math.abs(delta - m.pos) < 4) break;
+        navScrollTo(sc, delta);
+        await navSleep(110);
+      }
+    } finally {
+      sc.style.scrollBehavior = prev;
+    }
+    flashMessage(target);
+  }
+
+  // 卡片里的大纲：条目多时只列前若干条，剩下的提示去全量面板看
+  const NAV_CARD_OUTLINE_MAX = 8;
+  function paintNavCardOutline(idx, turn) {
+    const box = navCardRefs.outline;
+    if (!box) return;
+    box.innerHTML = '';
+    const list = craberTurnOutline(turn);
+    if (!list.length) { box.hidden = true; return; }
+    box.hidden = false;
+    // 结构：滚动列表 + 固定在下面的"还有 N 节"，两段分开建
+    const listBox = document.createElement('div');
+    listBox.className = 'craber-nav-outline-list';
+    box.append(listBox);
+    const shown = list.slice(0, NAV_CARD_OUTLINE_MAX);
+    for (const h of shown) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'craber-nav-ol-item';
+      btn.title = h.text;
+      // 按标题级别缩进，代替"H1/H2"这种小徽标：目录本来就是靠缩进看层级的，
+      // 每行都挂一个 H 标签反而把正文挤窄、也抢注意力。
+      btn.style.paddingLeft = (6 + Math.min(3, h.level - 1) * 10) + 'px';
+      const t = document.createElement('span');
+      t.className = 'craber-nav-ol-t';
+      t.textContent = h.text;
+      btn.append(t);
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateToSection(idx, h);
+      });
+      listBox.append(btn);
+    }
+    if (list.length > shown.length) {
+      // 卡片里放不下就引导到全量面板；这里必须是真的能点，光写"去看全部"
+      // 会让用户去找一个可能根本不存在的 ··· 按钮（回合数少于 30 时没有）。
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'craber-nav-ol-more';
+      more.textContent = '还有 ' + (list.length - shown.length) + ' 节 · 打开全部大纲';
+      more.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        hideNavCard();
+        navPanelExpanded.add(idx);   // 先登记展开，再让面板按这个状态渲染
+        showNavPanel(null);
+      });
+      box.append(more);
+    }
+  }
+
   // 悬浮/聚焦节点时，在轨道右侧弹出该回合的卡片。
   // 卡片结构在 mountNavRail 里建好一次，这里只改文字 —— 原来每次 hover 都重建
   // innerHTML，扫过轨道就是几十次解析 + 重排。
@@ -3943,6 +4177,7 @@
     navCardRefs.title.textContent = (extractText(turn.question) || '(无文字提问)').slice(0, 90);
     navCardRefs.preview.textContent = turnPreview(turn).slice(0, 180);
     navCardRefs.num.textContent = '#' + (idx + 1);
+    paintNavCardOutline(idx, turn);
     const firstShow = navCardEl.hidden;
     if (firstShow) {
       // 先隐形挂上量尺寸，定好位再显形，首帧就不会有滑动。
@@ -4058,7 +4293,7 @@
             '<svg class="craber-nav-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
               '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>' +
             '</svg>' +
-            '<input type="text" class="craber-nav-search" placeholder="搜索提问内容或 #回合号..." />' +
+            '<input type="text" class="craber-nav-search" placeholder="搜索提问、大纲标题或 #回合号..." />' +
           '</div>' +
         '</div>' +
         '<div class="craber-nav-panel-list"></div>';
@@ -4101,6 +4336,11 @@
   }
 
   // 根据搜索关键字渲染面板条目列表
+  /* 面板里展开着大纲的回合下标。切会话要清空 —— 下标是按当前会话算的，
+   * 留着会把新会话的第 N 个回合误展开。 */
+  let navPanelExpanded = new Set();
+
+  // 根据搜索关键字渲染面板条目列表
   function renderNavPanelItems(kw) {
     if (!navPanelEl) return;
     const listEl = navPanelEl.querySelector('.craber-nav-panel-list');
@@ -4114,30 +4354,75 @@
       const title = extractText(turn.question) || '(无文字提问)';
       const preview = turnPreview(turn);
       const numStr = '#' + (i + 1);
+      const outline = craberTurnOutline(turn);
+      // 搜索也搜大纲标题：在长回复里找某个小节，比记它属于第几问靠谱得多
+      const outlineText = outline.map((h) => h.text).join(' ');
       if (kwLower) {
-        const textToSearch = (numStr + ' ' + title + ' ' + preview).toLowerCase();
+        const textToSearch = (numStr + ' ' + title + ' ' + preview + ' ' + outlineText).toLowerCase();
         if (!textToSearch.includes(kwLower)) continue;
       }
       matchCount++;
       const isAct = i === navActiveIdx;
+      // 搜索命中大纲标题时自动展开，省一次点击
+      const autoOpen = !!kwLower && !!outlineText && outlineText.toLowerCase().indexOf(kwLower) >= 0;
+      const open = navPanelExpanded.has(i) || autoOpen;
       html +=
-        '<div class=\"craber-nav-panel-item' + (isAct ? ' active' : '') + '\" data-idx=\"' + i + '\">' +
-          '<div class=\"craber-nav-panel-item-hd\">' +
-            '<span class=\"craber-nav-panel-item-num\">' + numStr + '</span>' +
-            '<div class=\"craber-nav-panel-item-title\">' + escapeHtml(title) + '</div>' +
+        '<div class="craber-nav-panel-item' + (isAct ? ' active' : '') + (open ? ' open' : '')
+          + '" data-idx="' + i + '">' +
+          '<div class="craber-nav-panel-item-hd">' +
+            '<span class="craber-nav-panel-item-num">' + numStr + '</span>' +
+            '<div class="craber-nav-panel-item-title">' + escapeHtml(title) + '</div>' +
+            (outline.length
+              ? '<span class="craber-nav-panel-item-sec" data-sec="' + i + '" title="展开本回合的消息大纲">'
+                + outline.length + ' 节</span>'
+              : '') +
           '</div>' +
-          (preview ? '<div class=\"craber-nav-panel-item-preview\">' + escapeHtml(preview) + '</div>' : '') +
+          (preview && !open
+            ? '<div class="craber-nav-panel-item-preview">' + escapeHtml(preview) + '</div>'
+            : '') +
+          (open ? '<div class="craber-nav-panel-outline">' + outline.map((h, j) =>
+            '<div class="craber-nav-panel-sub" data-idx="' + i + '" data-h="' + j + '"'
+            + ' title="' + escapeHtml(h.text).replace(/&quot;/g, '&#34;') + '"'
+            + ' style="padding-left:' + (6 + Math.min(3, h.level - 1) * 12) + 'px">'
+            + '<span class="craber-nav-ol-t">' + escapeHtml(h.text) + '</span>'
+            + '</div>').join('') + '</div>' : '') +
         '</div>';
     }
     if (!matchCount) {
-      html = '<div class=\"craber-nav-panel-empty\">未找到匹配节点</div>';
+      html = '<div class="craber-nav-panel-empty">未找到匹配节点</div>';
     }
     listEl.innerHTML = html;
 
-    // 点击项跳转
-    const items = listEl.querySelectorAll('.craber-nav-panel-item');
-    items.forEach((item) => {
-      item.addEventListener('click', () => {
+    // 点「N 节」徽标：展开/收起该回合的大纲（不要连带跳转回合）
+    listEl.querySelectorAll('.craber-nav-panel-item-sec').forEach((tag) => {
+      tag.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const idx = +tag.dataset.sec;
+        if (navPanelExpanded.has(idx)) navPanelExpanded.delete(idx);
+        else navPanelExpanded.add(idx);
+        const input = navPanelEl.querySelector('.craber-nav-search');
+        renderNavPanelItems(input ? input.value.trim() : '');
+      });
+    });
+
+    // 点大纲条目：落到那一节
+    listEl.querySelectorAll('.craber-nav-panel-sub').forEach((sub) => {
+      sub.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const idx = +sub.dataset.idx;
+        const j = +sub.dataset.h;
+        const turn = state.turns && state.turns[idx];
+        const heading = turn ? craberTurnOutline(turn)[j] : null;
+        if (heading) navigateToSection(idx, heading);
+      });
+    });
+
+    // 点回合本身跳转
+    listEl.querySelectorAll('.craber-nav-panel-item').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        if (e.target && e.target.closest && e.target.closest('.craber-nav-panel-outline')) return;
         const idx = +item.dataset.idx;
         hideNavPanel();
         navigateToTurn(idx);
@@ -4719,6 +5004,7 @@
     navActiveIdx = -1;
     navRenderedCount = 0;
     navIdxById = Object.create(null);
+    navPanelExpanded.clear();   // 大纲展开状态按回合下标记，换会话必须清
     hideNavCard();
     hideNavPanel();
     if (navRailEl) {
