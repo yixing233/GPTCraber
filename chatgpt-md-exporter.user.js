@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.17.3
+// @version      0.17.4
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.17.3';
+  const CRABER_VERSION = '0.17.4';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -1951,11 +1951,10 @@
     .craber-nav-panel-item-preview{font-size:11px;color:var(--craber-sub);line-height:1.4;
       display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
     .craber-nav-panel-empty{padding:28px 16px;text-align:center;font-size:12px;color:var(--craber-sub)}
-    /* 面板里的分节标记：有这个回合才展开得出大纲 */
+    /* 小节数：纯标签，二级节点本来就全列出来了，这里只做个提示 */
     .craber-nav-panel-item-sec{flex:none;font-size:10.5px;font-weight:600;color:var(--craber-accent);
       background:color-mix(in srgb,var(--craber-accent) 12%,transparent);
-      padding:1px 6px;border-radius:8px;cursor:pointer;white-space:nowrap}
-    .craber-nav-panel-item-sec:hover{background:color-mix(in srgb,var(--craber-accent) 22%,transparent)}
+      padding:1px 6px;border-radius:8px;white-space:nowrap}
     .craber-nav-panel-outline{display:flex;flex-direction:column;gap:1px;margin:4px 0 2px 8px;
       padding-left:8px;border-left:1px solid var(--craber-line)}
     .craber-nav-panel-sub{display:flex;gap:6px;align-items:baseline;padding:4px 6px;border-radius:6px;
@@ -1970,7 +1969,7 @@
       display:flex;flex-direction:column;gap:2px;min-width:0}
     .craber-nav-outline[hidden]{display:none}
     .craber-nav-outline-list{display:flex;flex-direction:column;gap:1px;
-      max-height:170px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+      max-height:min(46vh,340px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
     .craber-nav-ol-item{display:flex;align-items:baseline;gap:6px;width:100%;box-sizing:border-box;
       padding:3px 6px;border:none;background:none;border-radius:6px;cursor:pointer;
       font-family:inherit;font-size:11.5px;line-height:1.45;
@@ -1979,11 +1978,6 @@
     .craber-nav-ol-item:hover{background:var(--craber-hover);color:var(--craber-nav-strong)}
     .craber-nav-ol-item:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px}
     .craber-nav-ol-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    /* 放在滚动区外面：始终可见，也不会被容器的 overflow 裁掉半行 */
-    .craber-nav-ol-more{width:100%;box-sizing:border-box;padding:5px 6px;border:none;
-      border-radius:6px;cursor:pointer;text-align:left;font-family:inherit;
-      font-size:11px;color:var(--craber-nav-muted);opacity:.95;background:none}
-    .craber-nav-ol-more:hover{background:var(--craber-hover);color:var(--craber-accent);opacity:1}
 
     /* 轻提示条：次要反馈（如目标消息尚未挂载）用它，不再用 alert 打断阅读 */
     .craber-toast{position:fixed;left:50%;bottom:84px;z-index:var(--craber-z-tip);pointer-events:none;
@@ -4191,8 +4185,8 @@
     flashInline(target);
   }
 
-  // 卡片里的大纲：条目多时只列前若干条，剩下的提示去全量面板看
-  const NAV_CARD_OUTLINE_MAX = 8;
+  // 卡片里的大纲：全部列出。卡片本身限高 170px，内部滚动即可 ——
+  // 分页/展开多一次点击，反而把内容藏起来了。
   function paintNavCardOutline(idx, turn) {
     const box = navCardRefs.outline;
     if (!box) return;
@@ -4200,12 +4194,10 @@
     const list = craberTurnOutline(turn);
     if (!list.length) { box.hidden = true; return; }
     box.hidden = false;
-    // 结构：滚动列表 + 固定在下面的"还有 N 节"，两段分开建
     const listBox = document.createElement('div');
     listBox.className = 'craber-nav-outline-list';
     box.append(listBox);
-    const shown = list.slice(0, NAV_CARD_OUTLINE_MAX);
-    for (const h of shown) {
+    for (const h of list) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'craber-nav-ol-item';
@@ -4223,22 +4215,6 @@
         navigateToSection(idx, h);
       });
       listBox.append(btn);
-    }
-    if (list.length > shown.length) {
-      // 卡片里放不下就引导到全量面板；这里必须是真的能点，光写"去看全部"
-      // 会让用户去找一个可能根本不存在的 ··· 按钮（回合数少于 30 时没有）。
-      const more = document.createElement('button');
-      more.type = 'button';
-      more.className = 'craber-nav-ol-more';
-      more.textContent = '还有 ' + (list.length - shown.length) + ' 节 · 打开全部大纲';
-      more.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        hideNavCard();
-        navPanelExpanded.add(idx);   // 先登记展开，再让面板按这个状态渲染
-        showNavPanel(null);
-      });
-      box.append(more);
     }
   }
 
@@ -4413,12 +4389,9 @@
     setTimeout(() => { if (input) input.focus(); }, 40);
   }
 
-  // 根据搜索关键字渲染面板条目列表
-  /* 面板里展开着大纲的回合下标。切会话要清空 —— 下标是按当前会话算的，
-   * 留着会把新会话的第 N 个回合误展开。 */
-  let navPanelExpanded = new Set();
-
-  // 根据搜索关键字渲染面板条目列表
+  /* 根据搜索关键字渲染面板条目列表。
+   * 二级节点一律展开显示 —— 面板本来就是个"全部节点"列表，
+   * 再套一层"点这里展开"只是多一次点击，反而把内容藏起来了。 */
   function renderNavPanelItems(kw) {
     if (!navPanelEl) return;
     const listEl = navPanelEl.querySelector('.craber-nav-panel-list');
@@ -4441,24 +4414,21 @@
       }
       matchCount++;
       const isAct = i === navActiveIdx;
-      // 搜索命中大纲标题时自动展开，省一次点击
-      const autoOpen = !!kwLower && !!outlineText && outlineText.toLowerCase().indexOf(kwLower) >= 0;
-      const open = navPanelExpanded.has(i) || autoOpen;
       html +=
-        '<div class="craber-nav-panel-item' + (isAct ? ' active' : '') + (open ? ' open' : '')
+        '<div class="craber-nav-panel-item' + (isAct ? ' active' : '') + (outline.length ? ' open' : '')
           + '" data-idx="' + i + '">' +
           '<div class="craber-nav-panel-item-hd">' +
             '<span class="craber-nav-panel-item-num">' + numStr + '</span>' +
             '<div class="craber-nav-panel-item-title">' + escapeHtml(title) + '</div>' +
             (outline.length
-              ? '<span class="craber-nav-panel-item-sec" data-sec="' + i + '" title="展开本回合的消息大纲">'
-                + outline.length + ' 节</span>'
+              ? '<span class="craber-nav-panel-item-sec">' + outline.length + ' 节</span>'
               : '') +
           '</div>' +
-          (preview && !open
+          // 有二级节点时不再显示摘要：内容已经由下面的小标题说明了
+          (preview && !outline.length
             ? '<div class="craber-nav-panel-item-preview">' + escapeHtml(preview) + '</div>'
             : '') +
-          (open ? '<div class="craber-nav-panel-outline">' + outline.map((h, j) =>
+          (outline.length ? '<div class="craber-nav-panel-outline">' + outline.map((h, j) =>
             '<div class="craber-nav-panel-sub" data-idx="' + i + '" data-h="' + j + '"'
             + ' title="' + escapeHtml(h.text).replace(/&quot;/g, '&#34;') + '"'
             + ' style="padding-left:' + (6 + Math.min(3, h.level - 1) * 12) + 'px">'
@@ -4470,19 +4440,6 @@
       html = '<div class="craber-nav-panel-empty">未找到匹配节点</div>';
     }
     listEl.innerHTML = html;
-
-    // 点「N 节」徽标：展开/收起该回合的大纲（不要连带跳转回合）
-    listEl.querySelectorAll('.craber-nav-panel-item-sec').forEach((tag) => {
-      tag.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const idx = +tag.dataset.sec;
-        if (navPanelExpanded.has(idx)) navPanelExpanded.delete(idx);
-        else navPanelExpanded.add(idx);
-        const input = navPanelEl.querySelector('.craber-nav-search');
-        renderNavPanelItems(input ? input.value.trim() : '');
-      });
-    });
 
     // 点大纲条目：落到那一节
     listEl.querySelectorAll('.craber-nav-panel-sub').forEach((sub) => {
@@ -5071,7 +5028,6 @@
     navActiveIdx = -1;
     navRenderedCount = 0;
     navIdxById = Object.create(null);
-    navPanelExpanded.clear();   // 大纲展开状态按回合下标记，换会话必须清
     hideNavCard();
     hideNavPanel();
     if (navRailEl) {
