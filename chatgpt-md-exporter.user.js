@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.17.0
+// @version      0.17.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.17.0';
+  const CRABER_VERSION = '0.17.1';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -3987,11 +3987,12 @@
   const OUTLINE_MAX = 40;              // 单个回复最多列 40 条，再多就不是"大纲"了
   const OUTLINE_MAX_LEVEL = 4;         // h5/h6 一般是排版细节，列出来只会淹没有效层级
 
-  function craberHeadingsFromMarkdown(md) {
-    const out = [];
-    if (!md) return out;
-    const lines = String(md).split('\n');
-    let fence = null;                  // 当前所在的代码围栏（反引号 或 波浪号）
+  /* 扫一遍标题。respectFence=true 时跳过代码围栏里的 # 注释。
+   * 返回值多带一个 unbalanced：走到文末围栏还开着，说明这份正文的
+   * 三反引号本身没配对，调用方据此退回不过滤的扫描。 */
+  function craberScanHeadings(lines, respectFence) {
+    const kept = [];
+    let fence = null;
     for (const raw of lines) {
       const line = raw.replace(/\r$/, '');
       const f = line.match(/^\s*(\u0060{3,}|~{3,})/);
@@ -4001,22 +4002,37 @@
         else if (ch === fence) fence = null;
         continue;
       }
-      if (fence) continue;
       const m = line.match(/^(#{1,6})\s+(.*\S)\s*$/);
       if (!m) continue;
       const level = m[1].length;
       if (level > OUTLINE_MAX_LEVEL) continue;
       // 去掉行内的粗体、行内代码、链接等标记，只留可读文字
-      let text = m[2]
+      const text = m[2]
         .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
         .replace(/[*_~]/g, '')
         .replace(/\u0060/g, '')
         .trim();
       if (!text) continue;
-      out.push({ level: level, text: text });
-      if (out.length >= OUTLINE_MAX) break;
+      if (respectFence && fence) continue;
+      kept.push({ level: level, text: text });
     }
-    return out;
+    return { kept: kept, unbalanced: !!fence };
+  }
+
+  function craberHeadingsFromMarkdown(md) {
+    if (!md) return [];
+    const lines = String(md).split('\n');
+    const strict = craberScanHeadings(lines, true);
+    /* 围栏在文末还没闭合 → 这份正文的三反引号本身是坏的，通常是复制粘贴
+     * 把开头的围栏吃掉了（实测："cd D:\QQAI" 和它上面的三反引号粘成了一行）。
+     * 一旦配对从第一处就错位，后面整段正文都会被算成代码块：一份 Windows
+     * 部署教程因此被吞掉 26 个标题、只剩 3 个，大纲直接从"第四阶段"开始。
+     *
+     * 判据只看"围栏是否闭合"这一条，不做启发式猜测：
+     * 配对完整时，代码块里的 # 就该被当成注释排除（真实的 Python 脚本里
+     * 有几十个 # 也不该变成目录）；只有配对本身就是坏的，才退回不过滤的扫描。 */
+    const list = strict.unbalanced ? craberScanHeadings(lines, false).kept : strict.kept;
+    return list.slice(0, OUTLINE_MAX);
   }
 
   // 取某个回合的大纲：以最后一条有文字的助手回复为准（分叉会话里可能有多个答案）
