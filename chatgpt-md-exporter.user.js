@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.15.1
+// @version      0.15.2
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.15.1';
+  const CRABER_VERSION = '0.15.2';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -240,15 +240,67 @@
       throw err;
     },
 
-    async getFileInfo(fileId) {
+    /* 取附件下载信息：{ download_url, mime_type, file_name }
+     * 403 很常见（附件属主不是当前账号、文件已过期、或该文件的下载权限被收紧），
+     * 而它并非"脚本坏了"，所以这里做两件事：
+     *   1) 带 Bearer 失败时再用纯 Cookie 试一次（和 getConversation 同一套兜底逻辑）
+     *   2) 失败结果记进 _fileDenied，同一份导出里不再对同一个 id 反复重试
+     */
+    _fileDenied: Object.create(null),
+    async getFileInfo(fileId, opts) {
+      if (!fileId) throw new Error('附件 id 为空');
+      const memo = this._fileDenied[fileId];
+      // 负缓存只活 10 分钟：链接权限可能恢复，没必要一辈子判死
+      if (memo && Date.now() - memo < 10 * 60 * 1000) {
+        throw new Error('文件信息获取失败: ' + memo);
+      }
       await apiWait();
-      const t = await this.getToken();
-      const r = await fetch('/backend-api/files/' + fileId + '/download', {
-        headers: { Authorization: 'Bearer ' + t },
-        credentials: 'include'
-      });
-      if (!r.ok) throw new Error('文件信息获取失败: ' + r.status);
-      return r.json(); // { download_url, mime_type, file_name, ... }
+      let t = null;
+      try { t = await this.getToken(); } catch (e) { t = null; }
+
+      // 两种鉴权各试一次，顺序按已知有效的方式排前面。注意别放进重复项：
+      // 早先这里用「null 且还没失败过就跳过」来去重，结果当首选就是 cookie 时
+      // 把唯一那次 cookie 请求也跳过了，兜底形同虚设。
+      const bearerHeaders = t ? { Authorization: 'Bearer ' + t } : null;
+      const modes = craberAuthMode === 'cookie'
+        ? [null, bearerHeaders]
+        : [bearerHeaders, null];
+      const tried = [];
+      let lastStatus = 0;
+      let lastErr = null;
+      for (const headers of modes) {
+        // null 表示"纯 Cookie"；重复出现或拿不到 token 时只留一个
+        const key = headers ? 'bearer' : 'cookie';
+        if (tried.indexOf(key) >= 0) continue;
+        tried.push(key);
+        try {
+          const r = await fetch('/backend-api/files/' + fileId + '/download', {
+            headers: headers || {},
+            credentials: 'include'
+          });
+          if (r.status === 429) {
+            noteRateLimit(r);
+            throw new Error('文件信息获取失败: 429（已限流）');
+          }
+          if (r.ok) {
+            const j = await r.json();
+            // 拿到了就记一下哪种鉴权有效，供后续请求优先使用
+            craberNoteAuthMode(headers ? 'bearer' : 'cookie');
+            return j;
+          }
+          lastStatus = r.status;
+          // 只有鉴权类错误才换模式；404 说明文件确实没了，换模式没意义
+          if (r.status !== 401 && r.status !== 403) break;
+        } catch (e) {
+          if (/429/.test(String(e && e.message))) { lastStatus = 429; lastErr = e; break; }
+          lastErr = e;
+        }
+      }
+      if (lastStatus === 401 || lastStatus === 403 || lastStatus === 404) {
+        this._fileDenied[fileId] = lastStatus;
+      }
+      if (lastErr) throw lastErr;
+      throw new Error('文件信息获取失败: ' + (lastStatus || '未知'));
     },
 
     // 拉取会话列表的一页：{ items, total, limit, offset }
@@ -291,28 +343,50 @@
     // 取项目（gizmo）名：项目会话的 gizmo_id 以 g-p- 开头，
     // 项目名在 gizmo.display.name。按 id 缓存，同项目只请求一次。
     _gizmoCache: {},
+    /* 取项目名。401 时换纯 Cookie 再试一次：
+     * 实测有些账号 accessToken 与 Cookie 会话并不等价，带 Bearer 反而 401/403，
+     * 而不带 Authorization 的同源请求是通的。这与 getConversation 的兜底是同一套思路。
+     * 另外失败不再逐条 console.warn —— 一次列表加载可能涉及几十个项目，
+     * 每个都打一行会把控制台刷满，改为聚合成一条。
+     */
+    _gizmoFail: 0,
     async getGizmoName(gizmoId) {
       if (!gizmoId) return null;
       if (Object.prototype.hasOwnProperty.call(this._gizmoCache, gizmoId)) {
         return this._gizmoCache[gizmoId];
       }
+      const parse = (j) => (j && j.gizmo && j.gizmo.display && j.gizmo.display.name)
+        || (j && j.display && j.display.name) || null;
+
       let name = null;
-      try {
-        const t = await this.getToken();
-        const r = await fetch('/backend-api/gizmos/' + gizmoId, {
-          headers: { Authorization: 'Bearer ' + t },
-          credentials: 'include'
-        });
-        if (r.ok) {
-          const j = await r.json();
-          name = (j.gizmo && j.gizmo.display && j.gizmo.display.name) || null;
-        }
-      } catch (e) {
-        console.warn('[gpt-craber] 项目名获取失败', gizmoId, e);
+      let t = null;
+      try { t = await this.getToken(); } catch (e) { t = null; }
+
+      const modes = t ? [{ Authorization: 'Bearer ' + t }, null] : [null];
+      for (const headers of modes) {
+        try {
+          const r = await fetch('/backend-api/gizmos/' + gizmoId, {
+            headers: headers || {},
+            credentials: 'include'
+          });
+          if (r.status === 429) { noteRateLimit(r); break; }
+          if (!r.ok) {
+            // 401/403 才值得换鉴权；404 说明项目不存在，直接收手
+            if (r.status === 401 || r.status === 403) continue;
+            break;
+          }
+          name = parse(await r.json());
+          if (name) { craberNoteAuthMode(headers ? 'bearer' : 'cookie'); break; }
+        } catch (e) { break; }
       }
+
       // 只在成功时缓存。失败（403/限流/网络）也缓存的话，这个项目名会永久
       // 是 null，后面再问也永远拿不到 —— 表现为"项目列表里没有项目"（实测）。
       if (name) this._gizmoCache[gizmoId] = name;
+      else if (++this._gizmoFail === 1) {
+        console.debug('[gpt-craber] 部分项目名取不到（权限或接口变化），已回退显示项目 id');
+      }
+      return name;
     }
   };
 
@@ -654,18 +728,38 @@
     return list;
   }
 
+  /* 单次导出内的附件/图片失败统计
+   * 附件 403 现在很常见（属主不同、链接过期、权限收紧），它不是脚本错误，
+   * 但"文件没进 zip"这件事必须让用户知道 —— 否则解压后才发现少了东西。
+   * 这里只计数，收敛成一条汇总；逐条细节留在 console.debug（默认不显示）。
+   */
+  const craberStats = { attTotal: 0, attFail: 0, imgTotal: 0, imgFail: 0 };
+  function craberStatsReset() {
+    craberStats.attTotal = 0; craberStats.attFail = 0;
+    craberStats.imgTotal = 0; craberStats.imgFail = 0;
+  }
+
   // 拉取文档附件，返回 blobs 缓存：id -> { blob, name, mime }
   async function fetchAttachmentBlobs(atts) {
     const blobs = {};
     if (!atts.length) return blobs;
     const tasks = atts.map((a) => (async () => {
+      craberStats.attTotal++;
       try {
         const info = await API.getFileInfo(a.id);
         if (info.download_url) {
           const b = await gmFetchBlob(info.download_url);
           blobs[a.id] = { blob: b, name: a.name, mime: b.type || a.mime || info.mime_type || '' };
+        } else {
+          craberStats.attFail++;
         }
-      } catch (e) { console.warn('[gpt-craber] 附件下载失败', a.id, a.name, e); }
+      } catch (e) {
+        craberStats.attFail++;
+        // 403/404 说明这个文件拿不到，属于预期内的降级，不该刷 warn
+        const msg = String(e && e.message || e);
+        if (!/40[13]|404/.test(msg)) console.warn('[gpt-craber] 附件下载失败', a.id, a.name, e);
+        else console.debug('[gpt-craber] 附件不可下载（已跳过）', a.name, msg);
+      }
     })());
     await Promise.all(tasks);
     return blobs;
@@ -685,13 +779,20 @@
     const tasks = [];
     for (const fid of ids) {
       tasks.push((async () => {
+        craberStats.imgTotal++;
         try {
           const info = await API.getFileInfo(fid);
           if (info.download_url) {
             const b = await gmFetchBlob(info.download_url);
             blobs[fid] = { blob: b, mime: b.type || info.mime_type || 'image/png' };
+          } else {
+            craberStats.imgFail++;
           }
-        } catch (e) { console.warn('[gpt-craber] 托管图下载失败', fid, e); }
+        } catch (e) {
+          craberStats.imgFail++;
+          const msg = String(e && e.message || e);
+          if (!/40[13]|404/.test(msg)) console.warn('[gpt-craber] 托管图下载失败', fid, e);
+        }
         finally { tick(); }
       })());
     }
@@ -1265,6 +1366,7 @@
   // 返回 { blob, zipName, failCount, lastErr }
   async function buildConversationsZip(convMetas, onProgress, opts) {
     opts = opts || {};
+    craberStatsReset();
     const zip = createZip();
     const usedDir = {};        // 每个父目录下的子文件夹名去重：key = parent + '||' + name
     const pad = String(convMetas.length).length;
@@ -1334,7 +1436,20 @@
         ? sanitizeFilename(convMetas[0].title || '会话')
         : 'chatgpt-conversations');
 
-    return { blob, zipName, failCount, lastErr };
+    const attFail = craberStats.attFail;
+    const attTotal = craberStats.attTotal;
+    const imgFail = craberStats.imgFail;
+    const imgTotal = craberStats.imgTotal;
+    // 汇总成一句人能读懂的说明，给 UI 展示用
+    const skipped = [];
+    if (attFail) skipped.push(attFail + '/' + attTotal + ' 个附件');
+    if (imgFail) skipped.push(imgFail + '/' + imgTotal + ' 张图片');
+
+    return {
+      blob, zipName, failCount, lastErr,
+      attFail, attTotal, imgFail, imgTotal,
+      skippedText: skipped.length ? (skipped.join('、') + ' 无法下载，已跳过') : ''
+    };
   }
 
   // 导出（下载）入口：在公共实现之上加命名与下载
@@ -1346,6 +1461,8 @@
     // 有失败就明确说出来，别让人解压后才发现是空的
     if (built.failCount) {
       navToast('有 ' + built.failCount + ' / ' + convMetas.length + ' 个会话导出失败：' + built.lastErr);
+    } else if (built.skippedText) {
+      navToast(built.skippedText);
     }
     return built;
   }
@@ -5935,6 +6052,8 @@
       ok: true,
       count: limited.length,
       failCount: built.failCount || 0,
+      attFail: built.attFail || 0,
+      attTotal: built.attTotal || 0,
       bytes: bytes,
       file: fileName,
       mode: bcfg.mode,
@@ -5948,7 +6067,9 @@
     return {
       ok: true, count: limited.length, file: fileName, dir: dirUrl,
       account: acctName, path: relPath,
-      failCount: built.failCount, pending: pending, bytes: bytes
+      failCount: built.failCount, pending: pending, bytes: bytes,
+      skippedText: built.skippedText || '',
+      attFail: built.attFail || 0, attTotal: built.attTotal || 0
     };
   }
 
@@ -10833,13 +10954,30 @@
         if (!loading) paint();
       };
 
-      // 先就地渲染（有缓存的名字直接用），再异步补齐缺失的
+      // 先就地渲染（有缓存的名字直接用），再异步补齐缺失的。
+      // 串行 + 小间隔：几十个项目同时并发会明显放大请求数，更容易触发 401/429。
       build();
       const missing = gids.filter((gid) => !projNames[gid] && !API._gizmoCache[gid]);
       if (!missing.length) return;
-      Promise.all(missing.map((gid) => API.getGizmoName(gid)
-        .then((nm) => { if (nm) projNames[gid] = nm; })
-        .catch(() => null))).then(() => { projFilled = ''; fillProjectOptions(); });
+      let left = missing.length;
+      (async () => {
+        for (const gid of missing) {
+          const nm = await API.getGizmoName(gid).catch(() => null);
+          if (nm) projNames[gid] = nm;
+          left--;
+          if (left % 5 === 0) await new Promise((r) => setTimeout(r, 120));
+        }
+        // 名字补齐后重绘一次；不管成功与否都不要再递归重查，
+        // 否则取不到的项目会在每次刷新时被反复请求。
+        if (!loading) paint();
+        projDD.setOptions([
+          { value: 'all', label: '全部项目' },
+          { value: 'none', label: '无项目' },
+          ...gids.map((gid) => ({ value: gid, label: projNames[gid] || API._gizmoCache[gid] || gid }))
+            .sort((a, b) => String(a.label).localeCompare(String(b.label), 'zh'))
+        ]);
+        projDD.setValue(projFilter);
+      })();
     };
 
     const listBox = folderEl('div', 'craber-set-convlist');
@@ -11884,6 +12022,7 @@
         } else {
           let msg = '已备份 ' + r.count + ' 个会话 → ' + (r.path || r.file);
           if (r.pending > 0) msg += '（还有 ' + r.pending + ' 个待下次）';
+          if (r.skippedText) msg += '；' + r.skippedText;
           setStatus(msg, 'ok');
         }
         // 刷新概况与历史
@@ -11937,6 +12076,7 @@
         else if (r.file) det.push(r.file);
         if (r.bytes) det.push(fmtBytes(r.bytes));
         if (r.failCount) det.push(r.failCount + ' 个失败');
+        if (r.attFail) det.push(r.attFail + '/' + (r.attTotal || '?') + ' 个附件跳过');
         if (!r.ok && r.detail) det.push(r.detail);
         if (det.length) main.append(folderEl('div', 'craber-dav-logdetail', det.join(' · ')));
         row.append(main, folderEl('span', 'craber-dav-logtime', davFmtTime(r.at)));
