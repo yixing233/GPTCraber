@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.15.2
+// @version      0.16.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.15.2';
+  const CRABER_VERSION = '0.16.0';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -2844,6 +2844,60 @@
     .craber-menu-inj-ico{flex:none;width:16px;height:16px;display:flex;
       align-items:center;justify-content:center}
     .craber-menu-inj-ico svg{width:16px;height:16px}
+
+    /* ============ 后台任务胶囊 ============
+     * 长任务（备份 / 同步）脱离设置对话框运行：关掉对话框任务照跑，
+     * 这枚胶囊留在右下角显示进度。平时是收起的胶囊，点开是详情卡片，
+     * 再点「查看」直接跳回对应设置页。
+     */
+    .craber-job{position:fixed;right:18px;bottom:18px;z-index:calc(var(--craber-z-modal) + 8);
+      display:flex;align-items:center;gap:10px;box-sizing:border-box;
+      min-width:0;max-width:min(320px,calc(100vw - 36px));
+      padding:9px 13px 9px 10px;border-radius:999px;
+      background:var(--craber-bg);color:var(--craber-fg);
+      border:1px solid var(--craber-line);
+      box-shadow:0 8px 26px rgba(15,18,22,.16),0 2px 6px rgba(15,18,22,.1);
+      font:inherit;font-size:12.5px;cursor:pointer;
+      transition:box-shadow .16s ease,border-color .16s ease,transform .16s ease;
+      animation:craber-job-in .22s cubic-bezier(.2,.8,.25,1)}
+    html[data-theme="dark"] .craber-job{
+      box-shadow:0 8px 26px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.36)}
+    .craber-job:hover{border-color:color-mix(in srgb,var(--craber-fg) 18%,var(--craber-line));
+      box-shadow:0 10px 30px rgba(15,18,22,.22),0 2px 6px rgba(15,18,22,.12)}
+    .craber-job:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+    @keyframes craber-job-in{from{opacity:0;transform:translateY(10px) scale(.96)}
+      to{opacity:1;transform:none}}
+    /* 左侧圆环：跑着的时候是旋转的进度环，结束换成 ✓ / ✗ */
+    .craber-job-ico{flex:none;width:20px;height:20px;border-radius:50%;
+      display:flex;align-items:center;justify-content:center;position:relative;
+      color:var(--craber-accent)}
+    .craber-job-ico svg{width:20px;height:20px;display:block}
+    /* 只有进度环需要从 12 点起画；对勾/叉不能跟着转 */
+    .craber-job-run .craber-job-ico svg{transform:rotate(-90deg)}
+    .craber-job-ico circle{fill:none;stroke-width:2.4}
+    .craber-job-ico .craber-job-track{stroke:color-mix(in srgb,var(--craber-sub) 26%,transparent)}
+    .craber-job-ico .craber-job-arc{stroke:currentColor;stroke-linecap:round;
+      transition:stroke-dashoffset .25s ease}
+    .craber-job-run .craber-job-ico svg{animation:craber-spin 1.1s linear infinite}
+    .craber-job-done .craber-job-ico{color:var(--craber-accent)}
+    .craber-job-err .craber-job-ico{color:#e02e2a}
+    .craber-job-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+    .craber-job-t{font-size:12.5px;font-weight:550;line-height:1.35;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-job-s{font-size:11.5px;color:var(--craber-sub);line-height:1.35;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+      font-variant-numeric:tabular-nums}
+    .craber-job-pct{flex:none;font-size:11.5px;font-weight:600;color:var(--craber-accent);
+      font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+    .craber-job-err .craber-job-pct{color:#e02e2a}
+    /* 完成/失败后自动淡出 */
+    .craber-job-leaving{opacity:0;transform:translateY(8px) scale(.97);
+      transition:opacity .24s ease,transform .24s ease}
+    @media (prefers-reduced-motion:reduce){
+      .craber-job{animation:none}
+      .craber-job-run .craber-job-ico svg{animation-duration:2.4s}
+      .craber-job-leaving{transition:none}
+    }
 
     /* 导出进度浮层（菜单导出时显示，右下角） */
     .craber-prog{position:fixed;right:20px;bottom:20px;z-index:var(--craber-z-tip);
@@ -5932,7 +5986,9 @@
     let state = davBackupStateLoad();
 
     // 0. 先确认是哪个账号：远端目录按用户名分，多个账号互不覆盖
-    if (opts.onProgress) opts.onProgress(0, 1, '识别账号…');
+    // phase 给 UI 用：scan（拉列表）/ pack（打包）/ upload（上传）
+    // 三段的量级差很多，统一按 done/total 画会把进度条一步顶到 50%+。
+    if (opts.onProgress) opts.onProgress(0, 1, '识别账号…', 'scan');
     let acct = { name: bcfg.account || '' };
     try {
       const info = await craberAccountInfo(true);
@@ -5955,9 +6011,9 @@
     state.account = acctName;
 
     // 1. 拉会话列表
-    if (opts.onProgress) opts.onProgress(0, 1, '读取会话列表…');
+    if (opts.onProgress) opts.onProgress(0, 1, '读取会话列表…', 'scan');
     const all = await fetchAllConversations((n, total) => {
-      if (opts.onProgress) opts.onProgress(n, total, '读取会话列表 ' + n + '/' + (total || '…'));
+      if (opts.onProgress) opts.onProgress(n, total, '读取会话列表 ' + n + '/' + (total || '…'), 'scan');
     });
 
     // 2a. 按范围过滤。
@@ -6017,18 +6073,18 @@
     // 3. 构建 zip
     const metas = limited.map((c) => ({ id: c.id, title: c.title, gizmo_id: c.gizmo_id }));
     const built = await buildConversationsZip(metas, (done, total, note) => {
-      if (opts.onProgress) opts.onProgress(done, total, note);
+      if (opts.onProgress) opts.onProgress(done, total, note, 'pack');
     }, { zipName: 'backup' });
 
     // 4. 上传
     const dateStr = davDateStr();
     const dirUrl = davBackupDirUrl(cfg, dateStr, acctName);
-    if (opts.onProgress) opts.onProgress(1, 1, '创建远端目录…');
+    if (opts.onProgress) opts.onProgress(1, 1, '创建远端目录…', 'upload');
     await davEnsureUrlDir(dirUrl, cfg);
 
     const stamp = craberStamp();
     const fileName = 'backup_' + stamp + (bcfg.mode === 'full' ? '_full' : '') + '.zip';
-    if (opts.onProgress) opts.onProgress(1, 1, '上传 ' + fileName + '…');
+    if (opts.onProgress) opts.onProgress(1, 1, '上传 ' + fileName + '…', 'upload');
     const r = await davPutBlob(dirUrl + fileName, built.blob, cfg);
     if (r.status < 200 || r.status >= 300) {
       throw new Error('上传失败 HTTP ' + r.status);
@@ -6071,6 +6127,73 @@
       skippedText: built.skippedText || '',
       attFail: built.attFail || 0, attTotal: built.attTotal || 0
     };
+  }
+
+  /* 后台备份任务
+   * 关掉设置对话框不应该打断备份 —— 备份本质是"拉数据 + 打包 + 上传"，
+   * 和 DOM 无关，本来就该在后台跑完。这里把任务提升成模块级单例：
+   *   - 同一时刻只允许一份（避免连点两次并发拉会话触发限流）
+   *   - 进度写进悬浮胶囊，关掉对话框也看得见
+   *   - 结束后把结果留给下次打开备份页时展示
+   */
+  const craberBackupTask = {
+    running: false,
+    promise: null,
+    lastResult: null,     // { ok, at, message, path }
+    startedAt: 0
+  };
+
+  function craberBackupStart(cfgOverride) {
+    if (craberBackupTask.running) return craberBackupTask.promise;
+
+    craberBackupTask.running = true;
+    craberBackupTask.startedAt = Date.now();
+    craberBackupTask.lastResult = null;
+    craberJobStart('正在备份会话', '准备中…');
+
+    /* 进度换算：三个阶段各占一段，避免"读完列表就到 50%"的错觉
+     *   scan  0%  → 8%    （拉会话列表，可能有几十页）
+     *   pack  8%  → 92%   （逐会话拉取 + 打包，耗时大头）
+     *   upload 92% → 100%
+     */
+    const onProgress = (done, total, note, phase) => {
+      const ratio = total > 0 && isFinite(total) ? Math.min(1, done / total) : 0;
+      let frac = null;
+      if (phase === 'scan') frac = 0.08 * ratio;
+      else if (phase === 'pack') frac = 0.08 + 0.84 * ratio;
+      else if (phase === 'upload') frac = 0.92 + 0.08 * ratio;
+      else if (total > 1) frac = ratio;      // 老调用方：按原样映射
+      craberJobUpdate(frac, note || (total > 1 ? ('备份中 ' + done + ' / ' + total) : '处理中…'));
+    };
+
+    craberBackupTask.promise = davBackupRun({ onProgress })
+      .then((r) => {
+        craberBackupTask.lastResult = {
+          ok: true, at: Date.now(),
+          message: r && r.skipped
+            ? (r.reason || '没有需要备份的会话')
+            : ('已备份 ' + (r ? r.count : 0) + ' 个会话' + (r && r.skippedText ? '；' + r.skippedText : '')),
+          path: (r && (r.path || r.file)) || ''
+        };
+        const msg = craberBackupTask.lastResult.message;
+        craberJobFinish(true, msg, { label: '查看备份记录', fn: () => craberOpenSettings('dav-backup') });
+        return r;
+      })
+      .catch((err) => {
+        const msg = err && err.message ? err.message : '未知错误';
+        craberBackupTask.lastResult = { ok: false, at: Date.now(), message: '备份失败：' + msg, path: '' };
+        // 失败也要留痕，用户下次打开页面能看到
+        try { davBackupLogPush({ ok: false, detail: msg }); } catch (e) {}
+        craberJobFinish(false, '备份失败：' + msg, { label: '查看备份记录', fn: () => craberOpenSettings('dav-backup') });
+        throw err;
+      })
+      .finally(() => {
+        craberBackupTask.running = false;
+        craberBackupTask.promise = null;
+      });
+
+    // 让 awaiting 的一方不会因为"已经有人在跑"而丢结果
+    return craberBackupTask.promise;
   }
 
   // 确保目录存在：逐级 MKCOL。
@@ -6295,6 +6418,8 @@
     const cfg = davLoad();
     if (!cfg.url) { navToast('还没配置 WebDAV'); davOpenConfig(); return; }
     craberProgressOpen('WebDAV 同步');
+    // 同步也常被"点完就走"，胶囊和导出浮层同时开着太吵，这里只保留浮层，
+    // 因为同步入口本来就在菜单里、不像备份那样藏在设置页深处。
     try {
       craberProgressUpdate(1, 3, '读取远端…');
       const remote = await davPull(cfg);
@@ -8884,6 +9009,135 @@
   // 菜单导出没有面板可显示状态，这里给一个轻量浮层：
   // 标题 + 当前阶段 + 进度条 + 计数，完成/失败后自动收起。
   let craberProgEl = null;
+
+  /* ============ 后台任务（悬浮胶囊） ============
+   * 备份 / 同步这类长任务不应该被"关掉对话框"打断，也不该把用户困在对话框里。
+   * 这里用一个模块级单例描述当前任务：
+   *   - start(title, sub)：显示胶囊，标记运行中
+   *   - update(frac, sub)：更新进度（0~1）与副标题
+   *   - finish(ok, sub)：成功/失败，1.6s / 4s 后淡出
+   * 详情面板（点胶囊展开）只是把同一份状态画得更全，两者共用 craberJob.state。
+   */
+  const craberJob = {
+    state: null,      // { title, sub, frac, status: 'run'|'done'|'err', cta: {label, fn} }
+    el: null,
+    timer: null
+  };
+
+  function craberJobRing(frac) {
+    const R = 8;                      // 半径：viewBox 20x20，留 2px 线宽余量
+    const C = 2 * Math.PI * R;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 20 20');
+    svg.setAttribute('aria-hidden', 'true');
+    const mk = (cls, dash) => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', '10');
+      c.setAttribute('cy', '10');
+      c.setAttribute('r', String(R));
+      c.setAttribute('class', cls);
+      if (dash) {
+        c.setAttribute('stroke-dasharray', String(C));
+        c.setAttribute('stroke-dashoffset', String(C * (1 - frac)));
+      }
+      return c;
+    };
+    svg.append(mk('craber-job-track', false), mk('craber-job-arc', true));
+    return svg;
+  }
+
+  // 画（或重画）胶囊。force=true 时连外壳一起重建（标题变了）
+  function craberJobPaint(force) {
+    const st = craberJob.state;
+    if (!st) { craberJobRemove(); return; }
+    let el = craberJob.el;
+    if (!el || force) {
+      if (el) el.remove();
+      el = folderEl('button', 'craber-job');
+      el.type = 'button';
+      el.setAttribute('role', 'status');
+      el.addEventListener('click', craberJobClick);
+      craberJob.el = el;
+      document.body.append(el);
+    }
+    el.className = 'craber-job craber-job-' + st.status;
+    el.innerHTML = '';
+    const ico = folderEl('span', 'craber-job-ico');
+    if (st.status === 'run') ico.append(craberJobRing(st.frac || 0));
+    else ico.innerHTML = st.status === 'done'
+      ? mi('<path d="M4.5 10.5l4 4 7-7"/>')
+      : mi('<path d="M6 6l12 12"/><path d="M18 6L6 18"/>');
+    const main = folderEl('div', 'craber-job-main');
+    main.append(folderEl('div', 'craber-job-t', st.title));
+    main.append(folderEl('div', 'craber-job-s', st.sub || ''));
+    el.append(ico, main);
+    if (st.status === 'run' && typeof st.frac === 'number') {
+      el.append(folderEl('span', 'craber-job-pct', Math.round(st.frac * 100) + '%'));
+    }
+    el.title = (st.title || '') + (st.sub ? '\n' + st.sub : '')
+      + (st.cta && st.status !== 'run' ? '\n点击' + st.cta.label : '');
+    el.setAttribute('aria-label',
+      (st.title || '后台任务') + '，' + Math.round((st.frac || 0) * 100) + '%');
+  }
+
+  function craberJobRemove() {
+    if (craberJob.timer) { clearTimeout(craberJob.timer); craberJob.timer = null; }
+    const el = craberJob.el;
+    craberJob.el = null;
+    craberJob.state = null;
+    if (!el) return;
+    el.classList.add('craber-job-leaving');
+    setTimeout(() => { try { el.remove(); } catch (e) {} }, 260);
+  }
+
+  function craberJobStart(title, sub) {
+    if (craberJob.timer) { clearTimeout(craberJob.timer); craberJob.timer = null; }
+    craberJob.state = { title: title || '后台任务', sub: sub || '', frac: 0, status: 'run', cta: null };
+    craberJobPaint(true);
+  }
+
+  function craberJobUpdate(frac, sub) {
+    const st = craberJob.state;
+    if (!st) return;
+    if (typeof frac === 'number' && isFinite(frac)) {
+      // 只向前：并发任务交替汇报时进度条不会往回跳
+      st.frac = Math.max(st.frac || 0, Math.max(0, Math.min(1, frac)));
+    }
+    if (sub != null) st.sub = sub;
+    if (st.status !== 'run') return;      // 已结束就只更新文字，不再重画动画
+    craberJobPaint(false);
+  }
+
+  function craberJobFinish(ok, sub, cta) {
+    const st = craberJob.state;
+    if (!st) return;
+    st.status = ok ? 'done' : 'err';
+    st.frac = ok ? 1 : (st.frac || 0);
+    if (sub != null) st.sub = sub;
+    st.cta = cta || null;
+    craberJobPaint(false);
+    if (craberJob.timer) clearTimeout(craberJob.timer);
+    craberJob.timer = setTimeout(craberJobRemove, ok ? 1800 : 5000);
+  }
+
+  /* 点胶囊：跑着时只把"当前阶段"念一遍（避免误触），结束后按 cta 跳转。
+   * 运行中不给关闭按钮 —— 备份没有取消语义，半路中断会留下不完整的 zip，
+   * 干脆不提供入口，避免误操作。 */
+  function craberJobClick() {
+    const st = craberJob.state;
+    if (!st) return;
+    if (st.status === 'run') {
+      if (st.sub) navToast(st.sub);
+      return;
+    }
+    if (st.cta && typeof st.cta.fn === 'function') {
+      const fn = st.cta.fn;
+      craberJobRemove();
+      fn();
+    } else {
+      craberJobRemove();
+    }
+  }
 
   function craberProgressOpen(title) {
     craberProgressClose();
@@ -12003,47 +12257,70 @@
 
     const runBtn = folderEl('button', 'craber-set-btn craber-set-btn-primary', '开始备份');
     runBtn.type = 'button';
-    runBtn.addEventListener('click', async (e) => {
+
+    // 备份跑在后台（模块级单例）：关掉对话框不影响进度，悬浮胶囊继续显示
+    const refreshAfterRun = () => {
+      const nb = davBackupLogLoad();
+      const nstate = davBackupStateLoad();
+      info.children[0].querySelector('.craber-set-statnum').textContent =
+        String(Object.keys(nstate.done || {}).length);
+      renderHistory(nb);
+    };
+
+    runBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      davBackupCfgSave(collect());
-      const old = runBtn.textContent;
-      runBtn.disabled = true;
-      saveBtn.disabled = true;
-      runBtn.textContent = '备份中…';
-      setStatus('准备中…');
-      try {
-        const r = await davBackupRun({
-          onProgress: (done, total, note) => {
-            setStatus(note || ('备份中 ' + done + '/' + total));
-          }
-        });
-        if (r.skipped) {
-          setStatus('没有需要备份的会话（增量模式）', 'ok');
-        } else {
-          let msg = '已备份 ' + r.count + ' 个会话 → ' + (r.path || r.file);
-          if (r.pending > 0) msg += '（还有 ' + r.pending + ' 个待下次）';
-          if (r.skippedText) msg += '；' + r.skippedText;
-          setStatus(msg, 'ok');
-        }
-        // 刷新概况与历史
-        const nb = davBackupLogLoad();
-        const nstate = davBackupStateLoad();
-        info.children[0].querySelector('.craber-set-statnum').textContent =
-          String(Object.keys(nstate.done || {}).length);
-        renderHistory(nb);
-      } catch (err) {
-        setStatus('备份失败：' + (err && err.message ? err.message : '未知错误'), 'err');
-        davBackupLogPush({ ok: false, detail: err && err.message ? err.message : '未知错误' });
-        renderHistory(davBackupLogLoad());
-      } finally {
-        runBtn.disabled = false;
-        saveBtn.disabled = false;
-        runBtn.textContent = old;
+      if (craberBackupTask.running) {
+        setStatus('已经在备份了，进度见右下角', '');
+        return;
       }
+      davBackupCfgSave(collect());
+      // 只提示一句就撒手：真正的进度交给胶囊，关掉本页也不会中断
+      setStatus('已开始备份，可以关掉这个窗口，进度看右下角', 'ok');
+      const setBusy = (busy) => {
+        runBtn.textContent = busy ? '备份中…' : '开始备份';
+        runBtn.disabled = busy;
+        saveBtn.disabled = busy;
+      };
+      setBusy(true);
+      // 页面还开着就顺带刷新；已经关掉的话这些节点早已脱离文档，置空也无害
+      const settle = () => {
+        if (!runBtn.isConnected) return;
+        setBusy(false);
+        refreshAfterRun();
+        const res = craberBackupTask.lastResult;
+        if (res) setStatus(res.message, res.ok ? 'ok' : 'err');
+      };
+      craberBackupStart().then(settle).catch(settle);
     });
 
     bar.append(saveBtn, runBtn);
     p.append(bar);
+
+    // 回到本页时恢复任务状态：跑着就显示"备份中"，刚结束就把结果说出来
+    if (craberBackupTask.running) {
+      runBtn.textContent = '备份中…';
+      runBtn.disabled = true;
+      setStatus('正在后台备份，进度见右下角', '');
+      craberBackupTask.promise.then(() => {
+        if (!runBtn.isConnected) return;
+        runBtn.textContent = '开始备份';
+        runBtn.disabled = false;
+        refreshAfterRun();
+        if (craberBackupTask.lastResult) {
+          const res = craberBackupTask.lastResult;
+          setStatus(res.message, res.ok ? 'ok' : 'err');
+        }
+      }).catch(() => {
+        if (!runBtn.isConnected) return;
+        runBtn.textContent = '开始备份';
+        runBtn.disabled = false;
+        if (craberBackupTask.lastResult) setStatus(craberBackupTask.lastResult.message, 'err');
+      });
+    } else if (craberBackupTask.lastResult
+      && Date.now() - craberBackupTask.lastResult.at < 5 * 60 * 1000) {
+      const res = craberBackupTask.lastResult;
+      setStatus(res.message, res.ok ? 'ok' : 'err');
+    }
 
     /* 备份历史 */
     const hHead = folderEl('div', 'craber-dav-loghead');
