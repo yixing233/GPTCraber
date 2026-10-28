@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.16.0
+// @version      0.16.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.16.0';
+  const CRABER_VERSION = '0.16.1';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -2562,14 +2562,19 @@
     .craber-set-toolbar > .craber-set-btn{flex:none}
     /* 小号按钮：跟在 chip 后面做"选择…"，不该和主按钮一样大 */
     .craber-set-btn-sm{height:30px;padding:0 11px;font-size:12.5px;border-radius:8px}
-    /* 纯图标按钮（刷新）：方形、居中，图标跟文字同色 */
-    .craber-set-btn.craber-set-iconbtn{width:32px;height:34px;padding:0;flex:none;
+    /* 纯图标按钮（刷新）：方形、居中，图标跟文字同色。
+     * 工具条里跟在搜索框后面用小号（-sm），会话列表页用普通号，两者尺寸一致。 */
+    .craber-set-btn.craber-set-iconbtn-sm,
+    .craber-set-btn.craber-set-iconbtn{width:34px;height:34px;padding:0;flex:none;
       display:inline-flex;align-items:center;justify-content:center}
-    .craber-set-btn.craber-set-iconbtn svg{width:15px;height:15px;flex:none;display:block}
+    .craber-set-btn.craber-set-iconbtn-sm svg,
+    .craber-set-btn.craber-set-iconbtn svg{width:16px;height:16px;flex:none;display:block}
+    .craber-set-btn.craber-set-iconbtn-sm.craber-spinning svg,
     .craber-set-btn.craber-set-iconbtn.craber-spinning svg{animation:craber-spin .9s linear infinite}
     .craber-set-btn.craber-set-iconbtn:disabled{opacity:.55;cursor:default}
     @media (prefers-reduced-motion:reduce){
-      .craber-set-iconbtn.craber-spinning svg{animation-duration:2.4s}
+      .craber-set-iconbtn.craber-spinning svg,
+      .craber-set-iconbtn-sm.craber-spinning svg{animation-duration:2.4s}
     }
     /* 范围为项目/会话时，控件列要能放下 chips + 按钮 */
     .craber-set-ctrl .craber-dlg-chips{flex:none}
@@ -6968,6 +6973,13 @@
   const mi = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"'
     + ' stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
 
+  /* 刷新：3/4 圆环 + 右上角箭头（lucide rotate-cw 的画法）。
+   * 关键是"圆弧自己拐进箭头"—— 弧从 12 点顺时针绕大半圈，
+   * 收尾直接接上箭头的竖边，中间不留缝。早先那种"一段弧 + 另画一个折线钩"
+   * 拼出来的版本，缩小后两段对不齐，看着像两个小箭头挤在一起。 */
+  const REFRESH_ICON = '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>'
+    + '<path d="M21 3v5h-5"/>';
+
   /* 文件夹：开口朝上的梯形文件夹，与系统/原生列表同构。
    * 原来是 1.5 圆角 + 斜切标签，18px 下左侧那道斜线几乎看不见，
    * 于是"文件夹"和"卡片"分不开。改成 2.2 圆角 + 明确的标签片。 */
@@ -8877,8 +8889,9 @@
 
   // 拉当前用户的项目列表（供"移至项目"子菜单用）
   const craberProjectsCache = { at: 0, list: [] };
-  async function craberListProjects() {
-    if (Date.now() - craberProjectsCache.at < 5 * 60 * 1000 && craberProjectsCache.list.length) {
+  // force = true 时跳过 5 分钟缓存，强制重新拉一遍（选择器里的"重新获取"用）
+  async function craberListProjects(force) {
+    if (!force && Date.now() - craberProjectsCache.at < 5 * 60 * 1000 && craberProjectsCache.list.length) {
       return craberProjectsCache.list;
     }
     const out = [];
@@ -11090,9 +11103,7 @@
     refreshBtn.type = 'button';
     refreshBtn.title = '重新拉取会话列表';
     refreshBtn.setAttribute('aria-label', '刷新会话列表');
-    refreshBtn.innerHTML = mi('<path d="M20 11a8 8 0 0 1-13.7 5.6"/>'
-      + '<path d="M4 13a8 8 0 0 1 13.7-5.6"/>'
-      + '<path d="M4 5v4h4"/><path d="M20 19v-4h-4"/>');
+    refreshBtn.innerHTML = mi(REFRESH_ICON);
 
     const expBtn = folderEl('button', 'craber-set-btn craber-set-btn-primary', '导出所选');
     expBtn.type = 'button';
@@ -11777,7 +11788,18 @@
       const noneBtn = folderEl('button', 'craber-set-btn craber-set-btn-sm', '清空');
       noneBtn.type = 'button';
       noneBtn.title = '取消全部勾选';
-      tools.append(search.el, allBtn, noneBtn);
+
+      /* 重新获取：列表来自缓存（会话 10 分钟 / 项目 5 分钟），
+       * 期间新建的会话或项目不会出现在这里。给一个显式刷新入口，
+       * 免得用户以为"刚建的会话不存在"。
+       */
+      const reloadBtn = folderEl('button', 'craber-set-btn craber-set-btn-sm craber-set-iconbtn-sm');
+      reloadBtn.type = 'button';
+      reloadBtn.title = '重新获取最新列表';
+      reloadBtn.setAttribute('aria-label', '重新获取');
+      reloadBtn.innerHTML = mi(REFRESH_ICON);
+
+      tools.append(search.el, reloadBtn, allBtn, noneBtn);
 
       // 已选区：勾了哪些一眼可见，点 × 直接移除
       const pickedWrap = folderEl('div', 'craber-pick-pickedwrap');
@@ -11854,7 +11876,9 @@
         }
         const rows = shownRows();
         if (!rows.length) {
-          listBox.append(folderEl('div', 'craber-set-note', '没有匹配项'));
+          listBox.append(folderEl('div', 'craber-set-note',
+            loadErr ? loadErr
+              : (items.length ? '没有匹配项' : (kind === 'projects' ? '没有项目' : '没有会话'))));
         }
         for (const it of rows) {
           const row = folderEl('label', 'craber-set-convrow');
@@ -11879,33 +11903,83 @@
         syncTools();
       };
 
-      (async () => {
+      /* 拉列表。force=true 时绕过缓存重新请求。
+       * 会话列表顺带回写会话缓存（与"会话列表"页共用同一份），
+       * 这样刷新一次，两个地方拿到的都是最新数据。
+       */
+      let loadErr = null;
+      const loadItems = async (force) => {
+        // 刷新失败时不要让列表变空：留住上一次的结果，只把错误写到状态行
+        const prevItems = items.slice();
+        loading = true;
+        loadErr = null;
+        status.className = 'craber-dav-status';
+        status.textContent = force ? '正在重新获取…' : '';
+        reloadBtn.classList.add('craber-spinning');
+        reloadBtn.disabled = true;
+        paint();
         try {
           if (kind === 'projects') {
-            const list = await craberListProjects();
+            const list = await craberListProjects(force);
             items = (list || []).map((p) => ({ value: p.name, label: p.name, meta: '' }));
+            if (!items.length) {
+              status.textContent = '没有读取到项目（可能还没建过，或项目名接口暂时不可用）';
+            } else {
+              status.textContent = items.length + ' 个项目';
+            }
           } else {
-            const all = await fetchAllConversations();
+            // 打开时用缓存（有就秒开），点刷新时强制重拉。
+            // 用同一份会话缓存，刷新一次两个页面都拿到最新数据。
+            let all = null;
+            if (!force) {
+              const c = convCacheLoad();
+              if (convCacheFresh(c)) all = c.items.slice();
+            }
+            if (!all) {
+              all = await fetchAllConversations((n, total) => {
+                status.textContent = '读取中 ' + n + '/' + (total || '…');
+              });
+              convCacheSave(all);
+            }
             items = all.map((c) => ({
               value: c.id,
               label: c.title || c.id,
               meta: c.update_time ? davFmtDay(c.update_time) : ''
             }));
+            status.textContent = items.length + ' 个会话'
+              + (force ? '（已重新获取）' : '');
           }
           items.forEach((it) => {
             meta[it.value] = it;
             craberRememberPickLabel(it.value, it.label);
           });
-          status.textContent = items.length + (kind === 'projects' ? ' 个项目' : ' 个会话');
         } catch (e) {
-          items = [];
-          status.textContent = '读取失败：' + (e && e.message ? e.message : '未知错误');
+          const msg = e && e.message ? e.message : '未知错误';
+          loadErr = '读取失败：' + msg;
+          if (prevItems.length) {
+            // 已有数据：保持原样，只在状态行说明这次刷新失败
+            items = prevItems;
+            status.textContent = loadErr + '（仍显示上次结果）';
+          } else {
+            items = [];
+            status.textContent = loadErr;
+          }
           status.className = 'craber-dav-status err';
         } finally {
           loading = false;
+          reloadBtn.classList.remove('craber-spinning');
+          reloadBtn.disabled = false;
           paint();
         }
-      })();
+      };
+
+      reloadBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (loading) return;
+        loadItems(true);
+      });
+
+      loadItems(false);
 
       allBtn.addEventListener('click', (e) => {
         e.preventDefault();
