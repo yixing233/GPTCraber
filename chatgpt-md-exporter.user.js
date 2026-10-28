@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.17.2
+// @version      0.17.3
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.17.2';
+  const CRABER_VERSION = '0.17.3';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -1891,6 +1891,16 @@
       100%{box-shadow:0 0 0 14px rgba(16,163,127,0), inset 0 0 0 2px rgba(16,163,127,0)}}
     .craber-nav-flash{animation:craber-nav-flash 1.4s ease-out}
     .craber-nav-flash-box{border-radius:14px}
+    /* 正文里的小节/段落用"淡一层底色"就够了。
+       外扩光圈是给消息气泡的（气泡有自己的边界，框住它才像"这条消息"）；
+       套在标题或整段文字上，那个光圈看着像被选中框，反而更吵。 */
+    @keyframes craber-nav-tint{
+      0%{background-color:color-mix(in srgb,var(--craber-accent) 26%,transparent);
+         box-shadow:0 0 0 6px color-mix(in srgb,var(--craber-accent) 26%,transparent)}
+      45%{background-color:color-mix(in srgb,var(--craber-accent) 22%,transparent);
+         box-shadow:0 0 0 6px color-mix(in srgb,var(--craber-accent) 22%,transparent)}
+      100%{background-color:transparent;box-shadow:0 0 0 6px transparent}}
+    .craber-nav-flash-tint{animation:craber-nav-tint 1.6s ease-out;border-radius:5px}
 
     /* 更多节点按钮（当总回合数 > 30 时分别显示在最上方和最下方） */
     .craber-nav-more-btn{position:relative;flex:none;display:flex;align-items:center;justify-content:center;
@@ -1987,9 +1997,12 @@
     @media (prefers-reduced-motion:reduce){
       .craber-nav-bar::before,.craber-nav-card{transition:none;animation:none}
       .craber-nav-card-in,.craber-nav-card.swap .craber-nav-card-in{animation:none}
-      /* 关掉动画不等于不给反馈：改成静止光圈，class 到时会自己摘掉。 */
+      /* 关掉动画不等于不给反馈：改成静止光圈/静止底色，class 到时会自己摘掉。 */
       .craber-nav-flash{animation:none;
         box-shadow:0 0 0 3px rgba(16,163,127,.45), inset 0 0 0 2px rgba(16,163,127,.28)}
+      .craber-nav-flash-tint{animation:none;
+        background-color:color-mix(in srgb,var(--craber-accent) 20%,transparent);
+        box-shadow:0 0 0 6px color-mix(in srgb,var(--craber-accent) 20%,transparent)}
     }
 
     .craber-ft{padding:13px 20px;border-top:1px solid var(--craber-line);
@@ -3667,13 +3680,23 @@
     return el;   // 助手消息本来就没有气泡，退回整行
   }
 
-  // 一次性扩散高亮。用动画而非常驻 class，同一节点连点两次也能再闪一次。
+  /* 一次性高亮。两种形态，按目标类型选：
+   *   消息气泡（用户提问那种带底色的小块）→ 外扩光圈，框住"这条消息"
+   *   正文标题 / 段落                      → 淡一层底色，别用光圈
+   * 用动画而非常驻 class，同一目标连点两次也能再闪一次。
+   */
   let navFlashEl = null;
   let navFlashTimer = 0;
-  function flashMessage(msgEl) {
+  function craberClearFlash() {
     clearTimeout(navFlashTimer);
-    if (navFlashEl) navFlashEl.classList.remove('craber-nav-flash', 'craber-nav-flash-box');
+    if (!navFlashEl) return;
+    navFlashEl.classList.remove('craber-nav-flash', 'craber-nav-flash-box', 'craber-nav-flash-tint');
+    navFlashEl = null;
+  }
+  function flashMessage(msgEl) {
+    craberClearFlash();
     const el = findFlashTarget(msgEl);
+    if (!el) return;
     navFlashEl = el;
     // 气泡自带圆角就别覆盖，否则光圈的弧度会跟气泡错开；只有落在没圆角的整行容器上
     // 才补一个 14px，免得是个生硬的方框。
@@ -3682,31 +3705,21 @@
     }
     void el.offsetWidth; // 强制重排，让动画可以重复触发
     el.classList.add('craber-nav-flash');
-    navFlashTimer = setTimeout(() => {
-      el.classList.remove('craber-nav-flash', 'craber-nav-flash-box');
-      navFlashEl = null;
-    }, 1500);
+    navFlashTimer = setTimeout(craberClearFlash, 1500);
   }
 
-  // 滚动到页面对应消息。顶部留 NAV_SCROLL_OFFSET 的余量：block:'center'
-  // 会把长消息的开头顶到视口上方，落点之后还得往回滚一段才能开始读。
-  // 消息可能因懒加载未挂载，返回 false 交给调用方兜底。
-  // 这里只负责"开滚"，不做高亮 —— 平滑滚动要几百毫秒，一开滚就闪，等真正落到位
-  // 时 1.4s 的动画早放完了，用户看到的是"跳过去，什么都没发生"。
-  const NAV_SCROLL_OFFSET = 88;
-  function scrollToMessage(messageId) {
-    const el = findMsgEl(messageId);
-    if (!el) return false;
-    const sc = getScrollContainer();
-    try {
-      // 一律走内容坐标：容器是 column-reverse 时由 navScrollTo 负责翻方向，
-      // 直接写 sc.scrollTo({top}) 会把方向弄反、落点跑到会话另一头。
-      navScrollTo(sc, contentTopOf(sc, el) - NAV_SCROLL_OFFSET, true);
-    } catch (e) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-    return true;
+  // 正文里的标题/段落：只给一层淡底色，不用外扩光圈
+  function flashInline(el) {
+    craberClearFlash();
+    if (!el) return;
+    navFlashEl = el;
+    void el.offsetWidth;
+    el.classList.add('craber-nav-flash-tint');
+    navFlashTimer = setTimeout(craberClearFlash, 1700);
   }
+
+  // 落点统一留出顶部余量：贴边会把长消息的开头顶到视口上方，还得往回滚才能读。
+  const NAV_SCROLL_OFFSET = 88;
 
   // 轻提示条：替代 alert，不打断阅读。sticky 给"正在向上加载"这类要一直挂着的进度提示用。
   let navToastEl = null;
@@ -4148,7 +4161,18 @@
     hideNavPanel();
     const turn = state.turns && state.turns[idx];
     if (!turn || !heading) return;
-    await navigateToTurn(idx);
+    /* 关键：先自己把回合滚出来，但**不闪**。原来直接调 navigateToTurn，
+     * 它会顺手给整个回合闪一次高亮，紧接着又滚到小节再闪一次 —— 两次反馈
+     * 叠在一起，看起来像"先跳回合、再跳到小节"。这里只要它负责把内容
+     * 拉进来，高亮留给最后一步。 */
+    const qid = turn.question && turn.question.message && turn.question.message.id;
+    const already = qid ? findMsgEl(qid) : null;
+    if (already) {
+      const sc0 = getScrollContainer();
+      await alignToEl(sc0, already);
+    } else {
+      await navigateToTurn(idx);
+    }
     /* 回合刚挂载时正文可能还没渲染完（React 分两步：先挂容器再填内容），
      * 立刻查标题会扑空。给几轮重试，每轮 120ms —— 总等待上限 1.2s，
      * 比"直接放弃、只停在回合开头"有用得多。 */
@@ -4162,20 +4186,9 @@
       return;
     }
     const sc = getScrollContainer();
-    const prev = sc.style.scrollBehavior;
-    sc.style.scrollBehavior = 'auto';
-    try {
-      for (let i = 0; i < 6; i++) {
-        const delta = contentTopOf(sc, target) - NAV_SCROLL_OFFSET;
-        const m = navScrollMetrics(sc);
-        if (Math.abs(delta - m.pos) < 4) break;
-        navScrollTo(sc, delta);
-        await navSleep(110);
-      }
-    } finally {
-      sc.style.scrollBehavior = prev;
-    }
-    flashMessage(target);
+    await alignToEl(sc, target);
+    // 正文里的标题只用淡底色；气泡式的扩散光圈套在文字上像选中框
+    flashInline(target);
   }
 
   // 卡片里的大纲：条目多时只列前若干条，剩下的提示去全量面板看
@@ -4604,32 +4617,6 @@
     else sc.scrollTop = target;
   }
 
-  // 等平滑滚动真正停下来。smooth 没有通用的结束回调（scrollend 不是所有浏览器都有），
-  // 只能看位置是否连续几帧不动。必须先等它动起来：调用后头几帧位置还没变，
-  // 直接判"已经停了"就白等一场，高亮又会提前放掉。
-  function waitScrollSettled(sc, timeout) {
-    return new Promise((resolve) => {
-      const t0 = performance.now();
-      let last = navScrollMetrics(sc).pos;
-      let still = 0;
-      let moved = false;
-      const tick = () => {
-        const now = performance.now();
-        const pos = navScrollMetrics(sc).pos;
-        if (Math.abs(pos - last) > 1) {
-          moved = true;
-          still = 0;
-          last = pos;
-        } else if (++still >= 3 && (moved || now - t0 > 240)) {
-          return resolve();   // 240ms 都没动过：本来就在位置上，不用再等
-        }
-        if (now - t0 > timeout) return resolve();
-        requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    });
-  }
-
   // DOM 里最靠前的、能映射回轨道的用户消息下标。判断"目标还没拉到"只能靠它：
   // scrollHeight 只覆盖已加载的那一段，按 idx/total 算全局比例没有任何依据。
   function oldestMountedIdx() {
@@ -4723,25 +4710,38 @@
   // scroll anchoring，一次算出来的 scrollTop 能差一整屏 —— 反复量到落点稳定为止。
   // 校正期间强制 auto：容器若带 scroll-behavior:smooth，写 scrollTop 会起一段动画，
   // 110ms 后量到的还是半路上的位置，越校越偏，高亮也会落在没停稳的时候。
-  async function settleOnMessage(msgId) {
-    const sc = getScrollContainer();
+  /* 把某个元素顶到 NAV_SCROLL_OFFSET 处，反复校正到真正停稳。
+   * 一律 instant（写 scrollTop，不用 smooth）：调用方要么已经在平滑滚，
+   * 要么是"点了就该立刻到"的跳转 —— 再叠一层动画反而像在敷衍。 */
+  async function alignToEl(sc, el) {
     const prev = sc.style.scrollBehavior;
     sc.style.scrollBehavior = 'auto';
-    let el = null;
     try {
       for (let i = 0; i < 6; i++) {
-        el = findMsgEl(msgId);
-        if (!el) return false;
+        if (!el || !el.isConnected) return false;
         const delta = contentTopOf(sc, el) - NAV_SCROLL_OFFSET;
         const m = navScrollMetrics(sc);
-        if (Math.abs(delta - m.pos) < 4) break;
+        // 目标会被 navScrollTo 夹在 [0, span] 内，比较时也得先夹一下 ——
+        // 否则目标在会话最开头（delta 为负）时会误判成"还没到位"，
+        // 白写六次同一个 scrollTop、多等 660ms。
+        const want = Math.max(0, Math.min(m.span, Math.round(delta)));
+        if (Math.abs(want - m.pos) < 4) break;
         navScrollTo(sc, delta);
         await navSleep(110);
       }
     } finally {
       sc.style.scrollBehavior = prev;
     }
-    if (el) flashMessage(el);
+    return true;
+  }
+
+  // opts.silent：只落位、不闪 —— 跳小节时由落点校正那一步统一给反馈
+  async function settleOnMessage(msgId, opts) {
+    const sc = getScrollContainer();
+    const el = findMsgEl(msgId);
+    if (!el) return false;
+    if (!(await alignToEl(sc, el))) return false;
+    if (!(opts && opts.silent) && el) flashMessage(el);
     return true;
   }
 
@@ -4758,10 +4758,11 @@
     setNavActive(idx, true);
     const seq = ++navHuntSeq;         // 连点不同节点时，后发的作废先发的
     const sc = getScrollContainer();
-    // 已挂载：滚过去、等它真正停稳，再交给落点校正做最后一次对齐并高亮。
-    if (scrollToMessage(msgId)) {
-      await waitScrollSettled(sc, 1200);
-      if (seq !== navHuntSeq) return;
+    /* 已挂载：直接一次到位，不走"先平滑滚、再校正"那套。
+     * 原来先平滑起滚、等它停稳、最后再写一次 scrollTop 校正 ——
+     * 用户看到的就是"先滚一下，然后啪地闪到目标位置"。
+     * 目标就在页面上时没有任何理由分两段走，直接 instant 落位即可。 */
+    if (findMsgEl(msgId)) {
       await settleOnMessage(msgId);
       return;
     }
