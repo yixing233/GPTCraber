@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.17.4
+// @version      0.17.5
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.17.4';
+  const CRABER_VERSION = '0.17.5';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -4043,31 +4043,51 @@
   }
 
   // 取某个回合的大纲：以最后一条有文字的助手回复为准（分叉会话里可能有多个答案）
-  function craberTurnOutline(turn) {
-    if (!turn || !turn.answers || !turn.answers.length) return [];
-    let picked = null;
-    for (let i = turn.answers.length - 1; i >= 0; i--) {
-      const n = turn.answers[i];
-      const role = n.message.author && n.message.author.role;
-      const ct = n.message.content && n.message.content.content_type;
-      if (role === 'assistant' && (ct === 'text' || ct === 'multimodal_text')) {
-        if (extractText(n)) { picked = n; break; }
-      }
+  /* 收集该回合里所有助手正文节点（按顺序）。
+   * 一个回合的 answers 不止一条：工具结果、思考过程、以及**被拆开的回复**
+   * 都在里面。原来只取最后一条助手正文，于是回复一旦被拆成两条
+   * （实测：前半段到「第三阶段」结束，后半段从「第四阶段」开始），
+   * 大纲就只剩后半段 —— 表现正是"只有第四阶段开始的节点"。 */
+  function craberAnswerTexts(turn) {
+    const out = [];
+    if (!turn || !turn.answers) return out;
+    for (const n of turn.answers) {
+      const msg = n && n.message;
+      if (!msg) continue;
+      const role = msg.author && msg.author.role;
+      const ct = msg.content && msg.content.content_type;
+      if (role !== 'assistant') continue;
+      if (ct !== 'text' && ct !== 'multimodal_text') continue;
+      const t = extractText(n);
+      if (t) out.push({ id: msg.id, content: msg.content, text: t });
     }
-    if (!picked) return [];
-    const id = picked.message.id;
-    const content = picked.message.content;
-    /* 命中判据用 content 的对象身份，而不是长度：抽文本 + 解析标题都是
-     * O(正文长度) 的操作，而面板每敲一个字符就要把所有回合过一遍。
-     * state 每次重新拉取都会产生新对象，所以身份不同就等于内容变了；
-     * 同样的对象则一定还是同一份内容，可以 O(1) 直接返回。 */
-    const hit = OUTLINE_CACHE.get(id);
-    if (hit && hit.content === content) return hit.list;
-    const md = extractText(picked);
-    const list = craberHeadingsFromMarkdown(md);
+    return out;
+  }
+
+  function craberTurnOutline(turn) {
+    const nodes = craberAnswerTexts(turn);
+    if (!nodes.length) return [];
+    /* 缓存键：所有正文节点的 id + content 对象身份。
+     * 抽文本 + 解析标题都是 O(正文长度)，而面板每敲一个字符就要把
+     * 所有回合过一遍；state 每次重拉都会产生新对象，所以身份变了就等于
+     * 内容变了，身份相同则一定还是同一份内容，可 O(1) 直接返回。 */
+    const key = nodes.map((n) => n.id).join('|');
+    const stamp = nodes.map((n) => n.content);
+    const hit = OUTLINE_CACHE.get(key);
+    if (hit && hit.stamp.length === stamp.length
+      && hit.stamp.every((c, i) => c === stamp[i])) return hit.list;
+    // 按节点顺序拼接标题：前一条的末尾接后一条的开头，顺序就是阅读顺序
+    let list = [];
+    for (const n of nodes) {
+      for (const h of craberHeadingsFromMarkdown(n.text)) {
+        if (list.length >= OUTLINE_MAX) break;
+        list.push(h);
+      }
+      if (list.length >= OUTLINE_MAX) break;
+    }
     // 只有一条标题时不算"分节"，不给用户添噪
     const final = list.length >= 2 ? list : [];
-    OUTLINE_CACHE.set(id, { content: content, list: final });
+    OUTLINE_CACHE.set(key, { stamp: stamp, list: final });
     return final;
   }
 
