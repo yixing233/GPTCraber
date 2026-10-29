@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.18.3
+// @version      0.18.4
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.18.3';
+  const CRABER_VERSION = '0.18.4';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -3129,6 +3129,19 @@
     .craber-backup-row .craber-set-ctrl{flex:0 0 auto;justify-content:flex-end}
     .craber-backup-row .craber-set-chipbar{flex:1 1 100%;gap:6px}
     .craber-backup-hint-none{opacity:.72}
+    /* 类别开关行：整行可点，右侧一枚开关；与下面的"具体选择器"靠缩进区分 */
+    .craber-backup-kind{cursor:pointer;align-items:center}
+    .craber-backup-kind:hover{background:color-mix(in srgb,var(--craber-hover) 62%,var(--craber-bg))}
+    .craber-backup-kind:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px}
+    .craber-backup-kind .craber-fab-switch{width:36px;height:20px;border-radius:10px}
+    .craber-backup-kind .craber-fab-switch::after{width:16px;height:16px}
+    .craber-backup-kind.on .craber-fab-switch::after{transform:translateX(16px)}
+    /* 具体选择器缩进一档，并靠左侧竖线表明从属于上面的类别 */
+    .craber-backup-sub{padding-left:26px;position:relative}
+    .craber-backup-sub::before{content:'';position:absolute;left:15px;top:12px;bottom:12px;
+      width:2px;border-radius:1px;background:var(--craber-line)}
+    .craber-backup-sub-off{opacity:.5}
+    .craber-backup-sub-off .craber-set-label{color:var(--craber-sub)}
     .craber-backup-num{flex:none;width:78px;text-align:center;
       padding:7px 8px;font-size:13px;border-radius:9px;box-sizing:border-box}
     /* 位置卡内部：账号 + 目录一行，远端路径单独一行 */
@@ -6507,12 +6520,19 @@
   const DAV_BACKUP_CFG_KEY = 'gpt_craber_backup_cfg';
   const DAV_BACKUP_STATE_KEY = 'gpt_craber_backup_state';
 
-  // 范围不再用互斥的 scope 开关：两组都空 = 备份全部；
-  // 任一非空 = 备份「所选项目下的会话 ∪ 所选会话」。
+  /* 备份范围的三层语义，从粗到细：
+   *   1) 类别开关 includeProjects / includeConvs —— 整类备不备。
+   *      会话分两种：挂在项目下的（有 gizmo_id）、不属任何项目的独立会话。
+   *      都开 = 备份全部（原来的唯一行为）；关掉一类就整类不备份。
+   *   2) 限定项目 / 限定会话 —— 在类别之内再挑具体对象。
+   *      两组都空 = 不限；任一非空 = 「所选项目下的会话 ∪ 所选会话」。
+   *   3) 增量 / 全量 + 单次上限 —— 决定这一轮实际产出的条数。
+   * 只给第 2 层时无法表达"不要项目里的、只要独立会话"，所以补了第 1 层。 */
   const DAV_BACKUP_DEFAULT = {
     enabled: false, dir: 'craber-backup', mode: 'incremental', max: 50, lastRun: 0,
     // account：远端按「用户名」分目录，这里记住识别到的名字（留空则回退到匿名目录）
-    account: '', scopeProjects: [], scopeConvs: []
+    account: '', scopeProjects: [], scopeConvs: [],
+    includeProjects: true, includeConvs: true
   };
 
   function davBackupCfgLoad() {
@@ -6529,7 +6549,10 @@
         scopeProjects: Array.isArray(j.scopeProjects)
           ? j.scopeProjects.filter((x) => typeof x === 'string') : [],
         scopeConvs: Array.isArray(j.scopeConvs)
-          ? j.scopeConvs.filter((x) => typeof x === 'string') : []
+          ? j.scopeConvs.filter((x) => typeof x === 'string') : [],
+        // 注意用 !== false：旧配置里没有这两个字段，缺省必须是 true
+        includeProjects: j.includeProjects !== false,
+        includeConvs: j.includeConvs !== false
       };
     } catch (e) {
       return Object.assign({}, DAV_BACKUP_DEFAULT);
@@ -6645,6 +6668,54 @@
     try { localStorage.removeItem(DAV_BACKUP_LOG_KEY); } catch (e) {}
   }
 
+  /* 备份范围过滤。两层语义：
+   *   第一层（类别）：includeProjects / includeConvs 决定整类备不备。
+   *     会话分两种 —— 挂在项目下的（有 gizmo_id）、不属于任何项目的独立会话。
+   *     只靠"选择具体对象"表达不了"只备独立会话、不要项目里的"。
+   *   第二层（具体）：项目与会话是"取并集"的两个选择器，不是互斥模式：
+   *     选 2 个项目 + 3 个会话 = 这 2 个项目下的所有会话 ∪ 这 3 个会话。
+   * 点名选中的会话不受类别开关影响 —— 用户已经指名要它，就该备份。
+   */
+  function craberBackupFilterConvs(all, bcfg) {
+    const incProj = bcfg.includeProjects !== false;
+    const incConv = bcfg.includeConvs !== false;
+    const wantProjs = new Set(bcfg.scopeProjects || []);
+    const wantConvs = new Set(bcfg.scopeConvs || []);
+    const gidOf = (c) => (c && (c.gizmo_id || (c.gizmo && c.gizmo.id))) || null;
+
+    // 项目名 → gizmo_id；缓存里没有的，等下从会话自带的 gizmo_id 反查
+    const wantGids = new Set();
+    for (const nm of wantProjs) {
+      const gid = folderProjIdByName[nm];
+      if (gid) wantGids.add(gid);
+    }
+
+    let pool = all || [];
+    // 第一层：类别
+    if (!incProj || !incConv) {
+      pool = pool.filter((c) => {
+        if (!c) return false;
+        if (wantConvs.has(c.id)) return true;
+        return gidOf(c) ? incProj : incConv;
+      });
+    }
+    // 第二层：具体对象
+    if (wantProjs.size || wantConvs.size) {
+      pool = pool.filter((c) => {
+        if (!c) return false;
+        if (wantConvs.has(c.id)) return true;
+        if (!wantProjs.size) return false;
+        const gid = gidOf(c);
+        if (!gid) return false;
+        if (wantGids.has(gid)) return true;
+        // 名字还没建立映射时按名兜底
+        if (folderProjNameFromKey && wantProjs.has(folderProjNameFromKey('proj:' + gid))) return true;
+        return false;
+      });
+    }
+    return pool;
+  }
+
   // 执行一次备份
   async function davBackupRun(opts) {
     opts = opts || {};
@@ -6679,40 +6750,23 @@
     }
     state.account = acctName;
 
+    if (bcfg.includeProjects === false && bcfg.includeConvs === false) {
+      return {
+        ok: true, skipped: true, count: 0, pending: 0,
+        reason: '项目会话与独立会话都已关闭，没有可备份的内容'
+      };
+    }
+
     // 1. 拉会话列表
     if (opts.onProgress) opts.onProgress(0, 1, '读取会话列表…', 'scan');
     const all = await fetchAllConversations((n, total) => {
       if (opts.onProgress) opts.onProgress(n, total, '读取会话列表 ' + n + '/' + (total || '…'), 'scan');
     });
 
-    // 2a. 按范围过滤。
-    // 项目与会话是"取并集"的两个选择器，不是互斥模式：
-    // 选 2 个项目 + 3 个会话 = 这 2 个项目下的所有会话 ∪ 这 3 个会话。
-    const wantProjs = new Set(bcfg.scopeProjects || []);
-    const wantConvs = new Set(bcfg.scopeConvs || []);
-    // 项目名 → gizmo_id；缓存里没有的，等下从会话自带的 gizmo_id 反查
-    const wantGids = new Set();
-    for (const nm of wantProjs) {
-      const gid = folderProjIdByName[nm];
-      if (gid) wantGids.add(gid);
-    }
-
-    let pool = all;
-    if (wantProjs.size || wantConvs.size) {
-      pool = all.filter((c) => {
-        if (!c) return false;
-        // 明确选了会话：直接命中
-        if (wantConvs.has(c.id)) return true;
-        // 按项目命中：gizmo_id 匹配
-        if (!wantProjs.size) return false;
-        const gid = c.gizmo_id || (c.gizmo && c.gizmo.id);
-        if (!gid) return false;
-        if (wantGids.has(gid)) return true;
-        // 名字还没建立映射时按名兜底
-        if (folderProjNameFromKey && wantProjs.has(folderProjNameFromKey('proj:' + gid))) return true;
-        return false;
-      });
-    }
+    // 2a. 按范围过滤（抽成具名函数，便于单独验证）
+    const incProj = bcfg.includeProjects !== false;
+    const incConv = bcfg.includeConvs !== false;
+    const pool = craberBackupFilterConvs(all, bcfg);
 
     // 2b. 再按增量/全量筛选
     let targets;
@@ -6733,10 +6787,10 @@
 
     if (!limited.length) {
       const hasScope = (bcfg.scopeProjects || []).length || (bcfg.scopeConvs || []).length;
-      return {
-        ok: true, skipped: true, count: 0, pending: 0,
-        reason: hasScope ? '所选范围内没有待备份的会话' : '没有需要备份的会话'
-      };
+      let reason = '没有需要备份的会话';
+      if (!incProj && !incConv) reason = '项目会话与独立会话都已关闭，没有可备份的内容';
+      else if (hasScope) reason = '所选范围内没有待备份的会话';
+      return { ok: true, skipped: true, count: 0, pending: 0, reason: reason };
     }
 
     // 3. 构建 zip
@@ -12884,20 +12938,60 @@
     p.append(locCard);
 
     /* ---------- 备份范围 ----------
-     * 项目与会话是两个并行的选择器，不是互斥模式：
-     * 都不选 = 全部；选了任意一组 = 只备份该范围（两组取并集）。
+     * 两层：类别开关（项目内会话 / 独立会话）决定整类备不备；
+     * 具体选择器在此基础上再挑对象。
+     * 只给选择器时表达不了"只要独立会话、不要项目里的"，所以补了类别层。
      */
     let scopeProjects = (bcfg.scopeProjects || []).slice();
     let scopeConvs = (bcfg.scopeConvs || []).slice();
+    let incProjects = bcfg.includeProjects !== false;
+    let incConvs = bcfg.includeConvs !== false;
 
     const scopeCard = folderEl('section', 'craber-backup-card');
     const scopeHd = folderEl('div', 'craber-backup-cardhd');
     scopeHd.append(folderEl('div', 'craber-backup-cardtitle', '备份范围'));
-    scopeHd.append(folderEl('div', 'craber-backup-carddesc', '不选则备份全部；选了就只备份所选范围'));
+    const scopeDesc = folderEl('div', 'craber-backup-carddesc', '');
+    scopeHd.append(scopeDesc);
     scopeCard.append(scopeHd);
 
+    // 一个类别开关：标题 + 说明 + 右侧开关
+    const mkKindRow = (label, desc, initial, onChange) => {
+      const row = folderEl('div', 'craber-backup-row craber-backup-kind craber-fab-toggle');
+      row.setAttribute('role', 'switch');
+      row.tabIndex = 0;
+      const col = folderEl('div', 'craber-backup-rowcol');
+      col.append(folderEl('div', 'craber-set-label', label));
+      const hint = folderEl('div', 'craber-set-hint', desc);
+      col.append(hint);
+      const sw = folderEl('span', 'craber-fab-switch');
+      row.append(col, sw);
+      let on = !!initial;
+      const paint = () => {
+        row.setAttribute('aria-checked', on ? 'true' : 'false');
+        row.classList.toggle('on', on);
+      };
+      const toggle = () => {
+        on = !on;
+        paint();
+        onChange(on);
+        syncScopeUI();
+      };
+      row.addEventListener('click', (e) => { e.preventDefault(); toggle(); });
+      row.addEventListener('keydown', (e) => {
+        if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); }
+      });
+      paint();   // 初次创建就要画出状态，否则默认开着也显示成关闭
+      scopeCard.append(row);
+      return { row, hint, get on() { return on; } };
+    };
+    const projKind = mkKindRow('项目会话', '属于某个项目下的对话',
+      incProjects, (v) => { incProjects = v; });
+    const convKind = mkKindRow('独立会话', '不在任何项目里的对话',
+      incConvs, (v) => { incConvs = v; });
+
+    // 具体选择器：类别关掉时整行变淡不可点 —— 关着还能点选会让人以为会生效
     const mkScopeRow = (label, pickLabel) => {
-      const row = folderEl('div', 'craber-backup-row');
+      const row = folderEl('div', 'craber-backup-row craber-backup-sub');
       const col = folderEl('div', 'craber-backup-rowcol');
       col.append(folderEl('div', 'craber-set-label', label));
       const hint = folderEl('div', 'craber-set-hint', '');
@@ -12914,9 +13008,17 @@
     const convScope = mkScopeRow('限定会话', '选择会话…');
 
     const syncScopeUI = () => {
-      const fill = (scope, ui) => {
+      const fill = (scope, ui, kindOn) => {
         ui.bar.innerHTML = '';
-        ui.row.classList.toggle('has-chips', scope.length > 0);
+        ui.row.classList.toggle('has-chips', scope.length > 0 && kindOn);
+        ui.row.classList.toggle('craber-backup-sub-off', !kindOn);
+        ui.pickBtn.disabled = !kindOn;
+        if (!kindOn) {
+          ui.bar.hidden = true;
+          ui.hint.textContent = '已关闭，不备份这一类';
+          ui.hint.classList.remove('craber-backup-hint-none');
+          return;
+        }
         if (!scope.length) {
           ui.bar.hidden = true;
           ui.hint.textContent = '全部';
@@ -12934,12 +13036,24 @@
           }));
         }
       };
-      fill(scopeProjects, projScope);
-      fill(scopeConvs, convScope);
+      fill(scopeProjects, projScope, incProjects);
+      fill(scopeConvs, convScope, incConvs);
+      // 卡片说明随状态变化，一眼看出这一轮到底备什么
+      if (!incProjects && !incConvs) {
+        scopeDesc.textContent = '两类都已关闭，备份会直接跳过';
+        scopeDesc.classList.add('craber-backup-carddesc-warn');
+      } else if (incProjects && incConvs) {
+        scopeDesc.textContent = '两类都备份；下面的选择器可再限定具体项目与会话';
+        scopeDesc.classList.remove('craber-backup-carddesc-warn');
+      } else {
+        scopeDesc.textContent = incProjects ? '只备份项目内的会话' : '只备份独立会话';
+        scopeDesc.classList.remove('craber-backup-carddesc-warn');
+      }
     };
 
     projScope.pickBtn.addEventListener('click', async (e) => {
       e.preventDefault();
+      if (!incProjects) return;
       const picked = await craberPickScope('projects', scopeProjects);
       if (picked === null) return;
       scopeProjects = picked;
@@ -12947,6 +13061,7 @@
     });
     convScope.pickBtn.addEventListener('click', async (e) => {
       e.preventDefault();
+      if (!incConvs) return;
       const picked = await craberPickScope('convs', scopeConvs);
       if (picked === null) return;
       scopeConvs = picked;
@@ -13034,6 +13149,8 @@
       c.mode = mode;
       c.scopeProjects = scopeProjects.slice();
       c.scopeConvs = scopeConvs.slice();
+      c.includeProjects = incProjects;
+      c.includeConvs = incConvs;
       c.max = Math.max(1, Math.min(500, parseInt(maxIn.value, 10) || 50));
       return c;
     };
