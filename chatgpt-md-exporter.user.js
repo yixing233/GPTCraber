@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.18.0
+// @version      0.18.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.18.0';
+  const CRABER_VERSION = '0.18.1';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -221,8 +221,14 @@
 
           let j = null;
           try { j = await r.json(); } catch (e) { continue; }
-          // 能解析出消息结构的才算数：避免拿到空壳把整篇导出搞成白板
-          if (j && (j.mapping || Array.isArray(j.items) || Array.isArray(j.messages))) {
+          /* 能解析出消息结构的才算数：避免拿到空壳把整篇导出搞成白板。
+           * 平铺结构不止 items/messages 两种，linear_conversation / conversation
+           * / turns 也要认 —— 否则接口明明返回了正常数据，这里却判成失败，
+           * 报"会话内容获取失败: 200"（状态码是 200，内容也在，纯属验收条件太窄）。 */
+          if (j && (j.mapping
+            || Array.isArray(j.items) || Array.isArray(j.messages)
+            || Array.isArray(j.linear_conversation) || Array.isArray(j.conversation)
+            || Array.isArray(j.turns))) {
             craberNoteAuthMode(auth ? 'bearer' : 'cookie');
             return j;
           }
@@ -578,24 +584,48 @@
       return nodes;
     }
 
-    // 没有 mapping：尝试直接数组形式
-    const arr = (conv && (conv.items || conv.messages)) || null;
+    /* 没有 mapping：兼容几种常见的平铺结构
+     *   items / messages / linear_conversation / conversation 数组
+     * 每个元素可能是 { message: {...} } 也可能是裸 message。 */
+    const arr = conv && (conv.items || conv.messages
+      || conv.linear_conversation || conv.conversation || conv.turns);
     if (Array.isArray(arr)) {
-      return arr.map((m) => (m && m.message ? m : { message: m }))
+      return arr
+        .map((m) => {
+          if (!m) return null;
+          // linear_conversation 的元素还会再包一层
+          const inner = m.message || (m.item && m.item.message) || m.item || m;
+          return inner ? { message: inner } : null;
+        })
         .filter((n) => n && n.message);
     }
     return [];
   }
 
   // 把线程按"用户提问 → 之后的助手/工具回复"切成一个个回合
+  /* 取消息角色。author 有几种形态：{ role }、字符串、或干脆把 role 放在 message 上。 */
+  function craberRole(m) {
+    if (!m) return '';
+    const a = m.author;
+    if (a && typeof a === 'object' && typeof a.role === 'string') return a.role;
+    if (typeof a === 'string') return a;
+    if (typeof m.role === 'string') return m.role;
+    return '';
+  }
+
   function groupTurns(thread) {
     const turns = [];
     let cur = null;
     for (const node of thread) {
       const m = node.message;
-      const role = m.author && m.author.role;
+      const role = craberRole(m);
       const ct = m.content && m.content.content_type;
-      if (role === 'user' && (ct === 'text' || ct === 'multimodal_text')) {
+      /* 用户提问：有正文即可，不强求 content_type 是 text/multimodal_text ——
+       * 新结构有时不标 content_type，卡着它会把提问整体丢掉，
+       * 连带后面的回答全被挂到上一个回合里。 */
+      const isUser = role === 'user'
+        && (!ct || ct === 'text' || ct === 'multimodal_text');
+      if (isUser) {
         cur = { question: node, answers: [] };
         turns.push(cur);
       } else if (cur) {
@@ -609,15 +639,42 @@
    * 渲染
    * ========================================================== */
 
+  /* ---------- 消息正文提取（兼容多种结构） ----------
+   *
+   * 正文在不同版本/不同接口里放的位置并不统一，实测见过这几种：
+   *   parts: ['正文']                        最经典
+   *   parts: [{ content_type:'text', text:'正文' }]   对象式 part
+   *   content.text: '正文'                   整体放在 text
+   *   content: '正文'                        连 parts 都没有，content 就是字符串
+   * 早先只认第一种，另外三种会整段丢失 —— 表现为导出文件里只有标题、正文空白。
+   * 这里统一归一化成字符串，下游（渲染、引用替换、大纲）都只处理字符串。
+   */
+  function craberPartText(p) {
+    if (typeof p === 'string') return p;
+    if (!p || typeof p !== 'object') return '';
+    if (typeof p.text === 'string') return p.text;
+    if (typeof p.content === 'string') return p.content;
+    if (typeof p.value === 'string') return p.value;
+    return '';
+  }
+
+  // 取消息的全部正文文本（按出现顺序拼接）
+  function craberContentText(content) {
+    if (!content) return '';
+    if (typeof content === 'string') return content;
+    const out = [];
+    if (Array.isArray(content.parts)) {
+      for (const p of content.parts) {
+        const t = craberPartText(p);
+        if (t) out.push(t);
+      }
+    }
+    if (!out.length && typeof content.text === 'string' && content.text) out.push(content.text);
+    return out.join('');
+  }
   function extractText(node) {
     if (!node || !node.message) return '';
-    const c = node.message.content;
-    if (!c) return '';
-    // 优先 parts 里的字符串；新结构有时把正文放在 content.text
-    const parts = c.parts || [];
-    let s = parts.filter((p) => typeof p === 'string').join(' ').trim();
-    if (!s && typeof c.text === 'string') s = c.text.trim();
-    return s.replace(PUA, '').trim();
+    return craberContentText(node.message.content).replace(PUA, '').trim();
   }
 
   // 从任意 message 里尽力取出纯文本（未知类型的兜底用）。
@@ -674,14 +731,17 @@
       if (!node || !node.message) return;
       // 跳过 tool 节点：其 image_asset_pointer 指向文档内嵌图（sediment://…#file_xxx#p_N…），
       // 不是独立可下载文件，且该节点内容在渲染时已整体剥离，避免无谓下载失败。
-      if (node.message.author && node.message.author.role === 'tool') return;
+      if (craberRole(node.message) === 'tool') return;
       const parts = node.message.content && node.message.content.parts;
       if (!Array.isArray(parts)) return;
       for (const p of parts) {
-        if (p && p.content_type === 'image_asset_pointer') {
-          const fid = extractFileId(p.asset_pointer);
-          if (fid) ids.add(fid);
-        }
+        if (!p || typeof p !== 'object') continue;
+        // 新结构可能省掉 content_type，只看有没有 asset_pointer
+        const isImg = p.content_type === 'image_asset_pointer'
+          || (typeof p.asset_pointer === 'string' && p.asset_pointer.indexOf('file') >= 0);
+        if (!isImg) continue;
+        const fid = extractFileId(p.asset_pointer);
+        if (fid) ids.add(fid);
       }
     };
     turn.answers.forEach(scan);
@@ -1074,7 +1134,8 @@
   }
   // 渲染 assistant/text，处理 content_references 引用标记
   function renderAssistantText(m, cache) {
-    let text = ((m.content && m.content.parts) || []).filter((p) => typeof p === 'string').join('');
+    // 统一取文本：parts 字符串 / 对象式 part / content.text / content 本身是字符串，都能认
+    let text = craberContentText(m && m.content);
     const refs = (m.metadata && m.metadata.content_references) || [];
 
     // 用 start_idx/end_idx 精确替换，从后往前避免位移
@@ -1128,14 +1189,25 @@
   function renderMultimodalParts(parts, cache) {
     let out = '';
     for (const p of parts || []) {
-      if (typeof p === 'string') {
-        if (p.trim()) out += p.replace(PUA, '').trim() + '\n\n';
-      } else if (p && p.content_type === 'image_asset_pointer') {
+      if (!p || typeof p !== 'object') {
+        // 字符串 part：整段就是正文
+        const t = craberPartText(p);
+        if (t && t.trim()) out += t.replace(PUA, '').trim() + '\n\n';
+        continue;
+      }
+      // 图片：老结构用 content_type，新结构可能省掉它、只留 asset_pointer
+      const isImg = p.content_type === 'image_asset_pointer'
+        || (typeof p.asset_pointer === 'string' && p.asset_pointer.indexOf('file') >= 0);
+      if (isImg) {
         const fid = extractFileId(p.asset_pointer);
         const src = fid && cache[fid];
         if (src) out += '![image](' + src + ')\n\n';
         else out += '<!-- 图片未能内嵌: ' + (fid || '未知') + ' -->\n\n';
+        continue;
       }
+      // 其余对象 part 里若带文字，按正文输出（早先会被整个忽略）
+      const t = craberPartText(p);
+      if (t && t.trim()) out += t.replace(PUA, '').trim() + '\n\n';
     }
     return out;
   }
@@ -1163,8 +1235,11 @@
 
   function renderAnswerNode(node, cache) {
     const m = node.message;
-    const role = m.author && m.author.role;
-    const ct = m.content && m.content.content_type;
+    const role = craberRole(m);
+    /* content_type 不是每条消息都有（新版有时只在 parts 里标，或整体缺失）。
+     * 缺失时若 role 是 assistant，就按普通正文处理 —— 否则整段回复会被下面的
+     * 兜底分支认成"未知类型"而丢掉。 */
+    const ct = (m.content && m.content.content_type) || (role === 'assistant' ? 'text' : undefined);
 
     // tool 角色是工具调用结果（如上传文档解析出的全文复述、代码执行等），
     // 不是模型对用户的回答，默认跳过；开启 includeTools 后折叠输出。
@@ -1231,6 +1306,11 @@
       if (body) return body + '\n\n';
       if (ct) return '_（该段为 ' + ct + ' 类型内容，无法提取为 Markdown）_' + '\n\n';
     }
+    // 用户消息落在 answers 里（有些结构会把追问也挂在这里）：别静默丢字
+    if (role === 'user') {
+      const body = craberLooseText(m);
+      if (body) return '**追问：** ' + body + '\n\n';
+    }
     return '';
   }
 
@@ -1296,9 +1376,12 @@
     if (withQuestion) {
       md += '## 🧑 问题\n\n';
       md += (title || '(空)') + '\n\n';
-      const qParts = turn.question && turn.question.message.content && turn.question.message.content.parts;
+      const qParts = turn.question && turn.question.message.content
+        && turn.question.message.content.parts;
       if (Array.isArray(qParts)) {
-        const imgs = renderMultimodalParts(qParts.filter((p) => p && p.content_type === 'image_asset_pointer'), cache);
+        const imgs = renderMultimodalParts(qParts.filter((p) => p && typeof p === 'object' && (
+          p.content_type === 'image_asset_pointer'
+          || (typeof p.asset_pointer === 'string' && p.asset_pointer.indexOf('file') >= 0))), cache);
         if (imgs) md += imgs;
       }
       // 上传的文档：以 [📎 名称](链接) 列出（附件通常挂在问题上）
@@ -3435,7 +3518,7 @@
         const q = extractText(turn.question) || '(无文字提问)';
         const answerCount = turn.answers.filter((n) => {
           const ct = n.message.content && n.message.content.content_type;
-          const role = n.message.author && n.message.author.role;
+          const role = craberRole(n.message);
           return (role === 'assistant' && ct === 'text') || ct === 'multimodal_text';
         }).length;
         const row = document.createElement('label');
@@ -3796,9 +3879,9 @@
   // 只取 text / multimodal_text，跳过 tool 与 code 等非对话内容。
   function turnPreview(turn) {
     for (const n of turn.answers) {
-      const role = n.message.author && n.message.author.role;
+      const role = craberRole(n.message);
       const ct = n.message.content && n.message.content.content_type;
-      if (role === 'assistant' && (ct === 'text' || ct === 'multimodal_text')) {
+      if (role === 'assistant' && (ct === 'text' || ct === 'multimodal_text' || !ct)) {
         const t = extractText(n);
         if (t) return t;
       }
@@ -4240,10 +4323,11 @@
     for (const n of turn.answers) {
       const msg = n && n.message;
       if (!msg) continue;
-      const role = msg.author && msg.author.role;
+      const role = craberRole(msg);
       const ct = msg.content && msg.content.content_type;
       if (role !== 'assistant') continue;
-      if (ct !== 'text' && ct !== 'multimodal_text') continue;
+      // 新结构可能不带 content_type，只要取得到正文就算正文
+      if (ct && ct !== 'text' && ct !== 'multimodal_text') continue;
       const t = extractText(n);
       if (t) out.push({ id: msg.id, content: msg.content, text: t });
     }

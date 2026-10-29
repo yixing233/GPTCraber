@@ -47,6 +47,7 @@
 - 上传的 PDF、DOCX、TXT 等文档保存到本地，md 中以相对路径引用
 - 附件/图片拿不到（403、过期等）会自动跳过并在结束时汇总提示，不会静默丢文件
 - 富内容回复（GenUI 卡片、JSX 组件、公式块）导出时自动清理成可读 markdown，损坏的代码围栏会自动修复
+- 兼容多种消息结构：parts 字符串 / 对象式 part / content.text / 平铺 items、linear_conversation，缺 content_type 也能导出
 - 导出前可预览渲染后的 Markdown
 - 可选：问答对 / 仅 AI 回复、是否导出工具代码、是否附参考来源、图片是否内嵌
 
