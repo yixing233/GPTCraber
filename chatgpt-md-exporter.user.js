@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.18.4
+// @version      0.18.5
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.18.4';
+  const CRABER_VERSION = '0.18.5';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -11036,17 +11036,56 @@
   }
 
   // 主循环：每秒一次。有变化才重建，其余时间几乎零开销。
-  /* ---------- 阻止原生「项目」区自动展开 ---------- */
-  // 原生会在这些时机自动展开项目行：进入项目内会话、侧栏重渲染、从项目页返回。
-  // 开启「锁定项目展开」后，我们把这些自动展开按回去，只有用户亲手点的才放行。
+  /* ---------- 只挡掉「加载会话后那一次」项目自动展开 ----------
+   *
+   * 原生行为：进入某个项目内的会话后，它会把该项目行自动展开。
+   * 用户要的是"别自己弹开"，**不是**"把项目焊死"——手动点开必须照常生效。
+   *
+   * 旧实现把"收起过"永久记进 localStorage（项目名 → true），于是用户手动展开后
+   * 下一个 tick 又按回去，刷新页面也照旧按回去。表现就是项目被锁死。
+   *
+   * 现在只做一件很窄的事：换会话后开一个短窗口，窗口内若某个项目
+   * **从收起变成展开**、且不是用户点的，就按回去一次。窗口一过完全放手。
+   * 状态全部在内存里 —— 刷新即清空，不可能长期压制。
+   */
   const folderProjGuard = {
-    armed: false,                      // 我们主动按回去时置位，避免和用户点击混淆
-    userTouchedAt: 0,                  // 用户最近一次点项目行的时间
-    collapsed: Object.create(null)     // 项目名 -> 是否已被我们收起
+    armed: false,           // 我们主动按回去时置位，避免把自己的点击当成用户点击
+    userTouchedAt: 0,       // 用户最近一次点项目行的时间
+    routeKey: '',           // 上一次看到的路由，用于识别"换了会话"
+    windowUntil: 0,         // 抑制窗口截止时间（只在换会话后短暂开启）
+    snap: Object.create(null)   // 项目名 → 上一 tick 的展开状态
   };
+
+  // 窗口时长：原生自动展开通常发生在会话加载后 0.3~1.5s，给足余量。
+  const FOLDER_PROJ_WINDOW_MS = 2500;
 
   function folderProjRowExpanded(row) {
     return row.getAttribute('aria-expanded') === 'true';
+  }
+
+  /* 项目行的稳定标识。
+   * 不能整行 textContent：展开后行内会多出子项文字，名字跟着变。
+   * 也要避开我们注入的「更多操作」按钮 —— 它带 title，会把项目名认成
+   * "更多操作（文件夹 / 导出）"（实测两条项目同名）。 */
+  function folderProjRowName(row) {
+    if (!row) return '';
+    const aria = (row.getAttribute('aria-label') || '').trim();
+    if (aria) return aria;
+    const own = (row.getAttribute('title') || '').trim();
+    if (own) return own;
+    // 取"文本最长且含字母/数字"的叶子元素：行首常是箭头 ▸，取第一个会拿到符号
+    let best = '';
+    for (const el of row.querySelectorAll('span, div, p')) {
+      if (el.querySelector('span, div, p')) continue;   // 只看叶子
+      if (el.closest('.craber-pj-btn')) continue;       // 跳过注入的按钮
+      const t = (el.textContent || '').trim();
+      if (!/[\p{L}\p{N}]/u.test(t)) continue;
+      if (t.length > best.length) best = t;
+    }
+    if (!best) {
+      best = (row.textContent || '').replace(/[\u25b8\u25be\u25b6\u25bc>]/g, '').trim();
+    }
+    return best.replace(/\s+/g, ' ').slice(0, 60);
   }
 
   // 收集原生「项目」区块里的项目行（排除区块标题与自家节点）
@@ -11062,62 +11101,58 @@
     });
   }
 
-  // 原生项目行的展开状态记到 localStorage。
-  // 之前的实现只存在内存里，而且"只记录看到收起的"——
-  // 于是打开开关时项目本来就是展开的、之后就再也没记录过，
-  // 原生下次自动展开时我们根本不干预（表现为"锁了没用"）。
-  function folderGuardLoad() {
-    try {
-      const raw = localStorage.getItem('gpt_craber_proj_guard');
-      if (raw) {
-        const j = JSON.parse(raw);
-        if (j && j.collapsed) folderProjGuard.collapsed = j.collapsed;
-      }
-    } catch (e) { /* 损坏就重来 */ }
-  }
-  function folderGuardSave() {
-    try {
-      localStorage.setItem('gpt_craber_proj_guard',
-        JSON.stringify({ collapsed: folderProjGuard.collapsed }));
-    } catch (e) { /* 忽略 */ }
-  }
-
   function folderGuardProjAutoExpand() {
     if (!uiPrefs.lockProjExpand) return;
+
     const now = Date.now();
-    let dirty = false;
-    for (const row of folderNativeProjRows()) {
-      const name = (row.textContent || '').trim();
-      const expanded = folderProjRowExpanded(row);
+    const rows = folderNativeProjRows();
 
-      if (!expanded) {
-        // 收起状态：记为"用户想让它收起"（下次被原生自动展开时按回去）
-        if (folderProjGuard.collapsed[name] !== true) {
-          folderProjGuard.collapsed[name] = true;
-          dirty = true;
-        }
-        continue;
+    /* 换会话：开一个短窗口，并把当前状态记成基线。
+     * 基线很关键 —— 已在展开的项目不会被当成"刚被自动展开"而按回去。 */
+    const routeKey = location.pathname + location.search;
+    if (routeKey !== folderProjGuard.routeKey) {
+      folderProjGuard.routeKey = routeKey;
+      folderProjGuard.windowUntil = now + FOLDER_PROJ_WINDOW_MS;
+      folderProjGuard.userTouchedAt = 0;
+      folderProjGuard.snap = Object.create(null);
+      for (const row of rows) {
+        const name = folderProjRowName(row);
+        if (name) folderProjGuard.snap[name] = folderProjRowExpanded(row);
       }
+      return;
+    }
 
-      // 展开状态
-      if (folderProjGuard.armed) continue;
-      if (now - folderProjGuard.userTouchedAt < 500) continue;   // 用户刚点过，放行
+    const inWindow = now < folderProjGuard.windowUntil;
+    const userJustClicked = now - folderProjGuard.userTouchedAt < 700;
+    if (folderProjGuard.armed) return;
 
-      // 从没被收起过的项目：不干预（尊重原生初始状态）。
-      // 但用户一旦手动收起过，就一定在表里，之后就会被锁住。
-      if (folderProjGuard.collapsed[name] !== true) continue;
+    for (const row of rows) {
+      const name = folderProjRowName(row);
+      if (!name) continue;
+      const expanded = folderProjRowExpanded(row);
+      const before = folderProjGuard.snap[name];
+
+      // 记下本 tick 的状态，供下一 tick 比较
+      folderProjGuard.snap[name] = expanded;
+
+      // 首次见到（没有基线）或状态没变：不干预
+      if (before === undefined || before === expanded) continue;
+      // 只在"收起 → 展开"这一种跃迁上干预，且必须在窗口内、不是用户点的
+      if (!expanded || !inWindow || userJustClicked) continue;
 
       folderProjGuard.armed = true;
       try { row.click(); } catch (e) { /* 点不动就忽略 */ }
-      setTimeout(() => { folderProjGuard.armed = false; }, 150);
+      // 按回去后立刻关窗：这一次已经处理完，之后一律放手
+      folderProjGuard.windowUntil = 0;
+      folderProjGuard.snap[name] = false;
+      setTimeout(() => { folderProjGuard.armed = false; }, 200);
+      break;
     }
-    if (dirty) folderGuardSave();
   }
 
-  // 记录"用户亲手点了项目行"，并在状态稳定后记住用户要的展开状态
-  let folderGuardLoaded = false;
+  /* 用户亲手点项目行：立刻关窗 —— 这是"我要展开"的明确意图，
+   * 之后不再按回去（直到下一次换会话）。 */
   function folderBindProjRowClick() {
-    if (!folderGuardLoaded) { folderGuardLoaded = true; folderGuardLoad(); }   // 恢复上次的收起记录
     const nav = document.querySelector('nav[aria-label="聊天记录"]');
     if (!nav || nav.dataset.craberProjGuard === '1') return;
     nav.dataset.craberProjGuard = '1';
@@ -11128,14 +11163,10 @@
       const t = (row.textContent || '').trim();
       if (!t || t === '项目' || t === '最近') return;
       folderProjGuard.userTouchedAt = Date.now();
-      setTimeout(() => {
-        const name = (row.textContent || '').trim();
-        // 用户亲手点过：以点完后的状态为准，并持久化
-        folderProjGuard.collapsed[name] = !folderProjRowExpanded(row);
-        folderGuardSave();
-      }, 300);
+      folderProjGuard.windowUntil = 0;      // 用户动手了，本次窗口作废
     }, true);
   }
+
 
   function foldersTick() {
     if (!uiPrefs.folders) { folderUnmount(); return; }
@@ -11263,22 +11294,14 @@
       // 关闭时无需清理：notifyTick 下一秒自己会复位状态位。
       if (on) notifyRequestPermission();
     } else if (key === 'lockProjExpand') {
-      // 打开开关的瞬间，把"当前已展开"的项目也纳入守护范围：
-      // 用户点这个开关的本意就是"从现在起别再自动弹开"。
-      // 关闭时清空记录，回到完全交给原生。
-      if (on) {
-        for (const row of folderNativeProjRows()) {
-          const name = (row.textContent || '').trim();
-          // 已展开的：标记为"想让它收起"，这样原生下次自动展开就会被按回去。
-          // 注意这里不主动点它（用户可能正看着某个项目的内容）。
-          if (folderProjRowExpanded(row)) folderProjGuard.collapsed[name] = true;
-        }
-        folderGuardSave();
-        navToast('已锁定：项目不会再自动展开');
-      } else {
-        folderProjGuard.collapsed = Object.create(null);
-        folderGuardSave();
-      }
+      /* 打开开关时不预先压制任何项目 —— 只对"下一次自动展开"生效。
+       * 旧实现把当前已展开的项目全部标成"要收起"，用户当场想手动展开
+       * 就被按回去，看起来像把项目焊死了。 */
+      folderProjGuard.windowUntil = 0;
+      folderProjGuard.routeKey = location.pathname + location.search;
+      folderProjGuard.snap = Object.create(null);
+      if (on) navToast('已锁定：只挡加载会话后的自动展开，手动点开照常生效');
+      else navToast('已取消：项目展开完全交回 ChatGPT');
     } else if (key === 'folders') {
       // 开：立刻挂上；关：撤掉区块和原生行上的小按钮
       if (on) { foldersTick(); }
@@ -12215,7 +12238,7 @@
       ['folders', '侧栏文件夹', '在侧栏「项目」上方显示自定义文件夹',
         '<path d="' + FOLDER_PATH + '"/>'],
       // 锁定项目展开：锁（锁体 14 高、锁梁与锁体同宽，比例标准）
-      ['lockProjExpand', '锁定项目展开', '阻止原生「项目」区自动展开',
+      ['lockProjExpand', '锁定项目展开', '只挡「加载会话后自动展开项目」，你手动点开照常生效',
         '<rect x="4" y="10" width="16" height="10.5" rx="2.6"/>'
           + '<path d="M8 10V7.6a4 4 0 0 1 8 0V10"/>'
           + '<path d="M12 14v3"/>']
