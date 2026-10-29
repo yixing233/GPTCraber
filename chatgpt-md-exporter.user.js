@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.18.2
+// @version      0.18.3
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.18.2';
+  const CRABER_VERSION = '0.18.3';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -3056,8 +3056,10 @@
     .craber-set-switch .craber-fab-switch{width:36px;height:20px;border-radius:10px}
     .craber-set-switch .craber-fab-switch::after{width:16px;height:16px}
     .craber-set-switch.craber-fab-toggle.on .craber-fab-switch::after{transform:translateX(16px)}
-    .craber-set-page .craber-dav-loghead{margin-top:12px}
+    .craber-set-page .craber-dav-loghead{margin-top:14px;padding-top:4px}
     .craber-set-page .craber-dav-loglist{margin-top:2px}
+    /* 备份页：让内容从统计卡开始就有统一的 10px 节奏 */
+    .craber-set-page .craber-set-stats + .craber-backup-card{margin-top:0}
     /* 状态行：与设置区留出气口 */
     .craber-dav-status{margin-top:12px}
     .craber-crab{display:flex;flex-direction:column;gap:18px;min-width:0}
@@ -3102,6 +3104,50 @@
     .craber-dav-sectitle{font-size:12px;font-weight:600;letter-spacing:.03em;
       color:var(--craber-sub);text-transform:uppercase;margin-bottom:12px}
 
+    /* ===== 会话备份页 ===== */
+    /* 分段卡片：位置 / 范围 / 执行方式各自成卡，卡内行用细线分。
+       原来全部塞进一张 .craber-set-form，十来个字段连成一片，
+       扫一眼分不清"写到哪"和"备什么"。 */
+    .craber-backup-card{display:flex;flex-direction:column;min-width:0;
+      border:1px solid var(--craber-line);border-radius:14px;
+      background:var(--craber-bg);overflow:hidden;margin-bottom:10px}
+    .craber-backup-cardhd{padding:11px 14px 9px;display:flex;flex-direction:column;gap:3px;
+      background:color-mix(in srgb,var(--craber-hover) 52%,var(--craber-bg));
+      border-bottom:1px solid var(--craber-line)}
+    .craber-backup-cardtitle{font-size:13px;font-weight:600;color:var(--craber-fg);
+      line-height:1.35}
+    .craber-backup-carddesc{font-size:11.5px;color:var(--craber-sub);line-height:1.45}
+    .craber-backup-carddesc-warn{color:#c4761b}
+    /* 卡内一行：左列说明，右侧控件；已选 chip 单独占一行铺满 */
+    .craber-backup-row{display:flex;align-items:center;gap:16px;
+      padding:10px 14px;border-top:1px solid var(--craber-line);min-width:0;
+      flex-wrap:wrap}
+    .craber-backup-row:first-of-type{border-top:none}
+    .craber-backup-row.has-chips{padding-bottom:11px}
+    .craber-backup-rowcol{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .craber-backup-row > .craber-set-btn{flex:none}
+    .craber-backup-row .craber-set-ctrl{flex:0 0 auto;justify-content:flex-end}
+    .craber-backup-row .craber-set-chipbar{flex:1 1 100%;gap:6px}
+    .craber-backup-hint-none{opacity:.72}
+    .craber-backup-num{flex:none;width:78px;text-align:center;
+      padding:7px 8px;font-size:13px;border-radius:9px;box-sizing:border-box}
+    /* 位置卡内部：账号 + 目录一行，远端路径单独一行 */
+    .craber-backup-card > .craber-locrow{padding:11px 14px;border-top:1px solid var(--craber-line)}
+    .craber-backup-card > .craber-pathprev{padding:0 14px 11px;margin-top:-3px}
+    .craber-backup-card > .craber-pathprev .craber-pathprev-path{flex:1 1 auto}
+    /* 操作栏：页头下方的一行工具栏，不吸附、不遮挡内容 */
+    .craber-backup-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+      margin:2px 0 10px}
+    .craber-backup-actions .craber-set-actions{padding:0;flex:none}
+    .craber-backup-actions .craber-dav-status{margin:0;font-size:12px;
+      flex:1 1 200px;min-width:0}
+    /* 备份中：主按钮换成描边态，避免"正在跑"还一脸可点 */
+    .craber-backup-busy .craber-set-btn-primary{background:transparent;
+      border-color:var(--craber-line);color:var(--craber-sub)}
+    html[data-theme="dark"] .craber-backup-busy .craber-set-btn-primary{
+      background:transparent;border-color:var(--craber-line);color:var(--craber-sub)}
+    .craber-backup-card .craber-set-chipbar{margin-top:1px}
+
     /* 同步记录 */
     .craber-dav-loghead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
     .craber-dav-logtitle{font-size:13px;color:var(--craber-fg);font-weight:600}
@@ -3112,13 +3158,21 @@
       cursor:pointer;margin-left:auto}
     .craber-dav-clear:hover{background:var(--craber-hover);color:var(--craber-fg)}
     /* 记录列表：去掉外层额外留白，行间距靠 gap 控制 */
-    .craber-dav-loglist{max-height:120px;overflow-y:auto;overflow-x:hidden;
-      display:flex;flex-direction:column;gap:1px;padding-right:6px;
-      margin-right:-6px}
+    .craber-dav-loglist{max-height:min(340px,44vh);overflow-y:auto;overflow-x:hidden;
+      display:flex;flex-direction:column;gap:2px;padding-right:6px;
+      margin-right:-6px;overscroll-behavior:contain}
+    .craber-dav-loglist::-webkit-scrollbar{width:8px}
+    .craber-dav-loglist::-webkit-scrollbar-thumb{
+      background:color-mix(in srgb,var(--craber-line) 88%,transparent);
+      border-radius:4px;border:2px solid var(--craber-bg);background-clip:content-box}
+    .craber-dav-loglist::-webkit-scrollbar-track{background:transparent}
     .craber-dav-logempty{padding:14px 2px;font-size:12.5px;color:var(--craber-sub);
       text-align:center}
-    .craber-dav-logrow{display:flex;align-items:flex-start;gap:8px;padding:8px;
-      border-radius:8px;font-size:12.5px;line-height:1.4}
+    .craber-dav-logrow{display:flex;align-items:flex-start;gap:9px;padding:9px 10px;
+      border-radius:9px;font-size:12.5px;line-height:1.4;
+      border:1px solid transparent}
+    .craber-dav-logrow.err{border-color:color-mix(in srgb,#e02e2a 18%,transparent);
+      background:color-mix(in srgb,#e02e2a 4%,transparent)}
     .craber-dav-logrow:hover{background:var(--craber-hover)}
     .craber-dav-logdot{flex:none;width:6px;height:6px;border-radius:50%;margin-top:6px;
       background:var(--craber-accent)}
@@ -3132,6 +3186,9 @@
       line-height:16px;font-weight:600;font-variant-numeric:tabular-nums}
     .craber-dav-chip.add{color:var(--craber-accent);background:rgba(16,163,127,.12)}
     .craber-dav-chip.del{color:#e02e2a;background:rgba(224,46,42,.12)}
+    /* 体积：跟在 +N 后面，弱一档，别和"新增条数"抢注意力 */
+    .craber-dav-logbytes{flex:none;font-size:11.5px;color:var(--craber-sub);
+      font-variant-numeric:tabular-nums}
     .craber-dav-logrow.err .craber-dav-logline{color:#e02e2a}
     .craber-dav-logdetail{color:var(--craber-sub);font-size:11.5px;margin-top:1px;
       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -12696,6 +12753,16 @@
   }
 
   /* ---------- 页面 5：会话备份 ---------- */
+  /* ---------- 页面 5：会话备份 ----------
+   * 版式：概况三数 → 备份位置 → 范围 → 方式/上限 → 操作栏 → 历史。
+   * 几个刻意的选择：
+   *   1) 位置单独成卡：它是"写到哪"，与"备什么/怎么备"不是一类东西。
+   *   2) 范围两项合成一张卡：它们语义并列（都不选=全部），分开摆会让人
+   *      以为是两种互斥模式。
+   *   3) 操作栏与状态吸附在页面底部：历史可能很长，滚到底才找到"开始备份"
+   *      是不能接受的；状态提示也要紧贴按钮，否则点完看不到反馈。
+   *   4) 历史给足高度并自带滚动：原来只有 120px，三行就得滚，等于没提供信息。
+   */
   function craberPageDavBackup() {
     const cfg = davLoad();
     const bcfg = davBackupCfgLoad();
@@ -12705,15 +12772,6 @@
 
     const p = craberPage('会话备份', '把会话导出成 zip 存到 WebDAV，按账号与日期分目录。');
 
-    // 概况：已备份多少、上次什么时候、最近一次多大
-    const lastOk = blog.find((x) => x.ok);
-    const info = folderEl('div', 'craber-set-stats');
-    const stat = (label, value) => {
-      const c = folderEl('div', 'craber-set-stat');
-      c.append(folderEl('div', 'craber-set-statnum', String(value)));
-      c.append(folderEl('div', 'craber-set-statlbl', label));
-      return c;
-    };
     const fmtBytes = (n) => {
       const b = Number(n) || 0;
       if (!b) return '—';
@@ -12721,10 +12779,28 @@
       if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
       return (b / 1024 / 1024).toFixed(1) + ' MB';
     };
+
+    /* 概况：三个数字。
+     * "上次备份"取 state / bcfg / 最近成功记录里最新的那个 —— 三处都会写时间，
+     * 只用其中一个会出现"明明刚备份过却显示—"。 */
+    const lastOk = cfg.url ? blog.find((x) => x.ok) : null;
+    const lastRunAt = !cfg.url ? 0 : Math.max(
+      Number(bcfg.lastRun) || 0,
+      Number(state.lastRun) || 0,
+      lastOk ? Number(lastOk.at) || 0 : 0
+    );
+    const info = folderEl('div', 'craber-set-stats');
+    const stat = (label, value, title) => {
+      const c = folderEl('div', 'craber-set-stat');
+      const num = folderEl('div', 'craber-set-statnum', String(value));
+      if (title) { c.title = title; num.title = title; }
+      c.append(num, folderEl('div', 'craber-set-statlbl', label));
+      return c;
+    };
     info.append(
-      stat('已备份会话', doneCount),
-      stat('上次备份', bcfg.lastRun ? davFmtTime(bcfg.lastRun) : '—'),
-      stat('最近体积', lastOk ? fmtBytes(lastOk.bytes) : '—')
+      stat('已备份会话', cfg.url ? doneCount : '—', '按会话 id 记录，切换账号会重新计数'),
+      stat('上次备份', lastRunAt ? davFmtTime(lastRunAt) : '—', lastRunAt ? new Date(lastRunAt).toLocaleString() : ''),
+      stat('最近体积', lastOk ? fmtBytes(lastOk.bytes) : '—', lastOk && lastOk.path ? lastOk.path : '')
     );
     p.append(info);
 
@@ -12733,22 +12809,14 @@
       return p;
     }
 
-    /* 设置区 */
-    const box = folderEl('div', 'craber-set-form');
+    /* ---------- 备份位置 ---------- */
+    const locCard = folderEl('section', 'craber-backup-card');
+    const locHd = folderEl('div', 'craber-backup-cardhd');
+    locHd.append(folderEl('div', 'craber-backup-cardtitle', '备份位置'));
+    const locHint = folderEl('div', 'craber-backup-carddesc', '按账号名分文件夹，多账号互不覆盖');
+    locHd.append(locHint);
+    locCard.append(locHd);
 
-    /* 备份位置：账号 + 目录 + 实际落盘路径，合成一块
-     * 原来拆成「当前账号 / 备份目录 / 远端位置」三行，太占高度，
-     * 而且三者本来就是一件事：这个账号的备份会写到哪。
-     */
-    const fLoc = folderEl('div', 'craber-set-field craber-set-field-stack');
-    const locCol = folderEl('div', 'craber-set-fieldcol');
-    locCol.append(folderEl('div', 'craber-set-label', '备份位置'));
-    const locHint = folderEl('div', 'craber-set-hint',
-      '备份按账号名分文件夹，多账号互不覆盖');
-    locCol.append(locHint);
-    fLoc.append(locCol);
-
-    // 一行：账号徽标 + 目录输入 + 实际路径
     const locRow = folderEl('div', 'craber-locrow');
 
     const acctVal = folderEl('div', 'craber-acct');
@@ -12766,14 +12834,15 @@
     dirIn.setAttribute('aria-label', '备份目录');
     dirIn.title = '备份根目录名（位于 WebDAV 地址下）';
 
-    const pathPrev = folderEl('div', 'craber-pathprev');
-    const pathLabel = folderEl('span', 'craber-pathprev-label', '远端');
-    const pathCode = folderEl('span', 'craber-pathprev-path', '');
-    pathPrev.append(pathLabel, pathCode);
+    locRow.append(acctVal, dirIn);
+    locCard.append(locRow);
 
-    locRow.append(acctVal, dirIn, pathPrev);
-    fLoc.append(locRow);
-    box.append(fLoc);
+    // 远端路径单独一行、等宽：这条路经常要拿去别处对照，挤在行尾会一直被截断
+    const pathPrev = folderEl('div', 'craber-pathprev');
+    pathPrev.append(folderEl('span', 'craber-pathprev-label', '远端'));
+    const pathCode = folderEl('span', 'craber-pathprev-path', '');
+    pathPrev.append(pathCode);
+    locCard.append(pathPrev);
 
     let acctLabel = sanitizeRemoteSeg(bcfg.account || '');
     const paintPathPrev = () => {
@@ -12781,7 +12850,7 @@
       const who = acctLabel || '<账号>';
       const full = root + '/' + who + '/' + davDateStr() + '/';
       pathCode.textContent = full;
-      pathCode.title = root + '/' + who + '/<日期>/';
+      pathCode.title = full;
     };
     paintPathPrev();
     dirIn.addEventListener('input', paintPathPrev);
@@ -12795,65 +12864,70 @@
         paintPathPrev();
       }
       try {
-        const info = await craberAccountInfo(false);
-        if (info && info.name) {
-          acctLabel = sanitizeRemoteSeg(info.name);
-          acctName.textContent = info.name;
-          acctName.title = (info.email || info.name) + ' · 备份目录会按它分文件夹';
+        const ai = await craberAccountInfo(false);
+        if (ai && ai.name) {
+          acctLabel = sanitizeRemoteSeg(ai.name);
+          acctName.textContent = ai.name;
+          acctName.title = (ai.email || ai.name) + ' · 备份目录会按它分文件夹';
           paintPathPrev();
         } else if (!acctLabel) {
           acctName.textContent = '未识别到账号';
           acctName.classList.add('craber-acct-name-warn');
           locHint.textContent = '没读到账号名，备份会先停下；刷新页面可重试';
+          locHint.classList.add('craber-backup-carddesc-warn');
           paintPathPrev();
         }
       } catch (e) {
         if (!acctLabel) acctName.textContent = '未识别到账号';
       }
     })();
+    p.append(locCard);
 
-    /* 备份范围（要备份哪些）
+    /* ---------- 备份范围 ----------
      * 项目与会话是两个并行的选择器，不是互斥模式：
      * 都不选 = 全部；选了任意一组 = 只备份该范围（两组取并集）。
      */
     let scopeProjects = (bcfg.scopeProjects || []).slice();
     let scopeConvs = (bcfg.scopeConvs || []).slice();
 
-    // 范围字段：标签+说明在上，右侧是"选择…"，下方直接铺已选 chip
-    // （之前只在说明文字里塞前几个名字，选多了完全看不全，也没法单独移除）
-    const mkScopeField = (label, hintDefault, pickLabel) => {
-      const field = folderEl('div', 'craber-set-field craber-set-field-stack');
-      const hd = folderEl('div', 'craber-set-fieldhd');
-      const col = folderEl('div', 'craber-set-fieldcol');
+    const scopeCard = folderEl('section', 'craber-backup-card');
+    const scopeHd = folderEl('div', 'craber-backup-cardhd');
+    scopeHd.append(folderEl('div', 'craber-backup-cardtitle', '备份范围'));
+    scopeHd.append(folderEl('div', 'craber-backup-carddesc', '不选则备份全部；选了就只备份所选范围'));
+    scopeCard.append(scopeHd);
+
+    const mkScopeRow = (label, pickLabel) => {
+      const row = folderEl('div', 'craber-backup-row');
+      const col = folderEl('div', 'craber-backup-rowcol');
       col.append(folderEl('div', 'craber-set-label', label));
-      const hint = folderEl('div', 'craber-set-hint', hintDefault);
+      const hint = folderEl('div', 'craber-set-hint', '');
       col.append(hint);
-      const ctrl = folderEl('div', 'craber-set-ctrl');
       const pickBtn = folderEl('button', 'craber-set-btn craber-set-btn-sm', pickLabel);
       pickBtn.type = 'button';
-      ctrl.append(pickBtn);
-      hd.append(col, ctrl);
       const bar = folderEl('div', 'craber-set-chipbar');
-      field.append(hd, bar);
-      box.append(field);
-      return { field, hint, bar, pickBtn, hintDefault };
+      bar.hidden = true;
+      row.append(col, pickBtn, bar);
+      scopeCard.append(row);
+      return { row, hint, bar, pickBtn };
     };
-    const projScope = mkScopeField('限定项目', '不选则包含全部项目', '选择项目…');
-    const convScope = mkScopeField('限定会话', '不选则包含全部会话', '选择会话…');
-
+    const projScope = mkScopeRow('限定项目', '选择项目…');
+    const convScope = mkScopeRow('限定会话', '选择会话…');
 
     const syncScopeUI = () => {
-      const fill = (scope, picker) => {
-        picker.bar.innerHTML = '';
+      const fill = (scope, ui) => {
+        ui.bar.innerHTML = '';
+        ui.row.classList.toggle('has-chips', scope.length > 0);
         if (!scope.length) {
-          picker.bar.hidden = true;
-          picker.hint.textContent = picker.hintDefault;
+          ui.bar.hidden = true;
+          ui.hint.textContent = '全部';
+          ui.hint.classList.add('craber-backup-hint-none');
           return;
         }
-        picker.bar.hidden = false;
-        picker.hint.textContent = '已选 ' + scope.length + ' 项';
+        ui.bar.hidden = false;
+        ui.hint.textContent = '已选 ' + scope.length + ' 项';
+        ui.hint.classList.remove('craber-backup-hint-none');
         for (const v of scope) {
-          picker.bar.append(craberSelChip(craberPickLabelCache[v] || v, () => {
+          ui.bar.append(craberSelChip(craberPickLabelCache[v] || v, () => {
             const i = scope.indexOf(v);
             if (i >= 0) scope.splice(i, 1);
             syncScopeUI();
@@ -12879,14 +12953,20 @@
       syncScopeUI();
     });
     syncScopeUI();
+    p.append(scopeCard);
 
-    // 备份方式（怎么备份）—— 增量 / 全量
+    /* ---------- 备份方式 + 单次上限 ---------- */
+    const optCard = folderEl('section', 'craber-backup-card');
+    const optHd = folderEl('div', 'craber-backup-cardhd');
+    optHd.append(folderEl('div', 'craber-backup-cardtitle', '执行方式'));
+    optCard.append(optHd);
+
     let mode = bcfg.mode;
-    const fMode = folderEl('div', 'craber-set-field');
-    const cMode = folderEl('div', 'craber-set-fieldcol');
-    cMode.append(folderEl('div', 'craber-set-label', '备份方式'));
-    cMode.append(folderEl('div', 'craber-set-hint', '增量只备份没备过或之后更新过的会话'));
-    const cModeCtrl = folderEl('div', 'craber-set-ctrl');
+    const modeRow = folderEl('div', 'craber-backup-row');
+    const modeCol = folderEl('div', 'craber-backup-rowcol');
+    modeCol.append(folderEl('div', 'craber-set-label', '备份方式'));
+    modeCol.append(folderEl('div', 'craber-set-hint', '增量只备份没备过或之后更新过的会话'));
+    const modeCtrl = folderEl('div', 'craber-set-ctrl');
     const chips = folderEl('div', 'craber-dlg-chips');
     const mkChip = (val, text, hint) => {
       const lab = folderEl('label', 'craber-dlg-chip');
@@ -12902,33 +12982,46 @@
     };
     mkChip('incremental', '增量', '只备份有变化的会话');
     mkChip('full', '全量', '每次都备份全部会话');
-    cModeCtrl.append(chips);
-    fMode.append(cMode, cModeCtrl);
-    box.append(fMode);
+    modeCtrl.append(chips);
+    modeRow.append(modeCol, modeCtrl);
+    optCard.append(modeRow);
 
-    // 单次上限
-    const fMax = folderEl('div', 'craber-set-field');
-    const cMax = folderEl('div', 'craber-set-fieldcol');
-    cMax.append(folderEl('div', 'craber-set-label', '单次上限'));
-    cMax.append(folderEl('div', 'craber-set-hint', '避免一次拉太多被限流，剩余部分下次继续'));
-    const cMaxCtrl = folderEl('div', 'craber-set-ctrl');
+    const maxRow = folderEl('div', 'craber-backup-row');
+    const maxCol = folderEl('div', 'craber-backup-rowcol');
+    maxCol.append(folderEl('div', 'craber-set-label', '单次上限'));
+    maxCol.append(folderEl('div', 'craber-set-hint', '避免一次拉太多被限流，剩余部分下次继续'));
+    const maxCtrl = folderEl('div', 'craber-set-ctrl');
     const maxIn = document.createElement('input');
     maxIn.type = 'number';
     maxIn.min = '1';
     maxIn.max = '500';
-    maxIn.className = 'craber-dlg-input';
-    // 数字框不需要占满整列，但也不能被 flex:1 拉伸
-    maxIn.style.flex = 'none';
-    maxIn.style.width = '88px';
+    maxIn.className = 'craber-dlg-input craber-backup-num';
     maxIn.value = String(bcfg.max || 50);
-    cMaxCtrl.append(maxIn, folderEl('span', 'craber-set-unit', '个会话'));
-    fMax.append(cMax, cMaxCtrl);
-    box.append(fMax);
+    maxIn.setAttribute('aria-label', '单次上限（个会话）');
+    maxCtrl.append(maxIn, folderEl('span', 'craber-set-unit', '个会话'));
+    maxRow.append(maxCol, maxCtrl);
+    optCard.append(maxRow);
+    p.append(optCard);
 
-    p.append(box);
-
+    /* ---------- 操作栏 ----------
+     * 放在页头下方而不是页面末尾：
+     * 页面一开头就能看到"开始备份"，不用先滚过位置/范围/方式三张卡；
+     * 也不做 sticky —— 底部吸附会一直盖住滚到那里的内容（实测遮住
+     * 「执行方式」整行），对话框里空间本来就紧，不值得。
+     */
+    const actions = folderEl('div', 'craber-backup-actions');
     const status = folderEl('div', 'craber-dav-status', '');
-    p.append(status);
+    const bar = folderEl('div', 'craber-set-actions');
+
+    const saveBtn = folderEl('button', 'craber-set-btn', '保存设置');
+    saveBtn.type = 'button';
+    const runBtn = folderEl('button', 'craber-set-btn craber-set-btn-primary', '开始备份');
+    runBtn.type = 'button';
+    bar.append(saveBtn, runBtn);
+    actions.append(bar, status);
+    // 插到概况之后、位置卡之前：属于"这个页面能做什么"，与内容卡区分开
+    info.after(actions);
+
     const setStatus = (m, k) => {
       status.textContent = m;
       status.className = 'craber-dav-status' + (k ? ' ' + k : '');
@@ -12945,24 +13038,75 @@
       return c;
     };
 
-    const bar = folderEl('div', 'craber-set-actions');
-    const saveBtn = folderEl('button', 'craber-set-btn', '保存设置');
-    saveBtn.type = 'button';
     saveBtn.addEventListener('click', (e) => {
       e.preventDefault();
       davBackupCfgSave(collect());
       setStatus('设置已保存', 'ok');
     });
 
-    const runBtn = folderEl('button', 'craber-set-btn craber-set-btn-primary', '开始备份');
-    runBtn.type = 'button';
+    /* ---------- 备份历史 ---------- */
+    const hHead = folderEl('div', 'craber-dav-loghead');
+    hHead.append(folderEl('span', 'craber-dav-logtitle', '备份历史'));
+    const hMeta = folderEl('span', 'craber-dav-logmeta', '');
+    const hClear = folderEl('button', 'craber-dav-clear', '清空');
+    hClear.type = 'button';
+    hHead.append(hMeta, hClear);
 
-    // 备份跑在后台（模块级单例）：关掉对话框不影响进度，悬浮胶囊继续显示
+    const hList = folderEl('div', 'craber-dav-loglist');
+    function renderHistory(rows) {
+      hList.innerHTML = '';
+      hMeta.textContent = rows.length ? (rows.length + ' 条') : '';
+      hClear.hidden = !rows.length;
+      if (!rows.length) {
+        hList.append(folderEl('div', 'craber-dav-logempty', '还没有备份记录'));
+        return;
+      }
+      for (const r of rows) {
+        const row = folderEl('div', 'craber-dav-logrow' + (r.ok ? '' : ' err'));
+        row.append(folderEl('span', 'craber-dav-logdot'));
+        const main = folderEl('div', 'craber-dav-logmain');
+        const line = folderEl('div', 'craber-dav-logline');
+        line.append(folderEl('span', 'craber-dav-logname',
+          (r.ok ? '备份成功' : '备份失败') + (r.mode === 'full' ? '（全量）' : '（增量）')));
+        if (r.ok && r.count) line.append(folderEl('span', 'craber-dav-chip add', '+' + r.count));
+        if (r.ok && r.bytes) line.append(folderEl('span', 'craber-dav-logbytes', fmtBytes(r.bytes)));
+        main.append(line);
+        const det = [];
+        if (r.path) det.push(r.path);
+        else if (r.file) det.push(r.file);
+        if (r.failCount) det.push(r.failCount + ' 个失败');
+        if (r.attFail) det.push(r.attFail + '/' + (r.attTotal || '?') + ' 个附件跳过');
+        if (!r.ok && r.detail) det.push(r.detail);
+        if (det.length) {
+          const d = folderEl('div', 'craber-dav-logdetail', det.join(' · '));
+          d.title = det.join(' · ');
+          main.append(d);
+        }
+        row.append(main, folderEl('span', 'craber-dav-logtime', davFmtTime(r.at)));
+        hList.append(row);
+      }
+    }
+    renderHistory(blog);
+    hClear.addEventListener('click', (e) => {
+      e.preventDefault();
+      davBackupLogClear();
+      renderHistory([]);
+    });
+    p.append(hHead, hList);
+
     const refreshAfterRun = () => {
       const nb = davBackupLogLoad();
       const nstate = davBackupStateLoad();
-      info.children[0].querySelector('.craber-set-statnum').textContent =
-        String(Object.keys(nstate.done || {}).length);
+      const n = Object.keys(nstate.done || {}).length;
+      const first = info.children[0].querySelector('.craber-set-statnum');
+      if (first) first.textContent = String(n);
+      const okRow = nb.find((x) => x.ok);
+      const t = Math.max(Number(davLoad().lastSync) || 0, Number(nstate.lastRun) || 0,
+        okRow ? Number(okRow.at) || 0 : 0);
+      const second = info.children[1] && info.children[1].querySelector('.craber-set-statnum');
+      if (second && t) second.textContent = davFmtTime(t);
+      const third = info.children[2] && info.children[2].querySelector('.craber-set-statnum');
+      if (third && okRow) third.textContent = fmtBytes(okRow.bytes);
       renderHistory(nb);
     };
 
@@ -12979,9 +13123,9 @@
         runBtn.textContent = busy ? '备份中…' : '开始备份';
         runBtn.disabled = busy;
         saveBtn.disabled = busy;
+        p.classList.toggle('craber-backup-busy', !!busy);
       };
       setBusy(true);
-      // 页面还开着就顺带刷新；已经关掉的话这些节点早已脱离文档，置空也无害
       const settle = () => {
         if (!runBtn.isConnected) return;
         setBusy(false);
@@ -12992,27 +13136,28 @@
       craberBackupStart().then(settle).catch(settle);
     });
 
-    bar.append(saveBtn, runBtn);
-    p.append(bar);
-
     // 回到本页时恢复任务状态：跑着就显示"备份中"，刚结束就把结果说出来
     if (craberBackupTask.running) {
       runBtn.textContent = '备份中…';
       runBtn.disabled = true;
+      saveBtn.disabled = true;
+      p.classList.add('craber-backup-busy');
       setStatus('正在后台备份，进度见右下角', '');
       craberBackupTask.promise.then(() => {
         if (!runBtn.isConnected) return;
         runBtn.textContent = '开始备份';
         runBtn.disabled = false;
+        saveBtn.disabled = false;
+        p.classList.remove('craber-backup-busy');
         refreshAfterRun();
-        if (craberBackupTask.lastResult) {
-          const res = craberBackupTask.lastResult;
-          setStatus(res.message, res.ok ? 'ok' : 'err');
-        }
+        const res = craberBackupTask.lastResult;
+        if (res) setStatus(res.message, res.ok ? 'ok' : 'err');
       }).catch(() => {
         if (!runBtn.isConnected) return;
         runBtn.textContent = '开始备份';
         runBtn.disabled = false;
+        saveBtn.disabled = false;
+        p.classList.remove('craber-backup-busy');
         if (craberBackupTask.lastResult) setStatus(craberBackupTask.lastResult.message, 'err');
       });
     } else if (craberBackupTask.lastResult
@@ -13021,52 +13166,6 @@
       setStatus(res.message, res.ok ? 'ok' : 'err');
     }
 
-    /* 备份历史 */
-    const hHead = folderEl('div', 'craber-dav-loghead');
-    hHead.append(folderEl('span', 'craber-dav-logtitle', '备份历史'));
-    const hMeta = folderEl('span', 'craber-dav-logmeta', '');
-    const hClear = folderEl('button', 'craber-dav-clear', '清空');
-    hClear.type = 'button';
-    hHead.append(hMeta, hClear);
-
-    const hList = folderEl('div', 'craber-dav-loglist');
-    function renderHistory(rows) {
-      hList.innerHTML = '';
-      hMeta.textContent = rows.length ? (rows.length + ' 条') : '';
-      if (!rows.length) {
-        hList.append(folderEl('div', 'craber-dav-logempty', '还没有备份记录'));
-        return;
-      }
-      for (const r of rows) {
-        const row = folderEl('div', 'craber-dav-logrow' + (r.ok ? '' : ' err'));
-        row.append(folderEl('span', 'craber-dav-logdot'));
-        const main = folderEl('div', 'craber-dav-logmain');
-        const line = folderEl('div', 'craber-dav-logline');
-        line.append(folderEl('span', 'craber-dav-logname',
-          (r.ok ? '✓ ' : '✗ ') + (r.ok ? '备份' : '失败')
-          + (r.mode === 'full' ? '（全量）' : '')));
-        if (r.ok && r.count) line.append(folderEl('span', 'craber-dav-chip add', '+' + r.count));
-        main.append(line);
-        const det = [];
-        if (r.path) det.push(r.path);
-        else if (r.file) det.push(r.file);
-        if (r.bytes) det.push(fmtBytes(r.bytes));
-        if (r.failCount) det.push(r.failCount + ' 个失败');
-        if (r.attFail) det.push(r.attFail + '/' + (r.attTotal || '?') + ' 个附件跳过');
-        if (!r.ok && r.detail) det.push(r.detail);
-        if (det.length) main.append(folderEl('div', 'craber-dav-logdetail', det.join(' · ')));
-        row.append(main, folderEl('span', 'craber-dav-logtime', davFmtTime(r.at)));
-        hList.append(row);
-      }
-    }
-    renderHistory(blog);
-    hClear.addEventListener('click', (e) => {
-      e.preventDefault();
-      davBackupLogClear();
-      renderHistory([]);
-    });
-
-    p.append(hHead, hList);
     return p;
   }
 
