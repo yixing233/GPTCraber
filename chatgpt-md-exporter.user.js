@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.17.5
+// @version      0.18.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.17.5';
+  const CRABER_VERSION = '0.18.0';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -888,6 +888,190 @@
     return cache;
   }
 
+  /* ============ 导出前的 markdown 清理 ============
+   *
+   * ChatGPT 的富内容回复里夹着两类东西，在网页上由前端渲染成卡片/清单，
+   * 但落到纯 markdown 里就是没人看得懂的噪音：
+   *
+   *   1) GenUI / JSX 组件：<box>、<row>、<text>、<icon/>、<divider/>、
+   *      <Cite refs={[...]}/>、{#each ...}、{@body ...}
+   *   2) 被粘坏的代码围栏：复制粘贴或流式拼接会把开围栏和上一行并成一行
+   *      （"打Set-Location ..." 后面直接跟 ```），于是围栏配对从那一处起全部错位。
+   *
+   * 两者都会让导出结果没法直接读，所以渲染完统一过一遍这里。
+   */
+
+  /* 组件标签：只删标签本身，标签之间的文字自然保留。
+   * 属性值里可能有引号、大括号、箭头函数（=>），所以不能用 [^>]* 这种简单写法。 */
+  const GENUI_TAG = /<([A-Za-z][\w.-]*)\b(?:=>|[^<>"']|"[^"]*"|'[^']*')*?\/?>/g;
+  // 行首就是 Svelte 表达式：整行都是模板代码，不是正文
+  const GENUI_EXPR_LINE = /^\s*\{[@#/:]/;
+
+  /* 剥掉 GenUI/JSX 组件。
+   *
+   * 这些组件（<box>/<row>/<text>/<icon/>/<Cite/>/{#each …}）在网页上由前端渲染
+   * 成卡片和清单，落到纯 markdown 里就是纯噪音。规则：
+   *   - 标签本身一律删，标签之间的文字留着（"<text>WebUI</text>" → "WebUI"）
+   *   - 只为排版而存在、删完只剩空白的行整行丢弃
+   *   - 原本用于对齐 JSX 嵌套的缩进一并去掉 —— 留着 4 个空格会被 markdown
+   *     当成代码块，把正常段落显示成灰色等宽字体
+   *   - 代码围栏内部一个字节都不动：那才是用户真正想看的代码
+   */
+  /* 剥掉 GenUI/JSX 组件。
+   *
+   * 这些组件（<box>/<row>/<text>/<icon/>/<Cite/>/{#each …}）在网页上由前端渲染
+   * 成卡片和清单，落到纯 markdown 里就是纯噪音。规则：
+   *   - 标签本身一律删，标签之间的文字留着（"<text>WebUI</text>" → "WebUI"）
+   *   - 只为排版而存在、删完只剩空白的行整行丢弃
+   *   - JSX 内部的缩进是给嵌套对齐用的，落到 markdown 里没有意义；
+   *     留着 4 个空格会被当成代码块，正常段落显示成灰色等宽字体。
+   *     所以按标签深度跟踪：在组件内部、且不是代码块/列表的正文，前导空白一律去掉。
+   *   - 代码围栏内部一个字节都不动：那才是用户真正想看的代码
+   */
+  function craberStripGenui(md) {
+    const BT = String.fromCharCode(96);
+    const OPEN = new RegExp('^\\s*(' + BT + '{3,}|~{3,})');
+    // 开/闭标签分离：用来算嵌套深度。自闭合的不计入深度。
+    const TAG_ANY = new RegExp('<\\/?[A-Za-z][\\w.-]*\\b(?:=>|[^<>"\']|"[^"]*"|\'[^\']*\')*?\\/?>', 'g');
+    const out = [];
+    let fence = null;
+    let depth = 0;
+    let blanks = 0;
+    const pushBlank = () => {
+      if (blanks === 0 && out.length) { out.push(''); blanks = 1; }
+    };
+    for (const raw of String(md).split('\n')) {
+      const line = raw.replace(/\r$/, '');
+      const f = line.match(OPEN);
+      if (f) {
+        const ch = f[1].charAt(0);
+        if (!fence) fence = ch; else if (ch === fence) fence = null;
+        out.push(line);
+        // 刚进代码块：下一行即使是空行也要原样保留（那是代码块的第一个空行），
+        // 不能让"压缩连续空行"把它吃掉 —— 否则每个代码块开头都多出一个空行。
+        blanks = -1;
+        continue;
+      }
+      if (fence) { out.push(line); continue; }
+      // 整行就是 Svelte 表达式：模板代码，不是正文
+      if (GENUI_EXPR_LINE.test(line)) continue;
+
+      // 统计这一行的标签，更新深度（自闭合不影响深度）
+      TAG_ANY.lastIndex = 0;
+      const tags = line.match(TAG_ANY) || [];
+      const depthBefore = depth;
+      for (const tag of tags) {
+        if (/^<\//.test(tag)) depth = Math.max(0, depth - 1);
+        else if (!/\/>\s*$/.test(tag)) depth += 1;
+      }
+
+      let t = line.replace(GENUI_TAG, '');
+      // 组件被截断时的残片："</rng={2} minWidth=\"44px\" …>"，标签名后面还挂着属性
+      t = t.replace(/<\/[A-Za-z][^<>]*>/g, '');
+      t = t.replace(/[ \t]+$/, '');
+      if (!t.trim()) { pushBlank(); continue; }
+
+      /* 在组件内部（进这行之前还没闭合）的正文，去掉前导空白。
+       * 列表项与引用除外 —— 它们的缩进在 markdown 里有语义。 */
+      const inJsx = depthBefore > 0 || tags.length > 0;
+      if (inJsx && /^\s+\S/.test(t) && !/^\s*([-*+]|\d+[.)])\s/.test(t) && !/^\s*>/.test(t)) {
+        t = t.replace(/^[ \t]+/, '');
+      }
+      out.push(t);
+      blanks = 0;
+    }
+    return out.join('\n');
+  }
+
+  /* 修围栏。
+   *
+   * 真实回复里最常见的损坏有两类：
+   *   a) 开围栏被粘到上一行末尾（"打Set-Location ..." 直接跟着三个反引号），
+   *      于是语言标识位置吃到的是正文；
+   *   b) 开围栏整个丢了，只剩结尾那一个 —— 配对从此错位，后面正常的代码块
+   *      被当成"代码块内的内容"，整段正文全被渲染成灰色代码。
+   *
+   * 处理原则：**宁可少包一个代码块，也不要把正文关进代码块**。
+   * 所以按内容判据逐对判断，而不是简单成对删除或末尾补齐。
+   */
+  function craberBalanceFences(md) {
+    const BT = String.fromCharCode(96);
+    const FENCE_RE = new RegExp('^(\\s*)(' + BT + '{3,}|~{3,})([^\\s' + BT + '~]*)([\\s\\S]*)$');
+    const OPEN_RE = new RegExp('^(\\s*)(' + BT + '{3,}|~{3,})');
+
+    // a) 拆粘行：围栏那一行后面还挂着内容时，把内容挪到下一行
+    const work = [];
+    for (const line of String(md).split('\n')) {
+      const m = line.match(FENCE_RE);
+      // 只有"围栏后面还挂着东西"才算粘行。语言标识（m[3]）本身是正常内容，
+      // 单看 m[3] 非空会把 "```js" 误判成粘行，凭空插一个空行。
+      if (m && m[4].trim()) {
+        const looksLang = /^[a-z][a-z0-9+#._-]*$/.test(m[3]);
+        if (looksLang) {
+          work.push(m[1] + m[2] + m[3]);
+          work.push(m[4].replace(/^\s+/, ''));
+        } else {
+          // 语言标识位置是正文 → 这行是被粘坏的，围栏单独成行，正文还给正文
+          work.push(m[1] + m[2]);
+          work.push((m[3] + m[4]).trim());
+        }
+        continue;
+      }
+      work.push(line);
+    }
+
+    /* b) 逐对判定。标记按出现顺序两两配对；一对"像不像真正的代码块"看内容：
+     *    真正的代码块里几乎不会有 markdown 标题、也不该有几屏幕的中文段落。
+     * 判为假就**只丢开标记**（正文留下），继续用同一个标记当新的开标记 ——
+     * 这样"少一个开围栏"的错位不会多米诺式地毁掉后面所有代码块。 */
+    const isHeading = (s) => new RegExp('^#{2,6}\\s+\\S').test(s);
+    const out = [];
+    let open = null;
+    for (let i = 0; i < work.length; i++) {
+      const line = work[i];
+      const m = line.match(OPEN_RE);
+      if (!m) { out.push(line); continue; }
+      if (!open) { open = { idx: out.length, ch: m[2].charAt(0) }; out.push(line); continue; }
+      const ch = m[2].charAt(0);
+      if (ch !== open.ch) { out.push(line); continue; }
+      // 检查这一对之间的内容
+      let headings = 0;
+      let cjk = 0;
+      for (let j = open.idx + 1; j < out.length; j++) {
+        if (isHeading(out[j])) headings++;
+        if (/[\u4e00-\u9fa5]/.test(out[j])) cjk++;
+      }
+      const bodyLen = out.length - open.idx - 1;
+      const looksFake = headings > 0 || (bodyLen > 2 && cjk > bodyLen * 0.6);
+      if (looksFake) {
+        // 开标记其实是正文里丢的半截：删掉它，把当前这个当新的开标记
+        out.splice(open.idx, 1);
+        open = { idx: out.length, ch: ch };
+        out.push(line);
+      } else {
+        out.push(line);
+        open = null;
+      }
+    }
+    // 收尾仍开着的标记：留着会把后面整段变成代码块，直接删掉
+    if (open) out.splice(open.idx, 1);
+
+    // c) 压掉连续空行（删组件/删标记后常留下成串空行）
+    const tidy = [];
+    for (const line of out) {
+      if (!line.trim() && tidy.length && !tidy[tidy.length - 1].trim()) continue;
+      tidy.push(line);
+    }
+    return tidy.join('\n');
+  }
+
+  /* 导出前统一入口。顺序要紧：**先修围栏，再剥组件**。
+   * 原文的围栏本身可能是坏的（奇数配对），先剥组件的话，剥皮函数会把
+   * 大部分正文误判成"在代码块里"从而跳过，组件一个没删掉。
+   * 修好围栏之后，代码块边界才可信，剥皮才能只动正文。 */
+  function craberCleanMarkdown(md) {
+    return craberStripGenui(craberBalanceFences(md));
+  }
   // 渲染 assistant/text，处理 content_references 引用标记
   function renderAssistantText(m, cache) {
     let text = ((m.content && m.content.parts) || []).filter((p) => typeof p === 'string').join('');
@@ -1138,7 +1322,9 @@
       }
     }
 
-    return { title, md: md.trim() + '\n' };
+    // 统一清理：剥掉 GenUI/JSX 组件、修好被粘坏/落单的代码围栏。
+    // 放在这里而不是各调用方，导出、备份、预览三条路就都过一遍。
+    return { title, md: craberCleanMarkdown(md).trim() + '\n' };
   }
 
   // 把整个会话渲染成单个 markdown。sink 决定图片落地方式（多会话时指向该会话子目录）。
