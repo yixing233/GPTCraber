@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.18.1
+// @version      0.18.2
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.18.1';
+  const CRABER_VERSION = '0.18.2';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -4334,6 +4334,11 @@
     return out;
   }
 
+  /* 消息内大纲（二级节点）是否启用。
+   * 关掉后轨道与面板只显示回合级节点 —— 有些会话每问都拆成十几节，
+   * 二级节点太多反而盖住了回合结构。
+   * 判断放在这里，卡片和面板两处共用，避免一个开一个关。 */
+  function navOutlineOn() { return !!uiPrefs.navOutline; }
   function craberTurnOutline(turn) {
     const nodes = craberAnswerTexts(turn);
     if (!nodes.length) return [];
@@ -4481,7 +4486,8 @@
     const box = navCardRefs.outline;
     if (!box) return;
     box.innerHTML = '';
-    const list = craberTurnOutline(turn);
+    // 二级节点开关关掉时，卡片只保留标题 + 预览
+    const list = navOutlineOn() ? craberTurnOutline(turn) : [];
     if (!list.length) { box.hidden = true; return; }
     box.hidden = false;
     const listBox = document.createElement('div');
@@ -4695,7 +4701,9 @@
       const title = extractText(turn.question) || '(无文字提问)';
       const preview = turnPreview(turn);
       const numStr = '#' + (i + 1);
-      const outline = craberTurnOutline(turn);
+      // 关掉二级节点后，面板回到纯回合列表：不显示小节、也不按小标题搜索，
+      // 否则会出现"列表里看不到却能被搜到"的怪现象
+      const outline = navOutlineOn() ? craberTurnOutline(turn) : [];
       // 搜索也搜大纲标题：在长回复里找某个小节，比记它属于第几问靠谱得多
       const outlineText = outline.map((h) => h.text).join(' ');
       if (kwLower) {
@@ -11110,7 +11118,7 @@
   // 关掉必须真的卸载（移除已注入的节点 + 停掉后续挂载），而不是只隐藏 ——
   // 否则功能还在后台跑、还会去请求接口。
   const UI_PREFS_KEY = 'gpt_craber_ui_prefs';
-  const UI_PREFS_DEFAULT = { navRail: true, projectUI: true, notify: false, folders: true, lockProjExpand: false };
+  const UI_PREFS_DEFAULT = { navRail: true, navOutline: true, projectUI: true, notify: false, folders: true, lockProjExpand: false };
   let uiPrefs = (() => {
     try {
       const raw = localStorage.getItem(UI_PREFS_KEY);
@@ -11124,6 +11132,18 @@
     if (key === 'navRail') {
       if (on) scheduleNavRender(0, true);
       else hideNavRailNow();          // 立刻收起，不等下一轮 tick
+    } else if (key === 'navOutline') {
+      /* 二级节点开关只影响二级节的内容，轨道本身不动。
+       * 若卡片正开着，就直接按新状态重画一次 —— 否则用户点完开关，
+       * 眼前那张卡片还是旧样子，得把鼠标移开再移回来才生效。 */
+      if (navCardRefs && navCardTurnIdx >= 0 && state.turns && state.turns[navCardTurnIdx]) {
+        paintNavCardOutline(navCardTurnIdx, state.turns[navCardTurnIdx]);
+      }
+      if (navPanelEl && navPanelEl.hidden === false) {
+        // 保持用户当前的搜索词，只重排内容
+        const si = navPanelEl.querySelector('.craber-nav-search');
+        renderNavPanelItems(si ? si.value.trim() : '');
+      }
     } else if (key === 'projectUI') {
       if (on) pbarTick();
       else pbarUnmount();
@@ -12065,6 +12085,12 @@
           + '<circle cx="6.5" cy="8.5" r="2" fill="currentColor" stroke="none"/>'
           + '<circle cx="6.5" cy="15.5" r="2" fill="currentColor" stroke="none"/>'
           + '<path d="M11.5 8.5H20"/><path d="M11.5 15.5H20"/>'],
+      // 消息内大纲：标题 + 两条缩进的小节（层级示意）
+      ['navOutline', '消息内大纲', '在节点卡片里列出回复的小标题，可点击直达该节',
+        '<path d="M4 6.5h16"/>'
+          + '<path d="M8 12h12"/><path d="M8 17.5h12"/>'
+          + '<circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/>'
+          + '<circle cx="5" cy="17.5" r="1.2" fill="currentColor" stroke="none"/>'],
       // 项目 UI：顶栏 + 内容区（版式示意）
       ['projectUI', '项目 UI 优化', '在顶栏里显示项目对话入口与当前对话位置',
         '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/>'
