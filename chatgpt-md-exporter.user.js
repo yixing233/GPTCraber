@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.18.5
+// @version      0.18.6
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.18.5';
+  const CRABER_VERSION = '0.18.6';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -11038,26 +11038,34 @@
   // 主循环：每秒一次。有变化才重建，其余时间几乎零开销。
   /* ---------- 只挡掉「加载会话后那一次」项目自动展开 ----------
    *
-   * 原生行为：进入某个项目内的会话后，它会把该项目行自动展开。
-   * 用户要的是"别自己弹开"，**不是**"把项目焊死"——手动点开必须照常生效。
+   * 目标很窄：进入会话后，原生会自动展开某个项目行；把它按回去，
+   * 但**用户自己点开的必须留住**。
    *
-   * 旧实现把"收起过"永久记进 localStorage（项目名 → true），于是用户手动展开后
-   * 下一个 tick 又按回去，刷新页面也照旧按回去。表现就是项目被锁死。
+   * 为什么不能用"点击时间戳"判断是谁触发的（v0.18.5 的错法）：
+   * 点项目行会跳到 /g/g-p-xxx，路由随即变化；我们把路由变化当作
+   * "换了会话"从而清空 userTouchedAt，于是接着 React 异步把项目展开时，
+   * 这个时间戳已经归零 —— 判定成"自动展开"，把用户刚点开的按回去。
+   * 表现就是"点了没用/被锁死"。
    *
-   * 现在只做一件很窄的事：换会话后开一个短窗口，窗口内若某个项目
-   * **从收起变成展开**、且不是用户点的，就按回去一次。窗口一过完全放手。
-   * 状态全部在内存里 —— 刷新即清空，不可能长期压制。
+   * 现在改为**按项目名豁免**，不猜触发者：
+   *   · 用户点了某个项目行 → 该项目进入豁免期，期间任何展开都放行
+   *   · 豁免期要长到覆盖"点击 → 路由跳转 → React 异步展开"整条链
+   *   · 路由变化不再清空豁免，只重新计算窗口与基线
+   *   · 只有"没人豁免 + 窗口内 + 收起→展开"才按回去，且只按一次
    */
   const folderProjGuard = {
-    armed: false,           // 我们主动按回去时置位，避免把自己的点击当成用户点击
-    userTouchedAt: 0,       // 用户最近一次点项目行的时间
-    routeKey: '',           // 上一次看到的路由，用于识别"换了会话"
-    windowUntil: 0,         // 抑制窗口截止时间（只在换会话后短暂开启）
+    armed: false,               // 我们主动按回去时置位，避免把自己的点击当成用户点击
+    routeKey: '',               // 上一次看到的完整路由，用于识别"换了会话"
+    windowUntil: 0,             // 抑制窗口截止时间（换会话后短暂开启）
+    exempt: Object.create(null),// 项目名 → 豁免截止时间（用户点过这个项目）
     snap: Object.create(null)   // 项目名 → 上一 tick 的展开状态
   };
 
-  // 窗口时长：原生自动展开通常发生在会话加载后 0.3~1.5s，给足余量。
+  /* 抑制窗口：原生在会话加载后 0.3~1.5s 内展开，给足余量。
+   * 用户豁免期更长一些：点击 → 路由跳转 → 数据加载 → React 展开，
+   * 在慢网络下这条链可以走好几秒，宁可多放行也不能把用户的点击吃掉。 */
   const FOLDER_PROJ_WINDOW_MS = 2500;
+  const FOLDER_PROJ_EXEMPT_MS = 8000;
 
   function folderProjRowExpanded(row) {
     return row.getAttribute('aria-expanded') === 'true';
@@ -11101,19 +11109,26 @@
     });
   }
 
+  function folderProjIsExempt(name) {
+    const until = Number(folderProjGuard.exempt[name]) || 0;
+    if (!until) return false;
+    if (until <= Date.now()) { delete folderProjGuard.exempt[name]; return false; }
+    return true;
+  }
+
   function folderGuardProjAutoExpand() {
     if (!uiPrefs.lockProjExpand) return;
 
     const now = Date.now();
     const rows = folderNativeProjRows();
 
-    /* 换会话：开一个短窗口，并把当前状态记成基线。
-     * 基线很关键 —— 已在展开的项目不会被当成"刚被自动展开"而按回去。 */
+    /* 换会话/换项目：重开窗口并重建基线。
+     * 注意**不动豁免表** —— 用户刚才点的那个项目正处在豁免期，
+     * 而点击本身就会触发路由变化；清掉豁免正是老 bug 的来源。 */
     const routeKey = location.pathname + location.search;
     if (routeKey !== folderProjGuard.routeKey) {
       folderProjGuard.routeKey = routeKey;
       folderProjGuard.windowUntil = now + FOLDER_PROJ_WINDOW_MS;
-      folderProjGuard.userTouchedAt = 0;
       folderProjGuard.snap = Object.create(null);
       for (const row of rows) {
         const name = folderProjRowName(row);
@@ -11122,36 +11137,37 @@
       return;
     }
 
-    const inWindow = now < folderProjGuard.windowUntil;
-    const userJustClicked = now - folderProjGuard.userTouchedAt < 700;
     if (folderProjGuard.armed) return;
+    const inWindow = now < folderProjGuard.windowUntil;
 
     for (const row of rows) {
       const name = folderProjRowName(row);
       if (!name) continue;
       const expanded = folderProjRowExpanded(row);
       const before = folderProjGuard.snap[name];
+      folderProjGuard.snap[name] = expanded;   // 供下一 tick 比较
 
-      // 记下本 tick 的状态，供下一 tick 比较
-      folderProjGuard.snap[name] = expanded;
-
-      // 首次见到（没有基线）或状态没变：不干预
+      // 首次见到或状态没变：不干预
       if (before === undefined || before === expanded) continue;
-      // 只在"收起 → 展开"这一种跃迁上干预，且必须在窗口内、不是用户点的
-      if (!expanded || !inWindow || userJustClicked) continue;
+      // 只看"收起 → 展开"
+      if (!expanded) continue;
+      // 用户点过这个项目：一律放行
+      if (folderProjIsExempt(name)) continue;
+      // 不在窗口内：说明不是会话加载引起的，交给原生
+      if (!inWindow) continue;
 
       folderProjGuard.armed = true;
       try { row.click(); } catch (e) { /* 点不动就忽略 */ }
-      // 按回去后立刻关窗：这一次已经处理完，之后一律放手
-      folderProjGuard.windowUntil = 0;
+      folderProjGuard.windowUntil = 0;   // 处理完这一次就关窗
       folderProjGuard.snap[name] = false;
       setTimeout(() => { folderProjGuard.armed = false; }, 200);
       break;
     }
   }
 
-  /* 用户亲手点项目行：立刻关窗 —— 这是"我要展开"的明确意图，
-   * 之后不再按回去（直到下一次换会话）。 */
+  /* 用户亲手点项目行 → 给这个项目开豁免期。
+   * 用捕获阶段监听，赶在原生处理之前记下意图；
+   * 不关心它最终是展开还是收起 —— 用户点了，后续状态就该由用户决定。 */
   function folderBindProjRowClick() {
     const nav = document.querySelector('nav[aria-label="聊天记录"]');
     if (!nav || nav.dataset.craberProjGuard === '1') return;
@@ -11162,8 +11178,21 @@
       if (!row || !folderIsProjectRow(row) || row.closest('.craber-folders')) return;
       const t = (row.textContent || '').trim();
       if (!t || t === '项目' || t === '最近') return;
-      folderProjGuard.userTouchedAt = Date.now();
-      folderProjGuard.windowUntil = 0;      // 用户动手了，本次窗口作废
+      const name = folderProjRowName(row);
+      if (!name) return;
+      folderProjGuard.exempt[name] = Date.now() + FOLDER_PROJ_EXEMPT_MS;
+      // 本次会话的抑制窗口也一并作废：用户已经明确动手了
+      folderProjGuard.windowUntil = 0;
+    }, true);
+
+    /* 键盘展开（Enter/Space）与点击走同一个豁免路径 —— 否则键盘用户会被锁死 */
+    nav.addEventListener('keydown', (e) => {
+      if (!uiPrefs.lockProjExpand) return;
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target && e.target.closest ? e.target.closest('[role="button"]') : null;
+      if (!row || !folderIsProjectRow(row) || row.closest('.craber-folders')) return;
+      const name = folderProjRowName(row);
+      if (name) folderProjGuard.exempt[name] = Date.now() + FOLDER_PROJ_EXEMPT_MS;
     }, true);
   }
 
@@ -11300,7 +11329,7 @@
       folderProjGuard.windowUntil = 0;
       folderProjGuard.routeKey = location.pathname + location.search;
       folderProjGuard.snap = Object.create(null);
-      if (on) navToast('已锁定：只挡加载会话后的自动展开，手动点开照常生效');
+      if (on) navToast('已锁定：只挡系统自动展开，手动点开照常生效');
       else navToast('已取消：项目展开完全交回 ChatGPT');
     } else if (key === 'folders') {
       // 开：立刻挂上；关：撤掉区块和原生行上的小按钮
@@ -12238,7 +12267,7 @@
       ['folders', '侧栏文件夹', '在侧栏「项目」上方显示自定义文件夹',
         '<path d="' + FOLDER_PATH + '"/>'],
       // 锁定项目展开：锁（锁体 14 高、锁梁与锁体同宽，比例标准）
-      ['lockProjExpand', '锁定项目展开', '只挡「加载会话后自动展开项目」，你手动点开照常生效',
+      ['lockProjExpand', '锁定项目展开', '只挡系统在加载会话后的自动展开；你手动点开/收起始终生效',
         '<rect x="4" y="10" width="16" height="10.5" rx="2.6"/>'
           + '<path d="M8 10V7.6a4 4 0 0 1 8 0V10"/>'
           + '<path d="M12 14v3"/>']
