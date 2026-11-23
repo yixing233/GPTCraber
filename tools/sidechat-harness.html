@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>侧边聊天测试台</title>
+<style>
+  html,body{margin:0;height:100%}
+  body{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    background:#fbfbfb;color:#1f2328;display:flex}
+  /* 假的原生左栏 + 正文，用来观察面板的并排观感 */
+  .fake-side{width:260px;flex:none;height:100%;background:#f7f7f8;
+    border-right:1px solid #ececf0;padding:14px 12px;box-sizing:border-box;
+    font-size:13px;color:#8a9099}
+  .fake-side b{display:block;color:#1f2328;font-size:13px;margin-bottom:10px}
+  .fake-side div{padding:7px 8px;border-radius:8px;margin-bottom:2px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fake-main{flex:1;min-width:0;padding:64px 40px;box-sizing:border-box}
+  .fake-main h1{font-size:20px;margin:0 0 8px}
+  .fake-main p{color:#8a9099;font-size:13.5px;line-height:1.7;max-width:60ch}
+</style>
+</head>
+<body>
+<aside class="fake-side"><b>ChatGPT</b>
+  <div>最近的一个会话标题</div><div>另一个会话</div><div>更早的会话</div>
+</aside>
+<div class="fake-main">
+  <h1>主会话</h1>
+  <section data-turn-key="turn-old">
+    <div data-message-author-role="user">如何搭建 QQ 群机器人？</div>
+    <p data-message-author-role="assistant">可以将 NapCat 协议端连接到机器人框架，再接入 AI API。</p>
+  </section>
+  <section data-turn-key="turn-new">
+    <div data-message-author-role="user">怎么部署？</div>
+    <p data-message-author-role="assistant">先在本地验证消息收发，然后部署服务。</p>
+  </section>
+</div>
+
+<script>
+/* ---------- 测试台参数 ----------
+ * ?noprogress=1  模拟"秒回网关"：只有 onload，不触发 onprogress
+ * ?autosend=文字  打开面板后自动发送这条消息
+ * ?empty=1       不预置会话，展示空状态
+ * ?state=setup   展示"未配置模型"引导卡
+ */
+const Q = new URLSearchParams(location.search);
+const CFG_KEY = 'gpt_craber_sidechat_cfg';
+
+if (Q.get('theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+
+if (Q.get('state') !== 'setup') {
+  localStorage.setItem(CFG_KEY, JSON.stringify({
+    baseUrl: 'https://sidechat.example.invalid/v1',
+    apiKey: '',
+    model: 'wb/deepseek-v4.1-flash',
+    systemPrompt: '',
+    temperature: null,
+    maxTokens: null,
+    reasoningEffort: 'high',
+    ctxMode: 'turn'
+  }));
+}
+const answer = '这个需求完全可以实现，我来帮你梳理一下方案。\n\n'
+  + '## 一、整体架构\n\n'
+  + 'QQ客户端 ↔ 协议端(NapCat) ↔ 机器人框架 ↔ AI API(DeepSeek/GPT等)\n\n'
+  + '## 二、关键组件选择\n\n'
+  + '**1. 协议端（连接QQ的桥梁）**\n'
+  + '- **NapCat**（推荐）：基于 NTQQ，支持 Windows，无需安卓模拟器，实现 OneBot 11 标准\n'
+  + '- 备选：LLOneBot、Lagrange.Core\n'
+  + '- 注意：这些都是第三方协议，有封号风险，强烈建议用小号，不要用你的主号\n\n'
+  + '**2. 机器人框架（业务逻辑层）**\n'
+  + '- **AstrBot**（最贴合你需求）：原生支持接入各种 LLM API、自带表情包/图片收发、插件生态丰富、有 WebUI 管理面板，对新手友好\n'
+  + '- 备选：NoneBot2（Python，灵活但需要自己写）、LangBot、Koishi（TypeScript）\n\n'
+  + '**3. AI API**\n- 国产：DeepSeek、GLM、通义千问\n\n'
+  + '## 三、实现步骤\n\n先验证基础消息收发，再配置模型接口，最后连接机器人。';
+const reasoning = 'The user is asking about making a QQ group bot with AI API integration. '
+  + 'They pasted a partial conversation ("AI 答 ChatGPT 说：[我的问题]你好" seems like they are showing an example format?). '
+  + 'Actually, it looks like a conversation format where "AI 答" is ChatGPT’s reply. '
+  + 'The message seems garbled — possibly they want me to continue an earlier conversation about QQ bot development. '
+  + 'The last part looks like noise or a format they want.';
+const fixture = { id: 'svg-fixture', title: '机器人方案', createdAt: Date.now(), updatedAt: Date.now(),
+  messages: [
+    { role: 'user', content: '你好很高兴认识你', at: Date.now() },
+    { role: 'assistant', content: answer, reasoning, thinkMs: 12000,
+      thinkOpen: Q.get('expanded') === '1', at: Date.now() }
+  ] };
+localStorage.setItem('gpt_craber_sidechat_threads', JSON.stringify(Q.get('empty') ? [] : [fixture]));
+localStorage.setItem('gpt_craber_sidechat_open', '1');
+localStorage.setItem('gpt_craber_sidechat_width', Q.get('width') || '519');
+localStorage.setItem('gpt_craber_sidechat_mainctx', '1');
+/* 模型候选：默认塞三条，和设计稿的菜单一致（?one=1 时只留一条） */
+localStorage.setItem('gpt_craber_model_opts', JSON.stringify(
+  Q.get('onemodel')
+    ? ['wb/glm-5.3-flash']
+    : [
+      { id:'wb/deepseek-v4.1-flash', display_name:'DeepSeek-V4.1-Flash' },
+      { id:'wb/glm-5.3-flash', display_name:'GLM-5.3-Flash', reasoning_supported_efforts:['low','high','max'], only_reasoning:true },
+      { id:'wb/gpt-6.1-sol', display_name:'GPT-6.1-Sol' }
+    ]));
+if (Q.get('state') === 'setup') localStorage.removeItem(CFG_KEY);
+
+/* ---------- 油猴 API 替身 ---------- */
+window.GM_info = { script: { version: 'harness' } };
+window.GM_xmlhttpRequest = function (opts) {
+  window.__lastRequest = opts.data ? JSON.parse(opts.data) : null;
+  const ctrl = new AbortController();
+  const handle = { abort() { try { ctrl.abort(); } catch (e) {} } };
+  if (String(opts.url).startsWith('https://sidechat.example.invalid/')) {
+    if (opts.method === 'GET') {
+      setTimeout(() => opts.onload({ status:200, responseText:JSON.stringify({ data:[
+        { id:'wb/deepseek-v4.1-flash', display_name:'DeepSeek-V4.1-Flash' },
+        { id:'wb/glm-5.3-flash', display_name:'GLM-5.3-Flash' }
+      ] }) }), 100);
+      return handle;
+    }
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        for (const text of ['已收到你的消息。\n\n', answer]) {
+          if (ctrl.signal.aborted) { controller.close(); return; }
+          controller.enqueue(encoder.encode('data: ' + JSON.stringify({
+            choices:[{ delta:{ content:text } }]
+          }) + '\n\n'));
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      }
+    });
+    setTimeout(() => opts.onload({ status:200, response:{ stream }, responseText:'' }), 50);
+    return handle;
+  }
+  const url = String(opts.url || '');
+  const init = {
+    method: opts.method || 'GET',
+    headers: opts.headers || {},
+    body: opts.data,
+    signal: ctrl.signal
+  };
+  (async () => {
+    try {
+      const res = await fetch(url, init);
+      /* stream 模式：把 body 以 ReadableStream 交给脚本（接近油猴行为）。
+       * noprogress=1 时故意不调用 onprogress —— 复现"秒回网关"的真实情形。 */
+      if (opts.responseType === 'stream' && res.body) {
+        if ('noprogress' && !Q.get('noprogress')) {
+          if (opts.onprogress) {
+            opts.onprogress({ readyState: 3, status: res.status, responseText: '',
+              response: { stream: res.body } });
+          }
+        }
+        if (opts.onload) {
+          opts.onload({ readyState: 4, status: res.status, responseText: '',
+            response: { stream: res.body } });
+        }
+        return;
+      }
+      const text = await res.text();
+      if (opts.onload) {
+        opts.onload({ readyState: 4, status: res.status, responseText: text, response: text });
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        if (opts.onabort) opts.onabort({});
+        return;
+      }
+      if (opts.onerror) opts.onerror({ error: e });
+    }
+  })();
+  return handle;
+};
+</script>
+<script src="../chatgpt-md-exporter.user.js"></script>
+<script>
+/* 等脚本初始化完，再模拟快捷键打开面板，并可选自动发送一条消息。 */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+(async () => {
+  await sleep(300);
+  document.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'k', code: 'KeyK', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true
+  }));
+  await sleep(400);
+  if (!Q.get('empty') && Q.get('state') !== 'setup') {
+    document.querySelector('.craber-sc-hbtn[aria-label="历史对话"]').click();
+    document.querySelector('.craber-sc-histrow').click();
+    document.querySelector('.craber-sc-body').scrollTop = 0;
+  }
+  if (Q.get('menus') === '1') {
+    document.querySelector('.craber-sc-toolsbtn').click();
+    document.querySelector('.craber-sc-modelbtn').click();
+  }
+
+  /* 采样正文长度，用来验证"逐字增长"而不是整块跳出。
+   * 结果留在 window.__typeSamples 里，方便无头脚本读取。 */
+  window.__typeSamples = [];
+  const sample = () => {
+    const a = document.querySelector('.craber-sc-a');
+    window.__typeSamples.push({ t: Math.round(performance.now()), n: a ? a.innerText.length : -1 });
+  };
+  sample();
+  setInterval(sample, 120);
+
+  const text = Q.get('autosend');
+  if (text) {
+    const ta = document.querySelector('.craber-sc-ta');
+    if (ta) {
+      ta.value = text;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', code: 'Enter',
+        // 默认按"普通 Enter 发送"这条新交互来测；Ctrl+Enter 用 ?ctrlsend=1 复测
+        ctrlKey: !!Q.get('ctrlsend'), bubbles: true, cancelable: true
+      }));
+    }
+  }
+})();
+</script>
+</body>
+</html>

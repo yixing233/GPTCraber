@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.18.6
+// @version      0.19.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
 
   // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
   // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.18.6';
+  const CRABER_VERSION = '0.19.0';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -1847,6 +1847,15 @@
     }
     .craber-fab-btn svg{width:19px;height:19px;pointer-events:none}
 
+    /* 输入框工具按钮：沿用原生的圆形尺寸，在＋号一组内占位，不盖住草稿。 */
+    .craber-composer-clear{display:inline-flex;align-items:center;justify-content:center;
+      flex:none;width:32px;height:32px;padding:6px;border:0;border-radius:50%;
+      background:transparent;color:inherit;cursor:pointer}
+    .craber-composer-clear:hover{background:var(--craber-hover)}
+    .craber-composer-clear:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+    .craber-composer-clear:disabled{opacity:.4;cursor:default}
+    .craber-composer-clear svg{width:20px;height:20px;pointer-events:none}
+
     /* 下拉菜单：锚在按钮下方右对齐（按钮在顶栏最右，左对齐会溢出视口）。
        开合动画放在容器上：开 = pop-in，关 = 先切 closing 类反向播完再真正 display:none。
        动画只动 opacity/transform（合成器属性），不触发重排。 */
@@ -2131,6 +2140,7 @@
       cursor:pointer;font-family:system-ui,sans-serif;
       transform:translate3d(var(--cx,0px),var(--cy,0px),0);
       transition:transform var(--cdur,160ms) cubic-bezier(.22,.85,.3,1)}
+    .craber-nav-card.from-panel{z-index:calc(var(--craber-z-panel) + 1)}
     .craber-nav-card-in{display:flex;flex-direction:column;padding:10px 12px;
       background:var(--craber-nav-card);border:1px solid var(--craber-nav-card-line);
       border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.16);
@@ -2207,28 +2217,21 @@
       pointer-events:none;display:flex;align-items:center;justify-content:center}
     .craber-nav-search-icon svg{width:13px;height:13px;fill:currentColor}
     .craber-nav-panel-list{flex:1;overflow-y:auto;padding:4px 0;scrollbar-width:thin}
-    .craber-nav-panel-item{padding:8px 12px;max-height:68px;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:3px;
+    .craber-nav-panel-item{width:100%;padding:8px 12px;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;
+      font-family:inherit;text-align:left;background:none;border:0;border-radius:0;
       transition:background .12s;border-left:3px solid transparent;overflow:hidden}
-    /* 展开大纲时放开高度限制，否则 40 条会被 68px 直接裁断 */
-    .craber-nav-panel-item.open{max-height:none;overflow:visible}
     .craber-nav-panel-item:hover{background:var(--craber-hover)}
+    .craber-nav-panel-item:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px;background:var(--craber-hover)}
     .craber-nav-panel-item.active{background:var(--craber-hover);border-left-color:var(--craber-accent)}
     .craber-nav-panel-item-hd{display:flex;align-items:baseline;gap:6px;min-width:0}
     .craber-nav-panel-item-num{font-size:11px;font-weight:700;color:var(--craber-accent);flex:none}
     .craber-nav-panel-item-title{font-size:12px;font-weight:600;color:var(--craber-fg);flex:1;
       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .craber-nav-panel-item-preview{font-size:11px;color:var(--craber-sub);line-height:1.4;
-      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
     .craber-nav-panel-empty{padding:28px 16px;text-align:center;font-size:12px;color:var(--craber-sub)}
-    /* 小节数：纯标签，二级节点本来就全列出来了，这里只做个提示 */
+    /* 小节数只做提示，具体大纲在悬停卡片中展示。 */
     .craber-nav-panel-item-sec{flex:none;font-size:10.5px;font-weight:600;color:var(--craber-accent);
       background:color-mix(in srgb,var(--craber-accent) 12%,transparent);
       padding:1px 6px;border-radius:8px;white-space:nowrap}
-    .craber-nav-panel-outline{display:flex;flex-direction:column;gap:1px;margin:4px 0 2px 8px;
-      padding-left:8px;border-left:1px solid var(--craber-line)}
-    .craber-nav-panel-sub{display:flex;gap:6px;align-items:baseline;padding:4px 6px;border-radius:6px;
-      cursor:pointer;font-size:11.5px;line-height:1.4;color:var(--craber-sub)}
-    .craber-nav-panel-sub:hover{background:var(--craber-hover);color:var(--craber-fg)}
 
     /* ============ 消息内大纲（回合卡片里的二级节点） ============
      * 长回复经常分节，回合级节点只能定位到"这一问"，进来还得自己滚。
@@ -2312,7 +2315,7 @@
       transform-origin:50% 0;
       transition:opacity .13s ease,transform .13s ease}
     .craber-tip.show{opacity:1;transform:translateY(0) scale(1)}
-    /* 被说明的元素在自家模态里：气泡必须浮到模态之上，否则被遮罩盖住 */
+    /* 自家模态与侧栏模型菜单的提示需要浮在对应浮层之上。 */
     .craber-tip.craber-tip-modal{z-index:calc(var(--craber-z-modal) + 5)}
     /* 箭头：用旋转方块贴在边上，永远指向被说明的元素 */
     .craber-tip::after{content:'';position:absolute;left:var(--craber-arrow-x,50%);top:-5px;
@@ -2620,20 +2623,27 @@
     .craber-dlg-wide{width:min(960px,max(680px,74vw));
       height:min(860px,calc(100vh - 40px));
       max-width:100%;max-height:100%;
-      display:flex;flex-direction:column;padding:20px 24px 0;border-radius:20px}
+      display:flex;flex-direction:column;padding:14px 24px 0;border-radius:18px}
+    .craber-dlg-wide > .craber-dlg-hd{gap:10px}
+    .craber-dlg-wide .craber-dlg-mark{width:30px;height:30px;border-radius:9px}
+    .craber-dlg-wide .craber-dlg-mark svg{width:19px;height:19px}
+    .craber-dlg-wide > .craber-dlg-hd .craber-dlg-title{font-size:15px;font-weight:650}
+    .craber-dlg-wide .craber-dlg-badge{height:20px;font-size:10.5px;background:none;padding:0 4px}
 
-    .craber-set{display:flex;gap:0;flex:1;min-height:0;margin:18px -24px 0;
+    .craber-set{display:flex;gap:0;flex:1;min-height:0;margin:14px -24px 0;
       border-top:1px solid var(--craber-line);overflow:hidden}
-    /* 左侧导航：浅一档底色，分组标题 + 图标条目；选中项浮成白色卡片并带左侧竖条 */
-    .craber-set-nav{flex:none;width:200px;padding:12px 10px 16px;overflow-y:auto;
-      background:color-mix(in srgb,var(--craber-hover) 66%,var(--craber-bg));
+    /* 导航按用途分组，选中项用浅色底区分。 */
+    .craber-set-nav{flex:none;width:176px;padding:16px 10px;overflow-y:auto;
+      background:color-mix(in srgb,var(--craber-hover) 50%,var(--craber-bg));
       border-right:1px solid var(--craber-line);
       display:flex;flex-direction:column;gap:2px;scrollbar-width:none;
       box-sizing:border-box}
     .craber-set-nav::-webkit-scrollbar{display:none}
+    .craber-set-navgroup{padding:0 10px 7px;font-size:10.5px;font-weight:600;color:var(--craber-sub);line-height:1.5}
+    .craber-set-item + .craber-set-navgroup{margin-top:20px}
     .craber-set-item{position:relative;display:flex;align-items:center;gap:9px;width:100%;
       box-sizing:border-box;text-align:left;padding:8px 10px;border:none;border-radius:9px;
-      background:none;color:var(--craber-fg);font:inherit;font-size:13.5px;
+      background:none;color:var(--craber-fg);font:inherit;font-size:12.5px;line-height:20px;
       cursor:pointer;min-width:0;
       transition:background-color .14s ease,box-shadow .14s ease}
     .craber-set-itemico{flex:none;width:16px;height:16px;display:flex;
@@ -2644,19 +2654,13 @@
       text-overflow:ellipsis;white-space:nowrap}
     .craber-set-item:hover{background:color-mix(in srgb,var(--craber-fg) 6%,transparent)}
     .craber-set-item:hover .craber-set-itemico{color:var(--craber-fg)}
-    .craber-set-item.on{background:var(--craber-bg);font-weight:600;
-      box-shadow:0 1px 2px rgba(0,0,0,.06),0 0 0 1px var(--craber-line)}
-    /* 深色下 --craber-bg 比导航底色更暗，选中项会"沉"下去；换成提亮一档 */
+    .craber-set-item.on{background:color-mix(in srgb,var(--craber-accent) 9%,var(--craber-bg));
+      color:var(--craber-accent);font-weight:600}
     html[data-theme="dark"] .craber-set-nav{background:color-mix(in srgb,var(--craber-hover) 40%,var(--craber-bg))}
-    html[data-theme="dark"] .craber-set-item.on{
-      background:color-mix(in srgb,var(--craber-fg) 9%,var(--craber-bg))}
     .craber-set-item.on .craber-set-itemico{color:var(--craber-accent)}
-    .craber-set-item.on::before{content:'';position:absolute;left:-10px;top:50%;
-      width:3px;height:16px;margin-top:-8px;border-radius:0 3px 3px 0;
-      background:var(--craber-accent)}
     .craber-set-item:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
     .craber-set-body{flex:1;min-width:0;min-height:0;display:flex;
-      flex-direction:column;overflow-y:auto;padding:18px 26px 20px;
+      flex-direction:column;overflow-y:auto;padding:22px 26px 24px;
       scrollbar-width:thin;scrollbar-color:var(--craber-line) transparent}
     .craber-set-body::-webkit-scrollbar{width:10px}
     .craber-set-body::-webkit-scrollbar-thumb{background:var(--craber-line);
@@ -2674,50 +2678,46 @@
     .craber-set-page.craber-set-fill .craber-set-convlist,
     .craber-set-page.craber-set-fill .craber-set-turnlist{flex:1;min-height:120px}
     .craber-set-pagehd{display:flex;flex-direction:column;gap:4px;
-      padding:0 0 10px}
-    .craber-set-pagetitle{margin:0;font-size:17px;font-weight:650;line-height:1.3;
+      padding:0 0 16px}
+    .craber-set-pagetitle{margin:0;font-size:16px;font-weight:650;line-height:1.4;
       letter-spacing:-.01em}
-    .craber-set-pagedesc{font-size:12.5px;color:var(--craber-sub);line-height:1.55;
+    .craber-set-pagedesc{font-size:12px;color:var(--craber-sub);line-height:1.5;
       max-width:60ch}
-    /* 行式列表（功能开关）：整块做成卡片，行间用细线分，悬停时整行提亮 */
+    .craber-set-features .craber-set-pagehd{flex-direction:row;align-items:center;justify-content:space-between;gap:12px}
+    .craber-set-features .craber-set-pagedesc{font-size:11px;white-space:nowrap}
+    .craber-set-group + .craber-set-group{margin-top:18px}
+    .craber-set-grouptitle{margin:0 0 8px;font-size:11.5px;font-weight:600;color:var(--craber-sub);line-height:1.5}
+    /* 同类功能成组，整行可点；说明压缩到一行，开关固定右对齐。 */
     .craber-set-list{display:flex;flex-direction:column;min-width:0;
-      border:1px solid var(--craber-line);border-radius:14px;overflow:hidden;
+      border:1px solid var(--craber-line);border-radius:10px;overflow:hidden;
       background:var(--craber-bg)}
-    .craber-set-row{display:flex;align-items:center;gap:14px;width:100%;
-      box-sizing:border-box;padding:14px 16px;border:none;border-top:1px solid var(--craber-line);
+    .craber-set-row{display:flex;align-items:center;gap:16px;width:100%;
+      box-sizing:border-box;min-height:48px;padding:12px 14px;border:none;border-top:1px solid var(--craber-line);
       border-radius:0;background:none;color:var(--craber-fg);font:inherit;
       text-align:left;cursor:pointer;min-width:0;
       transition:background-color .14s ease}
     .craber-set-row:first-child{border-top:none}
     .craber-set-row:hover{background:color-mix(in srgb,var(--craber-fg) 3%,transparent)}
     .craber-set-row:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px}
-    .craber-set-ico{flex:none;width:32px;height:32px;border-radius:9px;
-      display:flex;align-items:center;justify-content:center;
-      background:var(--craber-ghost);color:var(--craber-sub);
-      transition:background-color .16s ease,color .16s ease}
-    .craber-set-ico svg{width:16px;height:16px;display:block}
-    .craber-set-switch.on .craber-set-ico{
-      background:color-mix(in srgb,var(--craber-accent) 13%,transparent);
-      color:var(--craber-accent)}
-    .craber-set-rowmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
-    .craber-set-rowlabel{font-size:13.5px;font-weight:500;line-height:1.4}
-    .craber-set-rowdesc{font-size:12px;color:var(--craber-sub);line-height:1.45}
+    .craber-set-rowmain{flex:1;min-width:0;display:grid;grid-template-columns:136px minmax(0,1fr);align-items:center;gap:14px}
+    .craber-set-rowlabel{font-size:13px;font-weight:500;line-height:1.4}
+    .craber-set-rowdesc{font-size:11.5px;color:var(--craber-sub);line-height:1.45}
     .craber-set-unit{font-size:13px;color:var(--craber-sub)}
     /* 设置行：左侧标签+说明，右侧控件（参考原生设置页的横向排布）
        整组做成卡片，用细线分行的同时保留统一圆角。 */
     .craber-set-form{display:flex;flex-direction:column;min-width:0;
-      border:1px solid var(--craber-line);border-radius:14px;
+      border:1px solid var(--craber-line);border-radius:10px;
       background:var(--craber-bg);overflow:hidden}
-    .craber-set-field{display:flex;align-items:center;gap:24px;
+    .craber-set-field{display:flex;align-items:center;gap:20px;
       padding:10px 16px;border-top:1px solid var(--craber-line);min-width:0;
       transition:background-color .14s ease}
     .craber-set-field:first-child{border-top:none}
     .craber-set-field:focus-within{
       background:color-mix(in srgb,var(--craber-hover) 62%,var(--craber-bg))}
     .craber-set-fieldcol{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px}
-    .craber-set-label{font-size:13.5px;color:var(--craber-fg);font-weight:500;
+    .craber-set-label{font-size:13px;color:var(--craber-fg);font-weight:500;
       line-height:1.4}
-    .craber-set-hint{font-size:12px;color:var(--craber-sub);line-height:1.45}
+    .craber-set-hint{font-size:11.5px;color:var(--craber-sub);line-height:1.45}
     /* 表单卡片末尾的范围小结：贴着卡片内边距，不单独占一行分隔线 */
     .craber-set-form > .craber-set-hint{padding:0 16px 11px;margin-top:-6px}
     /* 右列给固定比例而不是像素：标签列和控件列约 1:1，
@@ -2780,12 +2780,14 @@
         padding:8px 10px;border-right:none;border-bottom:1px solid var(--craber-line);
         overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
       .craber-set-nav::-webkit-scrollbar{display:none}
+      .craber-set-navgroup{display:none}
       .craber-set-nav .craber-set-item{padding:7px 10px;font-size:13px}
       .craber-set-item{width:auto;flex:none;padding:7px 11px}
       .craber-set-item.on::before{display:none}
       .craber-dlg-badge{display:none}
       .craber-set-body{padding:18px 16px 20px}
       .craber-set-field{flex-direction:column;align-items:flex-start;gap:8px}
+      .craber-set-rowmain{grid-template-columns:1fr;gap:2px}
       .craber-set-ctrl{flex:none;width:100%;justify-content:stretch}
       .craber-set-ctrl .craber-dlg-input{width:100%}
       .craber-set-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -2798,6 +2800,7 @@
       text-align:center;padding:22px 12px}
     /* 按钮 */
     .craber-set-actions{display:flex;gap:8px;flex-wrap:wrap;padding:11px 0 0}
+    .craber-set-page > .craber-dav-status:empty{display:none}
     /* 工具栏：搜索框在左，操作按钮 + 计数成组在右 */
     .craber-set-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;
       padding-bottom:10px}
@@ -3109,7 +3112,7 @@
        原来全部塞进一张 .craber-set-form，十来个字段连成一片，
        扫一眼分不清"写到哪"和"备什么"。 */
     .craber-backup-card{display:flex;flex-direction:column;min-width:0;
-      border:1px solid var(--craber-line);border-radius:14px;
+      border:1px solid var(--craber-line);border-radius:10px;
       background:var(--craber-bg);overflow:hidden;margin-bottom:10px}
     .craber-backup-cardhd{padding:11px 14px 9px;display:flex;flex-direction:column;gap:3px;
       background:color-mix(in srgb,var(--craber-hover) 52%,var(--craber-bg));
@@ -3125,6 +3128,11 @@
     .craber-backup-row:first-of-type{border-top:none}
     .craber-backup-row.has-chips{padding-bottom:11px}
     .craber-backup-rowcol{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+    /* 多行控件（系统提示词之类）：说明在上、控件整宽铺满下一行 */
+    .craber-backup-row.craber-backup-row-stack{align-items:stretch;flex-direction:column;gap:7px}
+    .craber-backup-row.craber-backup-row-stack .craber-set-ctrl{flex:none;width:100%}
+    .craber-backup-row.craber-backup-row-stack .craber-dlg-input{width:100%;
+      resize:vertical;line-height:1.6;padding:9px 12px;font-family:inherit}
     .craber-backup-row > .craber-set-btn{flex:none}
     .craber-backup-row .craber-set-ctrl{flex:0 0 auto;justify-content:flex-end}
     .craber-backup-row .craber-set-chipbar{flex:1 1 100%;gap:6px}
@@ -3160,6 +3168,186 @@
     html[data-theme="dark"] .craber-backup-busy .craber-set-btn-primary{
       background:transparent;border-color:var(--craber-line);color:var(--craber-sub)}
     .craber-backup-card .craber-set-chipbar{margin-top:1px}
+
+    /* ===== 侧边聊天配置页 ===== */
+    .craber-sc-settings{max-width:820px;container:craber-sc-settings / inline-size}
+    .craber-sc-hero{display:flex;align-items:flex-start;gap:18px;min-width:0}
+    .craber-sc-hero-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+    .craber-sc-ready{flex:none;display:inline-flex;align-items:center;gap:6px;
+      height:26px;padding:0 10px;border:1px solid var(--craber-line);border-radius:999px;
+      background:var(--craber-bg);color:var(--craber-sub);
+      font-size:11.5px;font-weight:550;white-space:nowrap;
+      font-variant-numeric:tabular-nums}
+    .craber-sc-ready::before{content:'';width:6px;height:6px;border-radius:50%;
+      background:color-mix(in srgb,var(--craber-sub) 55%,transparent)}
+    .craber-sc-ready.on{color:var(--craber-accent);
+      border-color:color-mix(in srgb,var(--craber-accent) 24%,var(--craber-line));
+      background:color-mix(in srgb,var(--craber-accent) 7%,var(--craber-bg))}
+    .craber-sc-ready.on::before{background:var(--craber-accent)}
+    .craber-sc-cardhd{display:flex;align-items:flex-start;gap:16px}
+    .craber-sc-cardheadtext{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .craber-sc-carddesc{font-size:11.5px;color:var(--craber-sub);line-height:1.45}
+    .craber-sc-advanced{display:block}
+    .craber-sc-advanced > summary{display:flex;align-items:center;gap:10px;padding:12px 14px;
+      list-style:none;cursor:pointer;font-size:12.5px;font-weight:550;line-height:1.5}
+    .craber-sc-advanced > summary::-webkit-details-marker{display:none}
+    .craber-sc-advanced > summary .craber-set-hint{font-weight:400;margin-left:auto}
+    .craber-sc-advanced > summary::after{content:'›';font-size:17px;line-height:1;color:var(--craber-sub);transform:rotate(90deg)}
+    .craber-sc-advanced[open] > summary::after{transform:rotate(-90deg)}
+    .craber-sc-advanced > summary:hover{background:var(--craber-hover)}
+    .craber-sc-advanced > summary:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px}
+    /* 地址和密钥共用对齐的控件列，候选输入和操作另占整行。 */
+    .craber-sc-row.craber-backup-row{display:grid;
+      grid-template-columns:minmax(180px,1fr) minmax(300px,1.08fr);
+      align-items:center;gap:22px}
+    .craber-sc-row .craber-set-ctrl{flex:none;width:100%;min-width:0;
+      justify-content:stretch}
+    .craber-sc-row .craber-dlg-input{width:100%;min-width:0}
+    .craber-sc-modelrow.craber-backup-row{grid-template-columns:minmax(0,1fr);
+      align-items:stretch;gap:8px}
+    .craber-sc-labelrow{display:flex;align-items:baseline;gap:8px;min-width:0}
+    .craber-sc-labelrow .craber-set-label{flex:1;min-width:0}
+    .craber-sc-count{flex:none;font-size:11px;color:var(--craber-sub);
+      font-variant-numeric:tabular-nums}
+    .craber-sc-secret{display:flex;align-items:center;gap:6px;width:100%;min-width:0}
+    .craber-sc-secret .craber-dlg-input{flex:1;min-width:0}
+    .craber-sc-modelpick{display:flex;align-items:center;gap:8px;width:100%;min-width:0}
+    .craber-sc-modelpick .craber-dlg-input{flex:1;min-width:0}
+    .craber-sc-model-actions{display:flex;justify-content:flex-end;gap:6px;flex:none}
+    .craber-sc-model-btn{flex:none;height:36px;padding:0 11px;font-size:12.5px;
+      justify-content:center;border-radius:9px;white-space:nowrap}
+    .craber-sc-model-add{color:var(--craber-accent);border-color:transparent;
+      background:color-mix(in srgb,var(--craber-accent) 10%,var(--craber-bg))}
+    .craber-sc-model-add:hover{border-color:color-mix(in srgb,var(--craber-accent) 34%,var(--craber-line));
+      background:color-mix(in srgb,var(--craber-accent) 15%,var(--craber-bg))}
+    .craber-sc-profilelist{display:flex;flex-direction:column;gap:0;padding:4px 12px 10px}
+    .craber-sc-profileempty{padding:14px;border:1px dashed var(--craber-line);
+      border-radius:10px;color:var(--craber-sub);font-size:12px;text-align:center}
+    .craber-sc-model-row{width:100%;min-width:0;display:flex;align-items:center;gap:10px;
+      padding:11px 4px;border:0;border-bottom:1px solid var(--craber-line);
+      background:transparent;color:var(--craber-fg);text-align:left;font:inherit;cursor:pointer}
+    .craber-sc-model-row:last-child{border-bottom:0}
+    .craber-sc-model-row:hover{background:color-mix(in srgb,var(--craber-hover) 54%,transparent)}
+    .craber-sc-model-row:focus-visible{outline:2px solid var(--craber-accent);outline-offset:-2px;
+      border-radius:8px}
+    .craber-sc-profile-identity{flex:1;min-width:0}
+    .craber-sc-profile-name{display:block;margin:0;font-size:13px;font-weight:600;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap}
+    .craber-sc-profile-id{display:block;font-size:11px;color:var(--craber-sub);overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+    .craber-sc-model-rowmeta{display:flex;align-items:center;gap:8px;flex:none}
+    .craber-sc-model-chevron{flex:none;color:var(--craber-sub);font-size:18px;line-height:1}
+    .craber-sc-profile-dialog .craber-dlg-sub{white-space:normal;overflow-wrap:anywhere}
+    .craber-sc-profile-state{display:flex;align-items:center;padding:0 4px 12px;
+      border-bottom:1px solid var(--craber-line)}
+    .craber-sc-profile-state .craber-set-btn{height:28px;padding:0 9px;font-size:11.5px}
+    .craber-sc-profile-dialog .craber-sc-removemodel{background:transparent;color:var(--craber-sub)}
+    .craber-sc-profile-dialog .craber-sc-removemodel:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-profile-current{display:inline-flex;align-items:center;gap:5px;height:24px;
+      padding:0 7px;border-radius:999px;color:var(--craber-accent);font-size:11px;white-space:nowrap;
+      background:color-mix(in srgb,var(--craber-accent) 9%,var(--craber-bg))}
+    .craber-sc-profile-current::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}
+    .craber-sc-profile-group{min-width:0;display:grid;
+      grid-template-columns:minmax(110px,.52fr) minmax(0,1fr);align-items:center;
+      gap:6px 12px;padding:10px 4px}
+    .craber-sc-profile-group + .craber-sc-profile-group{border-top:1px solid var(--craber-line)}
+    .craber-sc-context-options{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+    .craber-sc-profile-scopes,.craber-sc-profile-modalities{display:flex;flex-wrap:wrap;gap:5px}
+    .craber-sc-scopechoice{min-height:32px;height:auto;padding:4px 8px;font-size:11.5px;line-height:1.3}
+    .craber-sc-scopechoice.on{border-color:color-mix(in srgb,var(--craber-accent) 42%,var(--craber-line));
+      color:var(--craber-accent);background:color-mix(in srgb,var(--craber-accent) 8%,var(--craber-bg))}
+    .craber-sc-profile-toggle{display:inline-flex;align-items:center;gap:6px;
+      min-height:24px;font-size:12px;color:var(--craber-sub);cursor:pointer}
+    .craber-sc-profile-toggle input{appearance:auto;flex:none;width:14px;height:14px;
+      padding:0;accent-color:var(--craber-accent);margin:0;cursor:pointer}
+    .craber-sc-profile-toggle input:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+    .craber-sc-modality{box-sizing:border-box;min-height:32px;padding:0 7px;
+      border:1px solid var(--craber-line);border-radius:8px}
+    .craber-sc-modality:has(input:checked){color:var(--craber-fg);
+      background:color-mix(in srgb,var(--craber-accent) 6%,var(--craber-bg))}
+    .craber-sc-profile-dialog .craber-set-label{display:flex;align-items:center;min-height:24px;
+      font-size:12px;font-weight:600}
+    .craber-sc-profile-dialog .craber-dlg-hint{padding-inline:4px}
+    .craber-sc-effort-options{display:flex;flex-wrap:wrap;gap:5px}
+    .craber-sc-effort-field .craber-set-hint{margin-top:5px;font-size:11px}
+    .craber-sc-eye{flex:none;width:34px;height:34px;padding:0;border-radius:9px;
+      border:1px solid var(--craber-line);background:var(--craber-bg);
+      color:var(--craber-sub);cursor:pointer;display:inline-flex;
+      align-items:center;justify-content:center;
+      transition:background-color .12s ease,color .12s ease,border-color .12s ease}
+    .craber-sc-eye:hover{background:var(--craber-hover);color:var(--craber-fg);
+      border-color:color-mix(in srgb,var(--craber-fg) 18%,var(--craber-line))}
+    .craber-sc-eye:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+    .craber-sc-eye svg{width:16px;height:16px;display:block}
+    /* 温度 / 最大输出 token：并排成两块参数格，减少一整行空白高度 */
+    .craber-sc-paramgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+      border-top:1px solid var(--craber-line)}
+    .craber-sc-paramgrid .craber-sc-param{display:flex;align-items:center;
+      gap:14px;padding:11px 14px;border-top:none;min-width:0}
+    .craber-sc-paramgrid .craber-sc-param + .craber-sc-param{
+      border-left:1px solid var(--craber-line)}
+    .craber-sc-paramgrid .craber-set-ctrl{flex:0 0 108px;justify-content:flex-end}
+    .craber-sc-paramgrid .craber-backup-num{width:108px;text-align:center}
+    .craber-sc-system .craber-sc-sp{min-height:96px;resize:vertical}
+    /* 状态与操作合并成页脚：失败原因不再孤零零悬在按钮上方 */
+    .craber-sc-footer{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+      padding:14px 0 2px}
+    .craber-sc-status{flex:1 1 280px;min-width:0;display:flex;align-items:flex-start;
+      gap:8px;font-size:12px;line-height:1.55;color:var(--craber-sub);
+      word-break:break-word}
+    .craber-sc-status-dot{flex:none;width:7px;height:7px;border-radius:50%;
+      margin-top:.55em;background:color-mix(in srgb,var(--craber-sub) 52%,transparent)}
+    .craber-sc-status.ok{color:var(--craber-accent)}
+    .craber-sc-status.ok .craber-sc-status-dot{background:var(--craber-accent)}
+    .craber-sc-status.err{color:#d9483b}
+    .craber-sc-status.err .craber-sc-status-dot{background:#d9483b}
+    .craber-sc-status.warn{color:#c4761b}
+    .craber-sc-status.warn .craber-sc-status-dot{background:#c4761b}
+    .craber-sc-status.busy .craber-sc-status-dot{background:var(--craber-accent);
+      animation:craber-sc-status-pulse 1s ease-in-out infinite}
+    @keyframes craber-sc-status-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+    .craber-sc-actions{padding:0;margin-left:auto;flex-wrap:nowrap}
+    .craber-sc-actions .craber-set-btn{height:36px;border-radius:10px}
+    .craber-sc-actions .craber-sc-save{min-width:104px;justify-content:center}
+    .craber-sc-help{margin-top:12px;border:1px solid var(--craber-line);
+      border-radius:12px;background:color-mix(in srgb,var(--craber-hover) 48%,var(--craber-bg));
+      overflow:hidden}
+    .craber-sc-help > summary{padding:10px 13px;cursor:pointer;list-style:none;
+      font-size:12px;font-weight:550;color:var(--craber-sub);
+      display:flex;align-items:center;gap:7px;user-select:none}
+    .craber-sc-help > summary::-webkit-details-marker{display:none}
+    .craber-sc-help > summary::before{content:'?';flex:none;width:17px;height:17px;
+      border-radius:50%;background:var(--craber-ghost);color:var(--craber-sub);
+      display:inline-flex;align-items:center;justify-content:center;
+      font-size:11px;font-weight:650}
+    .craber-sc-help > summary::after{content:'+';margin-left:auto;
+      font-size:15px;font-weight:400;color:var(--craber-sub)}
+    .craber-sc-help[open] > summary::after{content:'−'}
+    .craber-sc-help > summary:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-help > summary:focus-visible{outline:2px solid var(--craber-accent);
+      outline-offset:-2px}
+    .craber-sc-help-body{padding:0 13px 12px 37px;font-size:11.5px;
+      line-height:1.7;color:var(--craber-sub)}
+    .craber-sc-help-body b{color:var(--craber-fg);font-weight:600}
+    @container craber-sc-settings (max-width:590px){
+      .craber-sc-hero{gap:10px}
+      .craber-sc-row.craber-backup-row{grid-template-columns:minmax(0,1fr);gap:7px;align-items:stretch}
+      .craber-sc-paramgrid{grid-template-columns:1fr}
+      .craber-sc-paramgrid .craber-sc-param + .craber-sc-param{
+        border-left:none;border-top:1px solid var(--craber-line)}
+      .craber-sc-status{flex-basis:100%}
+      .craber-sc-actions{width:100%;margin-left:0}
+      .craber-sc-actions .craber-sc-save{flex:1}
+    }
+    @container craber-sc-settings (max-width:360px){
+      .craber-sc-modelpick{flex-wrap:wrap}
+      .craber-sc-modelpick .craber-dlg-input{flex-basis:100%}
+      .craber-sc-model-actions{width:100%}
+      .craber-sc-actions{flex-wrap:wrap}
+    }
+    @media (prefers-reduced-motion:reduce){
+      .craber-sc-status.busy .craber-sc-status-dot{animation:none}
+    }
 
     /* 同步记录 */
     .craber-dav-loghead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
@@ -3497,6 +3685,568 @@
     @media (prefers-reduced-motion:reduce){
       .craber-folder-chev,.craber-pjify,.craber-pj-btn{transition:none;animation:none}
     }
+
+    /* ============================================================
+     * 侧边聊天：右侧分栏（占位，不遮挡）
+     *
+     * 关键取舍：面板要**真的占位** —— 打开时把顶栏与正文整体推窄，
+     * 而不是浮在正文上面盖住内容。
+     *
+     * 做法：给 <body> 加 padding-right，浏览器会把整个应用壳
+     * （含原生顶栏、侧栏、正文滚动容器）一起压缩；面板 position:fixed
+     * 正好填进让出来的这块空位。
+     *
+     * 为什么不用「给 main 加 margin-right」：实测原生顶栏是 sticky/fixed
+     * 挂在 body 下的应用壳上，只给 main 让位会让顶栏仍横跨到面板底下，
+     * 面板上沿与顶栏重叠。改 body 的 padding 才能让顶栏一起缩。
+     * ========================================================== */
+    /* 面板占满整个高度，与页面并排成一栏。
+       页面壳（顶栏 + 正文）已被 body padding 压窄，所以面板落在空位上，
+       不盖任何东西 —— 既不会挡住顶栏按钮，也不会压住正文。 */
+    .craber-sc{position:fixed;top:0;right:0;bottom:0;
+      z-index:var(--craber-z-rail);
+      display:flex;flex-direction:column;box-sizing:border-box;
+      width:var(--craber-sc-w,519px);max-width:100vw;
+      --sc-surface:#fff;--sc-ink:#0d0d0d;--sc-muted:#858585;
+      --sc-track:#dcdcdc;--sc-hover:#f4f4f4;--sc-gutter:34px;
+      background:var(--sc-surface);color:var(--sc-ink);
+      border-left:1px solid var(--craber-line);
+      box-shadow:none;container-type:inline-size;
+      font-family:system-ui,"Segoe UI",Arial,"Microsoft YaHei",sans-serif;font-size:20px;letter-spacing:0;
+      -webkit-font-smoothing:antialiased;
+      /* 用 visibility + 轻微位移做开合：让出来的空间由正文让位负责，
+         面板不再靠 translateX(100%) 滑出屏幕假关闭 —— 占位状态下那样会留白 */
+      opacity:0;visibility:hidden;transform:translateX(10px);pointer-events:none;
+      transition:transform .2s cubic-bezier(.2,.8,.25,1),opacity .18s ease,
+        visibility 0s linear .2s}
+    .craber-sc.craber-open{opacity:1;visibility:visible;transform:none;
+      pointer-events:auto;
+      transition:transform .2s cubic-bezier(.2,.8,.25,1),opacity .18s ease,
+        visibility 0s}
+    .craber-sc svg,.craber-sc-popmenu svg{stroke-width:2}
+    @media (prefers-reduced-motion:reduce){.craber-sc{transition:none}}
+
+    /* 左侧拖拽改宽：8px 热区，命中时显示一条竖细线提示 */
+    .craber-sc-grip{position:absolute;top:0;left:-3px;bottom:0;width:8px;
+      cursor:col-resize;background:transparent;z-index:1}
+    .craber-sc-grip::after{content:'';position:absolute;top:0;bottom:0;left:3px;width:2px;
+      background:transparent;transition:background-color .14s ease}
+    .craber-sc-grip:hover::after,.craber-sc-resizing .craber-sc-grip::after{
+      background:var(--craber-accent)}
+    /* 拖拽期间禁掉全局选中与过渡，否则会一边拖一边闪 */
+    body.craber-sc-resizing{cursor:col-resize;user-select:none}
+
+    body.craber-sc-resizing .craber-sc{transition:none}
+
+    html[data-theme="dark"] .craber-sc{
+      --sc-surface:#212121;--sc-ink:#ececec;--sc-muted:#a0a0a0;
+      --sc-track:#484848;--sc-hover:#303030}
+    /* 顶部操作悬浮显示，不占用设计稿的消息留白。 */
+    .craber-sc-hd{position:absolute;top:2px;left:12px;right:12px;z-index:2;
+      display:flex;align-items:center;gap:2px;height:28px;
+      opacity:0;transition:opacity .12s ease}
+    .craber-sc-hd:hover,.craber-sc-hd:focus-within{opacity:1}
+    .craber-sc-title{flex:1;min-width:0;display:flex;align-items:center;gap:6px;
+      font-size:12px;font-weight:500;color:var(--craber-sub)}
+    .craber-sc-title > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-sc-title .craber-sc-crab{flex:none;display:flex;color:var(--craber-sub)}
+    .craber-sc-title .craber-sc-crab svg{width:15px;height:15px;display:block}
+    .craber-sc-hbtn{flex:none;width:28px;height:28px;padding:0;border:0;border-radius:8px;
+      background:transparent;color:var(--craber-sub);cursor:pointer;
+      display:inline-flex;align-items:center;justify-content:center;
+      transition:background-color .12s ease,color .12s ease}
+    .craber-sc-hbtn:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-hbtn:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
+    .craber-sc-hbtn svg{width:16px;height:16px;pointer-events:none}
+    .craber-sc-hbtn.on{background:var(--craber-hover);color:var(--craber-fg)}
+
+    /* 历史对话下拉：挂在本面板内，避免和原生浮层的层级打架 */
+    .craber-sc-hist{position:absolute;top:32px;left:12px;right:12px;z-index:3;
+      max-height:min(46vh,320px);overflow-y:auto;
+      border-bottom:1px solid var(--craber-line);background:var(--craber-bg);
+      scrollbar-width:thin}
+    .craber-sc-hist[hidden]{display:none}
+    .craber-sc-histrow{display:flex;align-items:center;gap:8px;width:100%;
+      padding:9px 12px 9px 14px;border:0;background:transparent;
+      color:var(--craber-fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;
+      transition:background-color .12s ease}
+    .craber-sc-histrow:hover{background:var(--craber-hover)}
+    .craber-sc-histrow.on{background:var(--craber-hover)}
+    .craber-sc-histrow-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .craber-sc-histrow-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-sc-histrow-s{font-size:11px;color:var(--craber-sub);
+      font-variant-numeric:tabular-nums}
+    .craber-sc-histrow-del{flex:none;width:22px;height:22px;padding:0;border:0;border-radius:6px;
+      background:transparent;color:var(--craber-sub);cursor:pointer;opacity:0;
+      display:inline-flex;align-items:center;justify-content:center}
+    .craber-sc-histrow:hover .craber-sc-histrow-del{opacity:1}
+    .craber-sc-histrow-del:hover{background:var(--craber-ghost);color:var(--craber-fg)}
+    .craber-sc-histrow-del svg{width:13px;height:13px}
+    .craber-sc-histempty{padding:14px;font-size:12.5px;color:var(--craber-sub)}
+
+    /* 消息区。
+     * 不用 column-reverse 贴底：那套负 scrollTop 语义在跨浏览器上很别扭，
+     * 空态与居中也不好摆。改成普通纵向滚动 + 显式"粘底"逻辑
+     * （见 scScrollToBottom：只有用户本来就在底部附近时才跟着滚，
+     * 主动往上翻的阅读位置不会被流式追加拽回去）。 */
+    .craber-sc-body{flex:1;min-height:0;display:flex;flex-direction:column;margin-right:12px;
+      overflow-y:scroll;padding:34px max(2px,calc(var(--sc-gutter) - 20px)) 156px calc(var(--sc-gutter) + 6px);gap:16px;
+      scrollbar-width:auto;scrollbar-color:auto;
+      overscroll-behavior:contain}
+    .craber-sc-body::-webkit-scrollbar{width:9px}
+    .craber-sc-body::-webkit-scrollbar-track{margin:34px 0 12px}
+    .craber-sc-body::-webkit-scrollbar-thumb{background:#d9d9d9;border-radius:5px}
+    .craber-sc-msgs{display:flex;flex-direction:column;gap:32px;flex:1 0 auto}
+    .craber-sc-empty{margin:auto;max-width:280px;text-align:center;
+      display:flex;flex-direction:column;align-items:center;gap:12px;
+      color:var(--craber-sub);font-size:13px;line-height:1.75}
+    .craber-sc-empty svg{width:34px;height:34px;opacity:.38}
+    .craber-sc-empty b{color:var(--craber-fg);font-weight:600}
+    /* 空状态的快捷提问：点一下直接发，省得不知道能问什么 */
+    .craber-sc-sugs{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;
+      margin-top:2px;max-width:300px}
+    .craber-sc-sug{height:26px;padding:0 10px;border:1px solid var(--craber-line);
+      border-radius:999px;background:var(--craber-bg);color:var(--craber-sub);
+      font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap;
+      transition:background-color .12s ease,color .12s ease,border-color .12s ease}
+    .craber-sc-sug:hover{background:var(--craber-hover);color:var(--craber-fg);
+      border-color:color-mix(in srgb,var(--craber-fg) 16%,var(--craber-line))}
+    .craber-sc-sug:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+
+    /* 等待首字时的三个点：正文还没到，但要让用户知道请求已经发出去了 */
+    .craber-sc-typing{display:inline-flex;align-items:center;gap:4px;padding:6px 0}
+    .craber-sc-typing i{width:6px;height:6px;border-radius:50%;
+      background:var(--craber-sub);opacity:.45;animation:craber-sc-dot 1.1s ease-in-out infinite}
+    .craber-sc-typing i:nth-child(2){animation-delay:.16s}
+    .craber-sc-typing i:nth-child(3){animation-delay:.32s}
+    @keyframes craber-sc-dot{0%,60%,100%{opacity:.28;transform:translateY(0)}
+      30%{opacity:.9;transform:translateY(-2px)}}
+    @media (prefers-reduced-motion:reduce){
+      .craber-sc-typing i{animation:none;opacity:.6}
+    }
+
+    /* 未配置模型时的引导卡：占满消息区居中，一眼看到"缺什么 + 怎么办" */
+    .craber-sc-setup{margin:auto;max-width:290px;width:100%;
+      display:flex;flex-direction:column;align-items:center;gap:11px;
+      text-align:center;padding:6px 2px}
+    .craber-sc-setup-ico{display:flex;align-items:center;justify-content:center;
+      width:40px;height:40px;border-radius:12px;
+      background:color-mix(in srgb,var(--craber-accent) 12%,transparent);
+      color:var(--craber-accent)}
+    .craber-sc-setup-ico svg{width:20px;height:20px}
+    .craber-sc-setup-title{font-size:14px;font-weight:600;color:var(--craber-fg)}
+    .craber-sc-setup-desc{font-size:12.5px;line-height:1.75;color:var(--craber-sub)}
+    .craber-sc-setup-desc b{color:var(--craber-fg);font-weight:600}
+    .craber-sc-setup-btn{height:34px;padding:0 18px;margin-top:2px;
+      border:0;border-radius:9px;background:var(--craber-accent);color:#fff;
+      font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+      display:inline-flex;align-items:center;gap:6px;
+      transition:background-color .12s ease,transform .1s ease}
+    .craber-sc-setup-btn:hover{background:var(--craber-accent-2)}
+    .craber-sc-setup-btn:active{transform:translateY(1px)}
+    .craber-sc-setup-btn:focus-visible{outline:2px solid var(--craber-accent);
+      outline-offset:2px}
+
+    /* 常用地址：一点就复制，省得用户去别处查 base URL */
+    .craber-sc-setup-quick{width:100%;margin-top:4px;padding-top:11px;
+      border-top:1px solid var(--craber-line);
+      display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+    .craber-sc-setup-quicklabel{flex:1 1 100%;font-size:11px;
+      color:var(--craber-sub);margin-bottom:1px}
+    .craber-sc-preset{height:24px;padding:0 9px;border:1px solid var(--craber-line);
+      border-radius:6px;background:var(--craber-bg);color:var(--craber-sub);
+      font:inherit;font-size:11px;cursor:pointer;white-space:nowrap;
+      transition:background-color .12s ease,color .12s ease,border-color .12s ease}
+    .craber-sc-preset:hover{background:var(--craber-hover);color:var(--craber-fg);
+      border-color:color-mix(in srgb,var(--craber-fg) 18%,var(--craber-line))}
+
+    /* 未配置时上下文条那行文字变成可点入口 */
+    .craber-sc-ctx-warn{color:var(--craber-accent);cursor:pointer;
+      text-decoration:underline;text-underline-offset:2px}
+    .craber-sc-ctx-warn:hover{color:var(--craber-accent-2)}
+    /* 档位按钮在未配置时禁用，视觉上压下去 */
+    .craber-sc-ctx-btn:disabled{opacity:.45;cursor:default}
+
+    /* 气泡：参考稿是一问一答的轻量对话流 —— 用户白底细边气泡靠右，
+       助手整宽无底，靠字号与间距区分层级，不用色块制造噪音。 */
+    .craber-sc-turn{display:flex;flex-direction:column;gap:23px}
+    .craber-sc-q,.craber-sc-a{font-size:16px;line-height:1.5}
+    .craber-sc-qwrap{position:relative;align-self:flex-end;width:fit-content;max-width:85%}
+    .craber-sc-q{align-self:auto;max-width:100%;box-sizing:border-box;padding:12px;
+      border-radius:20px;background:var(--sc-surface);border:0;
+      box-shadow:0 4px 14px rgba(15,18,22,.10),0 1px 3px rgba(15,18,22,.06);
+      white-space:pre-wrap;overflow-wrap:anywhere}
+    .craber-sc-qcopy{position:absolute;left:-31px;top:50%;width:25px;height:25px;
+      padding:0;border:1px solid color-mix(in srgb,var(--sc-ink) 10%,transparent);
+      border-radius:7px;background:var(--sc-surface);color:var(--sc-muted);
+      display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+      opacity:0;pointer-events:none;transform:translateY(-50%) scale(.94);
+      transition:opacity .12s ease,transform .12s ease,background-color .12s ease,color .12s ease}
+    .craber-sc-qwrap:hover .craber-sc-qcopy,
+    .craber-sc-qcopy:focus-visible{opacity:1;pointer-events:auto;transform:translateY(-50%) scale(1)}
+    .craber-sc-qcopy:hover{background:var(--craber-hover);color:var(--sc-ink)}
+    .craber-sc-qcopy:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+    .craber-sc-qcopy svg{width:13px;height:13px;display:block}
+    .craber-sc-a{overflow-wrap:anywhere;
+      color:var(--sc-ink);letter-spacing:0}
+    .craber-sc-a > :first-child{margin-top:0}
+    .craber-sc-a > :last-child{margin-bottom:0}
+    .craber-sc-a p{margin:.62em 0}
+    .craber-sc-a h1,.craber-sc-a h2,.craber-sc-a h3,
+    .craber-sc-a h4,.craber-sc-a h5,.craber-sc-a h6{margin:1.15em 0 .55em;
+      font-size:1em;font-weight:600;line-height:1.4}
+    .craber-sc-a h1,.craber-sc-a h2{font-size:1.0625em}
+    .craber-sc-a ul,.craber-sc-a ol{margin:.5em 0;padding-left:1.5em}
+    .craber-sc-a li{margin:.2em 0}
+    .craber-sc-a pre{background:color-mix(in srgb,var(--craber-hover) 70%,var(--craber-bg));
+      border:1px solid var(--craber-line);
+      padding:12px 13px;border-radius:11px;
+      overflow-x:auto;margin:.75em 0;font-size:12.5px;line-height:1.6}
+    .craber-sc-a code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+      font-size:.92em}
+    .craber-sc-a :not(pre) > code{background:var(--craber-ghost);
+      padding:1.5px 5px;border-radius:5px}
+    .craber-sc-a pre code{background:none;padding:0}
+    .craber-sc-a blockquote{margin:.6em 0;padding:.1em 0 .1em 11px;
+      border-left:3px solid var(--craber-line);color:var(--craber-sub)}
+    .craber-sc-a table{border-collapse:collapse;margin:.6em 0;font-size:12.5px;
+      display:block;overflow-x:auto}
+    .craber-sc-a th,.craber-sc-a td{border:1px solid var(--craber-line);
+      padding:5px 9px;text-align:left}
+    .craber-sc-a th{background:var(--craber-ghost);font-weight:600}
+    .craber-sc-a a{color:var(--craber-accent);text-decoration:none}
+    .craber-sc-a a:hover{text-decoration:underline}
+    .craber-sc-a hr{border:0;border-top:1px solid var(--craber-line);margin:1em 0}
+    .craber-sc-a img{max-width:100%;height:auto;border-radius:8px}
+    /* 流式光标：跟着最后一段文字走，别单独占一行 */
+    .craber-sc-a.craber-sc-streaming::after{content:'▍';color:var(--craber-accent);
+      animation:craber-sc-blink 1s steps(2,start) infinite;margin-left:1px}
+    @keyframes craber-sc-blink{0%,100%{opacity:1}50%{opacity:.15}}
+
+    /* 思考内容折叠容器：左缘一道细线，和正文明确分区；
+       标题栏整行可点，字数与状态文字都弱化，不抢正文视觉。 */
+    /* 思考过程：参考稿把它收成一行灰字标题，点开才显示正文 */
+    .craber-sc-think{margin:0;border-radius:0;
+      background:transparent;border:0;overflow:hidden}
+    .craber-sc-think-hd{display:flex;align-items:center;gap:8px;width:max-content;
+      max-width:100%;height:24px;padding:0;border:0;background:transparent;color:var(--sc-muted);
+      font:inherit;font-size:14px;text-align:left;cursor:pointer;
+      transition:color .12s ease}
+    .craber-sc-think-hd:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-think-hd:focus-visible{outline:2px solid var(--craber-accent);
+      outline-offset:-2px}
+    .craber-sc-think-ic{flex:none;display:flex;width:24px;height:24px}
+    .craber-sc-think-ic svg{width:24px;height:24px}
+    /* 箭头紧跟文字（参考稿是「思考12s ⌄」），不推到最右 */
+    .craber-sc-think-chev{flex:none;display:flex;align-items:center;
+      width:24px;height:24px;transition:transform .16s ease}
+    .craber-sc-think-chev svg{width:24px;height:24px}
+    /* 收起时是 ⌄，展开后翻转成 ⌃ */
+    .craber-sc-think.open .craber-sc-think-chev{transform:rotate(90deg)}
+    .craber-sc-think-label{flex:none;font-weight:400;
+      font-variant-numeric:tabular-nums}
+    /* 思考中：标题文字用强调色 + 呼吸，明确"还在跑" */
+    .craber-sc-think-live .craber-sc-think-label{color:var(--sc-muted)}
+
+    .craber-sc-think-body{display:none;padding:0 12px 0 14px;
+      margin:10px 3px 10px 2px;border-left:3px solid #d9d9d9;
+      font-size:14px;line-height:1.55;color:var(--sc-muted);
+      white-space:pre-wrap;word-break:break-word;
+      max-height:302px;overflow-y:auto;scrollbar-width:auto;scrollbar-color:auto}
+    .craber-sc-think.open .craber-sc-think-body{display:block}
+    .craber-sc-think-body::-webkit-scrollbar{width:9px}
+    .craber-sc-think-body::-webkit-scrollbar-thumb{
+      background:var(--craber-line);border-radius:3px}
+    .craber-sc-err{font-size:12.5px;color:#d9483b;line-height:1.6;
+      background:color-mix(in srgb,#d9483b 10%,transparent);border-radius:8px;
+      padding:8px 11px;white-space:pre-wrap;word-break:break-word}
+    html[data-theme="dark"] .craber-sc-err{color:#ff8f82}
+
+    /* 助手消息的操作条：常隐，悬停整轮才显 */
+    .craber-sc-acts{display:flex;gap:2px;margin-top:4px;margin-left:-6px;opacity:0;
+      transition:opacity .12s ease}
+    .craber-sc-turn:hover .craber-sc-acts,
+    .craber-sc-acts:focus-within{opacity:1}
+    .craber-sc-act{height:26px;padding:0 8px;border:0;border-radius:7px;
+      background:transparent;color:var(--craber-sub);cursor:pointer;
+      display:inline-flex;align-items:center;gap:4px;font:inherit;font-size:11.5px;
+      transition:background-color .12s ease,color .12s ease}
+    .craber-sc-act:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-act svg{width:12px;height:12px}
+
+    /* 底部输入卡片：参考稿是浮在正文之上的半透明圆角卡（有模糊背景），
+       卡内只有「输入框 + 底部一行控件」，没有额外的提示行。 */
+    .craber-sc-composer{position:absolute;left:calc(var(--sc-gutter) - 1px);
+      right:calc(var(--sc-gutter) + 4px);bottom:33px;min-height:89px;
+      border:0;border-radius:15px;
+      background:color-mix(in srgb,var(--sc-surface) 80%,transparent);
+      -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+      box-shadow:0 4px 14px rgba(15,18,22,.10),0 1px 3px rgba(15,18,22,.06);overflow:hidden}
+    html[data-theme="dark"] .craber-sc-composer{
+      box-shadow:0 8px 22px rgba(0,0,0,.26),0 2px 5px rgba(0,0,0,.16)}
+    /* 上下文条：显示这次提问带了多少主对话内容 */
+    .craber-sc-ctx{display:none}
+    .craber-sc-ctx-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap;font-size:10.5px;color:var(--craber-sub)}
+    .craber-sc-ctx-btn{flex:none;height:22px;padding:0 8px;
+      border:1px solid color-mix(in srgb,var(--craber-fg) 10%,var(--craber-line));
+      border-radius:999px;background:transparent;color:var(--craber-sub);
+      font:inherit;font-size:10.5px;cursor:pointer;
+      transition:background-color .12s ease,color .12s ease,border-color .12s ease}
+    .craber-sc-ctx-btn:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-ctx-btn.on{
+      background:color-mix(in srgb,var(--craber-fg) 7%,transparent);
+      border-color:color-mix(in srgb,var(--craber-fg) 26%,var(--craber-line));
+      color:var(--craber-fg);font-weight:550}
+    .craber-sc-ctx-hidden{display:none}
+    /* 底部一行（参考稿）：九宫格 · 中间「模型 · 深度 ⌃」· 右侧发送箭头 */
+    .craber-sc-footrow{display:flex;align-items:center;gap:9px;
+      padding:0 18px 8px 19px;min-width:0;height:42px;box-sizing:border-box}
+    .craber-sc-footrow .craber-sc-modelbtn{order:0}
+    .craber-sc-footrow .craber-sc-send{order:1}
+    /* 左侧两个开关：设计稿里是「附件」「主会话」，图标 + 文字 */
+    .craber-sc-toolrow{display:flex;align-items:center;gap:6px;padding:2px 9px 4px}
+    .craber-sc-toolsbtn{flex:none;width:32px;height:32px;padding:4px;border:0;
+      border-radius:6px;background:transparent;color:var(--sc-ink);
+      cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+      transition:background-color .12s ease,color .12s ease}
+    .craber-sc-toolsbtn:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-toolsbtn svg{width:18px;height:18px}
+    .craber-sc-toolsbtn:focus-visible{outline:2px solid var(--craber-accent);
+      outline-offset:2px}
+    .craber-sc-tool{display:inline-flex;align-items:center;gap:5px;
+      height:26px;padding:0 9px;border-radius:999px;
+      border:1px solid color-mix(in srgb,var(--craber-fg) 10%,var(--craber-line));
+      background:transparent;color:var(--craber-sub);
+      font:inherit;font-size:10.5px;cursor:pointer;white-space:nowrap;
+      transition:background-color .12s ease,color .12s ease,border-color .12s ease}
+    .craber-sc-tool:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-tool svg{width:13px;height:13px;flex:none}
+    .craber-sc-tool.on{color:var(--craber-fg);font-weight:550;
+      border-color:color-mix(in srgb,var(--craber-fg) 22%,var(--craber-line))}
+    .craber-sc-tool:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
+    /* 模型名 + 深度合成一个按钮（参考稿里就是「deepseek-v4.1-flash · 高 ⌃」） */
+    .craber-sc-modelbtn{flex:0 1 auto;min-width:0;margin-left:auto;display:inline-flex;
+      align-items:center;justify-content:flex-end;gap:5px;
+      height:32px;padding:0;
+      border:0;border-radius:6px;background:transparent;color:var(--sc-ink);
+      font:inherit;font-size:13px;cursor:pointer;
+      transition:background-color .12s ease,color .12s ease}
+    .craber-sc-modelbtn > span{overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap;min-width:0}
+    .craber-sc-modelbtn .craber-sc-modelchev{flex:none;display:flex}
+    .craber-sc-modelbtn .craber-sc-modelchev svg{width:16px;height:16px}
+    .craber-sc-modelbtn:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-modelbtn.empty{color:var(--craber-accent)}
+    .craber-sc-modelbtn:hover{background:var(--craber-hover);color:var(--craber-fg)}
+    .craber-sc-modelbtn:focus-visible{outline:2px solid var(--craber-accent);
+      outline-offset:1px}
+    /* ===== 弹出菜单：照设计稿（白卡、圆角 16、蓝勾 #0D09FF、蓝开关 #42AAFF） ===== */
+    .craber-sc-popmenu{position:fixed;z-index:calc(var(--craber-z-modal) + 4);
+      --sc-surface:#fff;--sc-ink:#0d0d0d;--sc-muted:#858585;
+      --sc-track:#dcdcdc;--sc-hover:#f4f4f4;
+      box-sizing:border-box;padding:4px 5px;
+      font-family:system-ui,"Segoe UI",Arial,"Microsoft YaHei",sans-serif;letter-spacing:0;
+      background:var(--sc-surface);color:var(--sc-ink);border:0;
+      border-radius:16px;
+      box-shadow:0 0 5px 1px rgba(0,0,0,.35);
+      max-height:calc(100dvh - 16px);overflow-y:auto;scrollbar-width:thin;
+      opacity:0;visibility:hidden;transform:translateY(7px) scale(.965);
+      transform-origin:var(--sc-pop-origin,50% 100%);pointer-events:none;
+      will-change:opacity,transform;
+      transition:opacity .12s ease,transform .16s cubic-bezier(.4,0,.2,1),visibility 0s linear .16s}
+    .craber-sc-popmenu.craber-open{opacity:1;visibility:visible;transform:translateY(0) scale(1);
+      pointer-events:auto;transition:opacity .16s ease,transform .2s cubic-bezier(.18,.82,.22,1),visibility 0s}
+    .craber-sc-popmenu.craber-closing{opacity:0;visibility:visible;transform:translateY(5px) scale(.97);
+      pointer-events:none;transition:opacity .11s ease,transform .13s cubic-bezier(.4,0,1,1),visibility 0s}
+    @media (prefers-reduced-motion:reduce){
+      .craber-sc-popmenu,.craber-sc-popmenu.craber-open,.craber-sc-popmenu.craber-closing{
+        transition:none;transform:none}
+    }
+    html[data-theme="dark"] .craber-sc-popmenu{
+      --sc-surface:#2b2b2b;--sc-ink:#ececec;--sc-muted:#a0a0a0;
+      --sc-track:#484848;--sc-hover:#383838;
+      box-shadow:0 0 5px 1px rgba(0,0,0,.6)}
+    .craber-sc-popitem{display:flex;align-items:center;gap:9px;width:100%;min-width:0;
+      box-sizing:border-box;height:31px;padding:0 5px;border:0;border-radius:8px;
+      background:transparent;color:var(--sc-ink);font:inherit;font-size:18px;
+      text-align:left;cursor:pointer;
+      transition:background-color .1s ease}
+    .craber-sc-popitem:hover{background:var(--sc-hover)}
+    .craber-sc-popitem:focus-visible{outline:2px solid #42aaff;outline-offset:-2px}
+    html[data-theme="dark"] .craber-sc-popitem:hover{background:#34373d}
+    .craber-sc-popitem > span{min-width:0;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap}
+    /* 勾选：设计稿是亮蓝的对勾，不是绿色 */
+    .craber-sc-popitem .craber-sc-tick{flex:none;margin-left:auto;display:none;
+      color:#0D09FF}
+    html[data-theme="dark"] .craber-sc-popitem .craber-sc-tick{color:#7b8cff}
+    .craber-sc-popitem.on .craber-sc-tick{display:flex}
+    .craber-sc-tick svg{width:24px;height:24px}
+    /* 工具菜单：宽一点的卡片，两行图标条目 */
+    .craber-sc-toolmenu{width:158px;padding:4px 5px 5px;overflow:visible}
+    .craber-sc-toolitem{gap:7px;font-size:14px}
+    .craber-sc-toolitem-ic{flex:none;display:flex;color:var(--sc-ink)}
+    .craber-sc-toolitem-ic svg{width:18px;height:18px}
+    .craber-sc-mainitem[aria-expanded="true"]{background:var(--sc-hover)}
+    .craber-sc-mainitem:disabled{opacity:.55;cursor:default}
+    .craber-sc-toolchev{flex:none;display:flex;margin-left:auto;color:var(--sc-muted)}
+    .craber-sc-mainitem.on .craber-sc-toolchev{color:var(--craber-accent)}
+    .craber-sc-toolchev svg,.craber-sc-scopemenu .craber-sc-tick svg{width:16px;height:16px}
+    .craber-sc-scopemenu{width:204px;font-size:14px;padding:5px}
+    .craber-sc-scopemenu .craber-sc-popitem{font-size:14px;height:34px;padding-inline:8px}
+    .craber-sc-scopemenu [role="menuitemcheckbox"]{font-weight:600}
+    .craber-sc-scopemenu .craber-sc-scope-switch{flex:none;margin-left:auto;position:relative;
+      width:30px;height:18px;border-radius:999px;background:var(--sc-track)}
+    .craber-sc-scope-switch::before{content:"";position:absolute;top:3px;left:3px;
+      width:12px;height:12px;border-radius:50%;background:#fff;
+      box-shadow:0 1px 2px rgba(0,0,0,.25)}
+    .craber-sc-scopemenu [aria-checked="true"] .craber-sc-scope-switch{background:#42aaff}
+    .craber-sc-scopemenu [aria-checked="true"] .craber-sc-scope-switch::before{transform:translateX(12px)}
+    .craber-sc-scope-group{margin-top:4px;padding-top:4px;
+      border-top:1px solid color-mix(in srgb,var(--sc-ink) 10%,var(--sc-surface))}
+    .craber-sc-scope-label{padding:3px 8px 2px;color:var(--sc-muted);font-size:12px;line-height:18px}
+    /* 档位：只有「当前轮 / 整个对话」两档，沿用设计稿的蓝色选中态 */
+    .craber-sc-modechips{display:flex;gap:6px;padding:4px 8px 6px}
+    .craber-sc-modechip{flex:1;height:28px;border-radius:9px;
+      border:1px solid #e6e7eb;background:#fff;color:#6b7280;
+      font:inherit;font-size:12px;cursor:pointer;
+      transition:background-color .12s ease,color .12s ease,border-color .12s ease}
+    .craber-sc-modechip:hover{background:#f4f5f7;color:var(--craber-fg)}
+    .craber-sc-modechip.on{color:#0D09FF;font-weight:600;
+      border-color:#b9c1ff;background:#f2f4ff}
+    html[data-theme="dark"] .craber-sc-modechip{
+      background:#2b2d31;border-color:#3a3d43;color:#9aa0a8}
+    html[data-theme="dark"] .craber-sc-modechip:hover{background:#34373d;color:#e8eaed}
+    html[data-theme="dark"] .craber-sc-modechip.on{
+      color:#9aa8ff;border-color:#4a56a8;background:#333a5e}
+    /* 模型菜单：模型列表 + 底部宽胶囊开关 */
+    .craber-sc-modelmenu{width:187px;padding:14px 10px 11px;
+      box-shadow:0 4px 14px rgba(0,0,0,.12),0 0 0 1px rgba(0,0,0,.05)}
+    html[data-theme="dark"] .craber-sc-modelmenu{
+      box-shadow:0 4px 14px rgba(0,0,0,.28),0 0 0 1px rgba(255,255,255,.08)}
+    .craber-sc-poplist{max-height:min(248px,45dvh);overflow-y:auto;scrollbar-width:thin}
+    .craber-sc-modelitem{font-size:14px;height:29px;padding:0 3px;gap:2px}
+    .craber-sc-modelitem .craber-sc-modelname{flex:1;text-overflow:clip}
+    .craber-sc-modelname-text{display:inline-block;transition:transform .18s ease-out}
+    .craber-sc-modelitem:is(:hover,:focus-visible) .craber-sc-modelname-text{
+      transform:translateX(var(--sc-name-offset,0px));
+      transition:transform var(--sc-name-duration,0ms) linear .25s}
+    @media (prefers-reduced-motion:reduce){
+      .craber-sc-modelitem .craber-sc-modelname-text,
+      .craber-sc-modelitem:is(:hover,:focus-visible) .craber-sc-modelname-text{transition:none}}
+    .craber-sc-modelitem .craber-sc-tick{display:flex;visibility:hidden;width:16px}
+    .craber-sc-modelitem .craber-sc-tick svg{width:16px;height:16px}
+    .craber-sc-modelitem.on .craber-sc-tick{visibility:visible}
+    .craber-sc-modelfetch{width:100%;height:27px;border:0;background:transparent;
+      color:var(--sc-muted);font:inherit;font-size:12px;cursor:pointer;border-radius:6px}
+    .craber-sc-popempty{padding:10px 12px;font-size:12px;
+      color:var(--craber-sub);line-height:1.5}
+    /* 开关：设计稿里几乎占满整个菜单宽度 */
+    .craber-sc-switchrow{padding:9px 0 0 3px}
+    .craber-sc-depth{display:block;appearance:none;-webkit-appearance:none;
+      --sc-depth-thumb-size:30px;--sc-depth-dot-filled:rgba(255,255,255,.48);
+      --sc-depth-dot-empty:color-mix(in srgb,var(--sc-ink) 28%,transparent);
+      width:100%;height:var(--sc-depth-thumb-size);margin:0;padding:0;border:0;border-radius:999px;
+      background:var(--sc-depth-dots,none),
+        linear-gradient(to right,#42aaff 0 var(--sc-depth-fill),var(--sc-track) var(--sc-depth-fill) 100%);
+      background-repeat:no-repeat;
+      cursor:pointer}
+    .craber-sc-depth::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;
+      width:var(--sc-depth-thumb-size);height:var(--sc-depth-thumb-size);border:0;border-radius:50%;background:#fff;
+      box-shadow:0 0 1px rgba(0,0,0,.15)}
+    .craber-sc-depth::-moz-range-thumb{width:var(--sc-depth-thumb-size);height:var(--sc-depth-thumb-size);border:0;border-radius:50%;
+      background:#fff;box-shadow:0 0 1px rgba(0,0,0,.15)}
+    .craber-sc-depth:focus-visible{outline:2px solid #0d09ff;outline-offset:3px}
+    /* 输入区：一个圆角容器包住输入框与发送键（更像主流聊天软件） */
+    .craber-sc-in{padding:0;display:flex;flex-direction:column}
+    .craber-sc-box{position:relative;display:flex;align-items:flex-end;
+      border:0;background:transparent}
+    .craber-sc-box:focus-within{background:transparent}
+    .craber-sc-ta{flex:1;min-width:0;width:auto;box-sizing:border-box;
+      height:47px;min-height:47px;max-height:190px;resize:none;
+      padding:12px 18px 7px;border:0;border-radius:0;
+      background:transparent;color:var(--sc-ink);
+      font:inherit;font-size:15px;line-height:23px;outline:none;box-shadow:none}
+
+    .craber-sc-ta::placeholder{color:var(--craber-sub);opacity:.78}
+    /* 禁用态（未配置模型）：加虚线边框，一眼看出"这里还不能写"，
+       比单纯降透明度明确 —— 只降透明度时它看起来只是"似乎能写"。 */
+    .craber-sc-box:has(.craber-sc-ta:disabled){background:transparent}
+    .craber-sc-ta:disabled{opacity:.85;cursor:not-allowed}
+    .craber-sc-ta:disabled::placeholder{opacity:.9}
+    /* 输入区底部一行：左边提示文字，右边发送按钮。
+       要点：给行一个最小高度并让子项都垂直居中 —— 之前 hint 内容为空时
+       高度塌成 0，按钮与文字各自按基线排，看起来像"按钮掉到了下一行"
+       （实测 top 相差 15px）。 */
+    /* 参考稿没有键盘提示行，这里只保留给读屏用的隐藏文本 */
+    .craber-sc-row{display:none}
+    .craber-sc-hint{flex:1 1 0;min-width:0;font-size:11px;line-height:16px;
+      color:var(--craber-sub);overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap}
+    /* 发送键现在在底部一行里，和模型信息并排，不再压在输入框里 */
+    /* 参考稿里发送键就是一个细线箭头，没有底色块 */
+    .craber-sc-send{flex:none;width:32px;height:32px;padding:4px;border:0;border-radius:6px;
+      background:transparent;color:var(--sc-ink);
+      font:inherit;cursor:pointer;
+      display:inline-flex;align-items:center;justify-content:center;
+      transition:background-color .12s ease,opacity .12s ease,transform .1s ease}
+    .craber-sc-send:hover{background:var(--craber-hover)}
+    .craber-sc-send:active{transform:scale(.96)}
+    .craber-sc-send:focus-visible{outline:2px solid var(--craber-accent);
+      outline-offset:2px}
+    /* 禁用态：未配置模型时不该看起来还能点。opacity 会让绿色仍是"主按钮"
+       的观感，改成灰底灰字才明确表示"现在不能用"。
+       注意 :hover 要在 disabled 之前声明，否则被灰底覆盖不掉。 */
+    .craber-sc-send:disabled,.craber-sc-send:disabled:hover{
+      background:var(--craber-ghost);color:var(--craber-sub);
+      opacity:.75;cursor:default}
+    .craber-sc-send svg{width:18px;height:18px}
+    .craber-sc-send.craber-sc-stop{background:var(--craber-fg);color:var(--craber-bg)}
+    .craber-sc-send.craber-sc-stop:hover{background:var(--craber-fg);opacity:.86}
+
+    .craber-sc-attachments{display:flex;gap:8px;overflow-x:auto;padding:12px 16px 0}
+    .craber-sc-attachments:empty{display:none}
+    .craber-sc-file{position:relative;flex:none;display:flex;align-items:center;gap:8px;
+      max-width:180px;height:48px;padding:6px 28px 6px 8px;box-sizing:border-box;
+      border:1px solid var(--craber-line);border-radius:8px;background:var(--sc-surface);
+      font-size:12px;line-height:16px;white-space:normal}
+    .craber-sc-file img{width:34px;height:34px;object-fit:cover;border-radius:4px}
+    .craber-sc-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .craber-sc-file button{position:absolute;right:3px;top:3px;width:20px;height:20px;
+      padding:2px;border:0;border-radius:4px;background:transparent;color:var(--sc-muted);cursor:pointer}
+    .craber-sc-file button svg{width:16px;height:16px}
+    .craber-sc-qfiles{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+    .craber-sc-qfiles img{max-width:160px;max-height:120px;border-radius:8px;object-fit:contain}
+    .craber-sc-qfiles span{font-size:13px;line-height:20px}
+    .craber-sc-status{font-size:12px;line-height:18px;color:#d9483b;padding:0 18px}
+    .craber-sc-status:empty{display:none}
+    @container (max-width:380px){
+      .craber-sc-body{--sc-gutter:18px;margin-right:8px}
+      .craber-sc-composer{--sc-gutter:18px}
+      .craber-sc-footrow{padding-left:12px;padding-right:12px;gap:4px}
+    }
+    @media (hover:none){.craber-sc-hd{opacity:1}.craber-sc-acts{opacity:1}
+      .craber-sc-qcopy{opacity:1;pointer-events:auto;transform:translateY(-50%) scale(1)}}
+    /* 选中文字时浮出的小按钮：点了带上选区开侧栏 */
+    .craber-sc-sel{position:fixed;z-index:var(--craber-z-tip);
+      display:none;align-items:center;gap:5px;height:30px;padding:0 11px;
+      border:1px solid var(--craber-line);border-radius:8px;
+      background:var(--craber-bg);color:var(--craber-fg);
+      box-shadow:0 6px 20px rgba(0,0,0,.18);cursor:pointer;
+      font:inherit;font-family:system-ui,sans-serif;font-size:12.5px;font-weight:500;
+      opacity:0;transform:translateY(3px);
+      transition:opacity .12s ease,transform .12s ease,background-color .12s ease}
+    .craber-sc-sel.show{display:inline-flex;opacity:1;transform:none}
+    .craber-sc-sel:hover{background:var(--craber-hover)}
+    .craber-sc-sel svg{width:14px;height:14px;color:var(--craber-accent)}
+
+    /* 设置页脚注：解释功能边界的一段说明文字 */
+    .craber-set-tip{margin-top:12px;padding:11px 13px;border-radius:10px;
+      background:color-mix(in srgb,var(--craber-hover) 55%,var(--craber-bg));
+      border:1px solid var(--craber-line);
+      font-size:12px;line-height:1.7;color:var(--craber-sub)}
+    .craber-set-tip b{color:var(--craber-fg);font-weight:600}
   `;
   document.head.appendChild(style);
 
@@ -4079,6 +4829,7 @@
   let navCardEl = null;
   let navCardRefs = null;    // 卡片内部节点引用：只改文字，不每次 hover 重建 innerHTML
   let navCardTurnIdx = -1;
+  let navCardPanelItem = null; // 当前或待显示卡片所属的全量列表行
   let navCardHideTimer = 0;
   let navCardShowTimer = 0;
   let navCardX = 0;          // 卡片当前落点，用来算相邻两次 hover 的位移距离
@@ -4117,9 +4868,10 @@
   const NAV_HUNT_ROUND_IDLE = 9000;    // 单轮"毫无动静"多久算失败
   const NAV_HUNT_ROUND_MAX = 25000;    // 单轮硬上限，防止某一批卡死
   const NAV_HUNT_BUDGET = 60000;       // 整次跳转的总预算
-  const NAV_HUNT_MAX_HOPS = 10;        // 插值逼近的最大次数
+  const NAV_HUNT_MAX_HOPS = 64;        // 虚拟列表推进上限，同时受总时间预算约束
   let navHuntSeq = 0;                  // 跳转世代号：后发的跳转作废先发的
   let navHunting = false;              // 逼顶期间挂起滚动联动，否则 active 会一路乱跳
+  const navScrollLocks = new WeakMap(); // 连续点击共享 auto 状态，最后一个任务退出时才还原
 
   // 取轨道应该贴住的左边缘。
   // 不能只看 main.left —— 侧栏展开时它是浮层盖在 main 上（实测侧栏内容宽 252px，
@@ -4184,6 +4936,7 @@
       navCardEl.classList.remove('swap');   // 下次显示要能重放淡入动画
     }
     navCardTurnIdx = -1;
+    navCardPanelItem = null;
   }
 
   // 移出轨道后延迟收起：鼠标可能正移向卡片（卡片 mouseenter 会取消这个定时器）。
@@ -4255,10 +5008,24 @@
 
     navCardEl.addEventListener('mouseenter', () => clearTimeout(navCardHideTimer));
     navCardEl.addEventListener('mouseleave', scheduleHideNavCard);
+    navCardEl.addEventListener('focusin', () => clearTimeout(navCardHideTimer));
+    navCardEl.addEventListener('focusout', (e) => {
+      if (!navCardEl.contains(e.relatedTarget)) scheduleHideNavCard();
+    });
+    navCardEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !navCardPanelItem) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const item = navCardPanelItem;
+      item.focus();
+      hideNavCard();
+    });
     navCardEl.addEventListener('click', (e) => {
       // 大纲条目自己处理跳转，别让它顺带把整个回合再跳一次
       if (e.target && e.target.closest && e.target.closest('.craber-nav-ol-item')) return;
-      if (navCardTurnIdx >= 0) navigateToTurn(navCardTurnIdx);
+      const idx = navCardTurnIdx;
+      if (navCardPanelItem) hideNavPanel();
+      if (idx >= 0) navigateToTurn(idx);
     });
     // 滚动联动：ChatGPT 的滚动容器是 main 内部的 div，window 上收不到 scroll，
     // 所以在 document 捕获阶段监听（passive，不阻塞滚动）。
@@ -4520,24 +5287,19 @@
     hideNavPanel();
     const turn = state.turns && state.turns[idx];
     if (!turn || !heading) return;
-    /* 关键：先自己把回合滚出来，但**不闪**。原来直接调 navigateToTurn，
-     * 它会顺手给整个回合闪一次高亮，紧接着又滚到小节再闪一次 —— 两次反馈
-     * 叠在一起，看起来像"先跳回合、再跳到小节"。这里只要它负责把内容
-     * 拉进来，高亮留给最后一步。 */
-    const qid = turn.question && turn.question.message && turn.question.message.id;
-    const already = qid ? findMsgEl(qid) : null;
-    if (already) {
-      const sc0 = getScrollContainer();
-      await alignToEl(sc0, already);
-    } else {
-      await navigateToTurn(idx);
-    }
+    // 回合与小节共用同一条定位流程，高亮留给最终标题。
+    const convId = getConvId();
+    const locating = navigateToTurn(idx, { silent: true });
+    const seq = navHuntSeq;
+    const current = () => seq === navHuntSeq && convId === getConvId();
+    if (!(await locating) || !current()) return;
     /* 回合刚挂载时正文可能还没渲染完（React 分两步：先挂容器再填内容），
      * 立刻查标题会扑空。给几轮重试，每轮 120ms —— 总等待上限 1.2s，
      * 比"直接放弃、只停在回合开头"有用得多。 */
     let target = craberFindHeadingEl(turn, heading);
     for (let i = 0; i < 10 && !target; i++) {
       await navSleep(120);
+      if (!current()) return;
       target = craberFindHeadingEl(turn, heading);
     }
     if (!target) {
@@ -4545,7 +5307,7 @@
       return;
     }
     const sc = getScrollContainer();
-    await alignToEl(sc, target);
+    if (!(await alignToEl(sc, target, current)) || !current()) return;
     // 正文里的标题只用淡底色；气泡式的扩散光圈套在文字上像选中框
     flashInline(target);
   }
@@ -4584,7 +5346,7 @@
     }
   }
 
-  // 悬浮/聚焦节点时，在轨道右侧弹出该回合的卡片。
+  // 悬浮/聚焦节点时，在轨道或全量列表旁弹出该回合的卡片。
   // 卡片结构在 mountNavRail 里建好一次，这里只改文字 —— 原来每次 hover 都重建
   // innerHTML，扫过轨道就是几十次解析 + 重排。
   // 位置必须在取消 hidden 之前算好：卡片带位移过渡，首帧若停在未设值的
@@ -4592,13 +5354,19 @@
   function showNavCard(bar, idx, turn) {
     clearTimeout(navCardHideTimer);
     clearTimeout(navCardShowTimer);
+    if (!bar.isConnected || !navCardEl) return;
+    const fromPanel = !!(navPanelEl && navPanelEl.contains(bar));
+    if (fromPanel && navPanelEl.hidden) return;
+    const changedSource = navCardEl.classList.contains('from-panel') !== fromPanel;
+    navCardPanelItem = fromPanel ? bar : null;
+    navCardEl.classList.toggle('from-panel', fromPanel);
     const reTarget = !navCardEl.hidden && idx !== navCardTurnIdx;
     navCardTurnIdx = idx;
     navCardRefs.title.textContent = (extractText(turn.question) || '(无文字提问)').slice(0, 90);
     navCardRefs.preview.textContent = turnPreview(turn).slice(0, 180);
     navCardRefs.num.textContent = '#' + (idx + 1);
     paintNavCardOutline(idx, turn);
-    const firstShow = navCardEl.hidden;
+    const firstShow = navCardEl.hidden || changedSource;
     if (firstShow) {
       // 先隐形挂上量尺寸，定好位再显形，首帧就不会有滑动。
       navCardEl.classList.remove('swap');
@@ -4606,12 +5374,14 @@
       navCardEl.style.visibility = 'hidden';
       navCardEl.hidden = false;
     }
-    const railRect = navRailEl.getBoundingClientRect();
+    const anchorRect = (fromPanel ? navPanelEl : navRailEl).getBoundingClientRect();
     const barRect = bar.getBoundingClientRect();
     const cardW = navCardEl.offsetWidth;
     const cardH = navCardEl.offsetHeight;
-    // 优先贴轨道右侧；放不下就尽量贴右但不超出视口。垂直对齐当前横条并夹在视口内。
-    const x = Math.max(8, Math.min(railRect.right + 6, window.innerWidth - cardW - 8));
+    // 列表卡片优先向右展开，右侧不足时翻到左侧；垂直对齐当前节点。
+    let preferredX = anchorRect.right + 6;
+    if (fromPanel && preferredX + cardW > window.innerWidth - 8) preferredX = anchorRect.left - cardW - 6;
+    const x = Math.max(8, Math.min(preferredX, window.innerWidth - cardW - 8));
     const y = Math.max(8, Math.min(barRect.top + barRect.height / 2 - cardH / 2,
       window.innerHeight - cardH - 8));
     const dist = firstShow ? 0 : Math.hypot(x - navCardX, y - navCardY);
@@ -4634,6 +5404,7 @@
   // 隐藏全量节点搜索面板
   function hideNavPanel() {
     clearTimeout(navPanelHideTimer);
+    if (navCardPanelItem) hideNavCard();
     if (navPanelEl) navPanelEl.hidden = true;
     navPanelTriggerBtn = null;
   }
@@ -4730,9 +5501,21 @@
       }
       // 阻止面板内的滚轮事件冒泡，避免滚动列表时带动整个页面滚动
       navPanelEl.addEventListener('wheel', (e) => e.stopPropagation(), { passive: false });
+      navPanelEl.querySelector('.craber-nav-panel-list').addEventListener('scroll', () => {
+        if (navCardPanelItem) hideNavCard();
+      }, { passive: true });
+      navPanelEl.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        const trigger = navPanelTriggerBtn;
+        hideNavPanel();
+        if (trigger) trigger.focus();
+      });
       // 点击面板外部时自动关闭
       document.addEventListener('pointerdown', (e) => {
         if (!navPanelEl || navPanelEl.hidden) return;
+        if (navCardPanelItem && navCardEl && navCardEl.contains(e.target)) return;
         if (!navPanelEl.contains(e.target) && (!navMoreTopBtnEl || !navMoreTopBtnEl.contains(e.target)) && (!navMoreBottomBtnEl || !navMoreBottomBtnEl.contains(e.target))) {
           hideNavPanel();
         }
@@ -4755,13 +5538,12 @@
     setTimeout(() => { if (input) input.focus(); }, 40);
   }
 
-  /* 根据搜索关键字渲染面板条目列表。
-   * 二级节点一律展开显示 —— 面板本来就是个"全部节点"列表，
-   * 再套一层"点这里展开"只是多一次点击，反而把内容藏起来了。 */
+  // 列表保留回合标题和小节数；悬停或聚焦后，在独立卡片中查看摘要与大纲。
   function renderNavPanelItems(kw) {
     if (!navPanelEl) return;
     const listEl = navPanelEl.querySelector('.craber-nav-panel-list');
     if (!listEl) return;
+    if (navCardPanelItem) hideNavCard();
     const kwLower = kw ? kw.toLowerCase() : '';
     const turns = state.turns || [];
     let html = '';
@@ -4783,51 +5565,46 @@
       matchCount++;
       const isAct = i === navActiveIdx;
       html +=
-        '<div class="craber-nav-panel-item' + (isAct ? ' active' : '') + (outline.length ? ' open' : '')
+        '<button type="button" class="craber-nav-panel-item' + (isAct ? ' active' : '')
           + '" data-idx="' + i + '">' +
-          '<div class="craber-nav-panel-item-hd">' +
+          '<span class="craber-nav-panel-item-hd">' +
             '<span class="craber-nav-panel-item-num">' + numStr + '</span>' +
-            '<div class="craber-nav-panel-item-title">' + escapeHtml(title) + '</div>' +
+            '<span class="craber-nav-panel-item-title">' + escapeHtml(title) + '</span>' +
             (outline.length
               ? '<span class="craber-nav-panel-item-sec">' + outline.length + ' 节</span>'
               : '') +
-          '</div>' +
-          // 有二级节点时不再显示摘要：内容已经由下面的小标题说明了
-          (preview && !outline.length
-            ? '<div class="craber-nav-panel-item-preview">' + escapeHtml(preview) + '</div>'
-            : '') +
-          (outline.length ? '<div class="craber-nav-panel-outline">' + outline.map((h, j) =>
-            '<div class="craber-nav-panel-sub" data-idx="' + i + '" data-h="' + j + '"'
-            + ' title="' + escapeHtml(h.text).replace(/&quot;/g, '&#34;') + '"'
-            + ' style="padding-left:' + (6 + Math.min(3, h.level - 1) * 12) + 'px">'
-            + '<span class="craber-nav-ol-t">' + escapeHtml(h.text) + '</span>'
-            + '</div>').join('') + '</div>' : '') +
-        '</div>';
+          '</span>' +
+        '</button>';
     }
     if (!matchCount) {
       html = '<div class="craber-nav-panel-empty">未找到匹配节点</div>';
     }
     listEl.innerHTML = html;
 
-    // 点大纲条目：落到那一节
-    listEl.querySelectorAll('.craber-nav-panel-sub').forEach((sub) => {
-      sub.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const idx = +sub.dataset.idx;
-        const j = +sub.dataset.h;
-        const turn = state.turns && state.turns[idx];
-        const heading = turn ? craberTurnOutline(turn)[j] : null;
-        if (heading) navigateToSection(idx, heading);
-        else navToast('这一节已失效，试试刷新会话');
-      });
-    });
-
-    // 点回合本身跳转
+    // 悬停卡片可直接移入并点击大纲；点列表行则跳到该回合。
     listEl.querySelectorAll('.craber-nav-panel-item').forEach((item) => {
-      item.addEventListener('click', (e) => {
-        if (e.target && e.target.closest && e.target.closest('.craber-nav-panel-outline')) return;
-        const idx = +item.dataset.idx;
+      const idx = +item.dataset.idx;
+      const show = () => {
+        const turn = state.turns && state.turns[idx];
+        if (turn) showNavCard(item, idx, turn);
+      };
+      item.addEventListener('mouseenter', () => {
+        clearTimeout(navCardHideTimer);
+        clearTimeout(navCardShowTimer);
+        navCardPanelItem = item;
+        if (navCardEl.hidden) navCardShowTimer = setTimeout(show, 90);
+        else show();
+      });
+      item.addEventListener('mouseleave', scheduleHideNavCard);
+      item.addEventListener('focus', show);
+      item.addEventListener('blur', scheduleHideNavCard);
+      item.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight') return;
+        show();
+        const heading = navCardEl.querySelector('.craber-nav-ol-item');
+        if (heading) { e.preventDefault(); heading.focus(); }
+      });
+      item.addEventListener('click', () => {
         hideNavPanel();
         navigateToTurn(idx);
       });
@@ -4856,14 +5633,12 @@
   function findMsgEl(id) {
     const pick = (sel) => {
       const list = document.querySelectorAll(sel);
-      let fallback = null;
       for (let i = 0; i < list.length; i++) {
         const el = list[i];
         // 宽度和高度都大于 0 才是真正渲染出来的节点
         if (el.offsetWidth > 0 && el.offsetHeight > 0) return el;
-        if (!fallback) fallback = el;
       }
-      return fallback;
+      return null;
     };
     return pick('[data-turn-key="' + id + '"]') ||
       pick('[data-message-id="' + id + '"]');
@@ -4880,7 +5655,7 @@
       if (!key || seen[key]) return;
       if (!el.querySelector('[data-user-message-bubble],[data-message-author-role="user"]')) return;
       // 零尺寸的是虚拟化占位符，不含可滚动到的真实位置
-      if (!el.offsetWidth && !el.offsetHeight) return;
+      if (!el.offsetWidth || !el.offsetHeight) return;
       seen[key] = 1;
       out.push(el);
     });
@@ -4909,7 +5684,7 @@
   function navScrollMetrics(sc) {
     const isRoot = sc === document.scrollingElement || sc === document.documentElement;
     if (isRoot) {
-      return { isRoot: true, reversed: false, base: 0, pos: window.scrollY, span: 0 };
+      return { isRoot: true, reversed: false, base: 0, pos: window.scrollY, span: scrollSpan(sc) };
     }
     const reversed = isReversedScroller(sc);
     const span = scrollSpan(sc);
@@ -4958,16 +5733,17 @@
   // ChatGPT 顶部哨兵是 IntersectionObserver 驱动的，只在相交状态跳变时回调 ——
   // 对已经是 0 的 scrollTop 再写一次 0 不产生任何事件，那一批就永远不会来。
   // 所以必须先离开顶部再回来，制造一次真正的"进入视口"。
-  async function kickScrollTop(sc) {
+  async function kickScrollTop(sc, current) {
     navScrollTo(sc, Math.max(sc.clientHeight, 600));
     await navSleep(120);
+    if (!current()) return;
     navScrollTo(sc, 0);
   }
 
   // 等一批更旧的内容前置进来。唯一可信的进度信号是"最旧下标变小"：
   // scrollHeight 几百像素的小幅增长多半只是图片/公式排完版，不代表拉到了新批次。
   // 高度变化只用来续命（说明还在忙），不当成功判定。
-  function waitOlderMounted(sc, msgId, oldest, seq) {
+  function waitOlderMounted(sc, msgId, oldest, current) {
     return new Promise((resolve) => {
       const t0 = performance.now();
       let last = t0;
@@ -4975,7 +5751,7 @@
       const timer = setInterval(() => {
         const now = performance.now();
         const done = (ok) => { clearInterval(timer); resolve(ok); };
-        if (seq !== navHuntSeq) return done(false);
+        if (!current()) return done(false);
         if (findMsgEl(msgId)) return done(true);
         const cur = oldestMountedIdx();
         if (cur >= 0 && cur < oldest) return done(true);
@@ -4985,11 +5761,12 @@
     });
   }
 
-  function waitMounted(msgId, timeout, seq) {
+  function waitMounted(msgId, timeout, current, before) {
     return new Promise((resolve) => {
       const t0 = performance.now();
       const timer = setInterval(() => {
-        if (seq !== navHuntSeq || findMsgEl(msgId) || performance.now() - t0 > timeout) {
+        const changed = before !== mountedUserTurns().map(getTurnKey).join('|');
+        if (!current() || findMsgEl(msgId) || changed || performance.now() - t0 > timeout) {
           clearInterval(timer);
           resolve();
         }
@@ -5014,14 +5791,18 @@
       const at = navIdxById[getTurnKey(els[i])];
       if (at === undefined) continue;
       const top = contentTopOf(sc, els[i]);
-      if (at <= idx && (!lo || at > lo.at)) lo = { at: at, top: top };
+      const bottom = top + els[i].getBoundingClientRect().height;
+      if (at <= idx && (!lo || at > lo.at)) lo = { at: at, top: top, bottom: bottom };
       if (at >= idx && (!hi || at < hi.at)) hi = { at: at, top: top };
     }
     let guess;
     if (lo && hi && hi.at !== lo.at) {
       guess = lo.top + (hi.top - lo.top) * ((idx - lo.at) / (hi.at - lo.at));
     } else if (lo) {
-      guess = lo.top + (idx - lo.at) * sc.clientHeight * 0.8;
+      // 单个长回复可能占很多屏。必须越过已挂载回合的底边，
+      // 按下标乘一屏会一直落在同一回复内部，虚拟列表永远不挂载下一回合。
+      guess = Math.max(lo.bottom + sc.clientHeight * 0.3,
+        navScrollMetrics(sc).pos + sc.clientHeight * 1.1);
     } else if (hi) {
       guess = hi.top - (hi.at - idx) * sc.clientHeight * 0.8;
     } else {
@@ -5031,6 +5812,22 @@
     return true;
   }
 
+  function navLockScroll(sc) {
+    let lock = navScrollLocks.get(sc);
+    if (!lock) {
+      lock = { count: 0, behavior: sc.style.scrollBehavior };
+      navScrollLocks.set(sc, lock);
+      sc.style.scrollBehavior = 'auto';
+    }
+    lock.count++;
+    return () => {
+      if (--lock.count === 0) {
+        sc.style.scrollBehavior = lock.behavior;
+        navScrollLocks.delete(sc);
+      }
+    };
+  }
+
   // 落点校正 + 到位高亮。目标刚挂载时正文还没排完版，加上前置内容触发的
   // scroll anchoring，一次算出来的 scrollTop 能差一整屏 —— 反复量到落点稳定为止。
   // 校正期间强制 auto：容器若带 scroll-behavior:smooth，写 scrollTop 会起一段动画，
@@ -5038,12 +5835,11 @@
   /* 把某个元素顶到 NAV_SCROLL_OFFSET 处，反复校正到真正停稳。
    * 一律 instant（写 scrollTop，不用 smooth）：调用方要么已经在平滑滚，
    * 要么是"点了就该立刻到"的跳转 —— 再叠一层动画反而像在敷衍。 */
-  async function alignToEl(sc, el) {
-    const prev = sc.style.scrollBehavior;
-    sc.style.scrollBehavior = 'auto';
+  async function alignToEl(sc, el, current = () => true) {
+    const unlock = navLockScroll(sc);
     try {
       for (let i = 0; i < 6; i++) {
-        if (!el || !el.isConnected) return false;
+        if (!current() || !el || !el.isConnected || !el.offsetWidth || !el.offsetHeight) return false;
         const delta = contentTopOf(sc, el) - NAV_SCROLL_OFFSET;
         const m = navScrollMetrics(sc);
         // 目标会被 navScrollTo 夹在 [0, span] 内，比较时也得先夹一下 ——
@@ -5055,17 +5851,20 @@
         await navSleep(110);
       }
     } finally {
-      sc.style.scrollBehavior = prev;
+      unlock();
     }
-    return true;
+    if (!current() || !el.isConnected || !el.offsetWidth || !el.offsetHeight) return false;
+    const m = navScrollMetrics(sc);
+    const want = Math.max(0, Math.min(m.span, Math.round(contentTopOf(sc, el) - NAV_SCROLL_OFFSET)));
+    return Math.abs(want - m.pos) < 4;
   }
 
   // opts.silent：只落位、不闪 —— 跳小节时由落点校正那一步统一给反馈
-  async function settleOnMessage(msgId, opts) {
+  async function settleOnMessage(msgId, opts, current) {
     const sc = getScrollContainer();
     const el = findMsgEl(msgId);
     if (!el) return false;
-    if (!(await alignToEl(sc, el))) return false;
+    if (!(await alignToEl(sc, el, current))) return false;
     if (!(opts && opts.silent) && el) flashMessage(el);
     return true;
   }
@@ -5074,55 +5873,54 @@
   // 只能逼近顶部让哨兵触发下一批再等。两种情况必须分开，否则会白发请求：
   //   目标比已加载范围更旧 → 逼顶 + 等前置，循环推进；
   //   目标在已加载范围内（只是被卸载）→ 邻居插值，纯几何逼近，不碰接口。
-  async function navigateToTurn(idx) {
+  async function navigateToTurn(idx, opts) {
     const turn = state.turns && state.turns[idx];
-    if (!turn) return;
+    if (!turn) return false;
     const msgId = turn.question && turn.question.message && turn.question.message.id;
-    if (!msgId) return;
+    if (!msgId) return false;
     hideNavCard();
     setNavActive(idx, true);
     const seq = ++navHuntSeq;         // 连点不同节点时，后发的作废先发的
+    const convId = getConvId();
     const sc = getScrollContainer();
-    /* 已挂载：直接一次到位，不走"先平滑滚、再校正"那套。
-     * 原来先平滑起滚、等它停稳、最后再写一次 scrollTop 校正 ——
-     * 用户看到的就是"先滚一下，然后啪地闪到目标位置"。
-     * 目标就在页面上时没有任何理由分两段走，直接 instant 落位即可。 */
-    if (findMsgEl(msgId)) {
-      await settleOnMessage(msgId);
-      return;
-    }
-
+    const current = () => seq === navHuntSeq && convId === getConvId() && sc.isConnected;
+    navToastHide();
     const total = (state.turns && state.turns.length) || 1;
-    const prevBehavior = sc.style.scrollBehavior;
-    sc.style.scrollBehavior = 'auto'; // 逼顶期间别平滑滚动，每轮白等一段动画
+    const unlock = navLockScroll(sc);
     navHunting = true;
     const t0 = Date.now();
     let hops = 0;
-    let stalled = false;
+    let landed = false;
     try {
-      while (!findMsgEl(msgId)) {
-        if (seq !== navHuntSeq) return;
-        if (Date.now() - t0 > NAV_HUNT_BUDGET) { stalled = true; break; }
+      while (current() && Date.now() - t0 <= NAV_HUNT_BUDGET) {
+        // 滚动过程中 React 可能替换节点；落位失败就重新定位真实节点。
+        if (findMsgEl(msgId) && await settleOnMessage(msgId, opts, current)) {
+          landed = true;
+          return true;
+        }
+        if (!current()) return false;
         const oldest = oldestMountedIdx();
-        if (oldest < 0) { stalled = true; break; }
+        if (oldest < 0) break;
         if (idx < oldest) {
-          if (oldest === 0) { stalled = true; break; }  // 已到会话开头，没有更旧的了
           navToast('正在向上加载… ' + (oldest + 1) + ' / ' + total, true);
-          await kickScrollTop(sc);
-          if (!(await waitOlderMounted(sc, msgId, oldest, seq))) { stalled = true; break; }
+          await kickScrollTop(sc, current);
+          if (!current()) return false;
+          if (!(await waitOlderMounted(sc, msgId, oldest, current))) break;
         } else {
-          if (++hops > NAV_HUNT_MAX_HOPS || !jumpByAnchors(sc, idx)) { stalled = true; break; }
-          await waitMounted(msgId, 1200, seq);
+          const before = mountedUserTurns().map(getTurnKey).join('|');
+          if (++hops > NAV_HUNT_MAX_HOPS || !jumpByAnchors(sc, idx)) break;
+          await waitMounted(msgId, 1200, current, before);
         }
       }
+      if (current()) navToast('暂时无法定位这条消息，请稍后重试');
+      return false;
     } finally {
-      navHunting = false;
-      sc.style.scrollBehavior = prevBehavior;
+      unlock();
+      if (seq === navHuntSeq) {
+        navHunting = false;
+        if (landed || !current()) navToastHide();
+      }
     }
-    if (seq !== navHuntSeq) return;
-    navToastHide();
-    if (findMsgEl(msgId)) await settleOnMessage(msgId);
-    else if (stalled) navToast('这条消息加载不出来，手动向上滚一段再试');
   }
 
   // 计算当前聚焦/阅读节点附近的 30 个可见窗口起始下标（上下总和为 30，居中优先）
@@ -5387,6 +6185,9 @@
   // 换会话时立刻把上一条的轨道收掉。留着它的话，新会话正在挂载的消息在旧 navIdxById
   // 里全是"不认识"，maybeRefreshNavRail 会当成来了新提问，马上再补一次全量拉取。
   function resetNavRail() {
+    navHuntSeq++;
+    navHunting = false;
+    navToastHide();
     clearTimeout(navRenderTimer);
     navRenderTimer = 0;
     navWaitTries = 0;
@@ -7465,6 +8266,9 @@
   // 找侧栏里"项目行"：role=button、无 href、位于「项目」标题之后、「最近」标题之前。
   function folderIsProjectRow(el) {
     if (!el || el.getAttribute('role') !== 'button') return false;
+    /* 行内嵌套的 role="button"（最左侧折叠图标就是这样）不是项目行本身。
+     * 少了这条，从图标往上找行会先命中图标，后续所有判定都错位。 */
+    if (el.parentElement && el.parentElement.closest('[role="button"]')) return false;
     if (el.querySelector('a[href]')) return false;      // 含链接的是容器不是行
     // 排除我们自己的文件夹行/子项：它们也是 role=button，不加这条会被当成项目行，
     // 于是标题取到文件夹名+计数、点开又把文件夹塞进文件夹（实测）。
@@ -11038,32 +11842,30 @@
   // 主循环：每秒一次。有变化才重建，其余时间几乎零开销。
   /* ---------- 只挡掉「加载会话后那一次」项目自动展开 ----------
    *
-   * 目标很窄：进入会话后，原生会自动展开某个项目行；把它按回去，
-   * 但**用户自己点开的必须留住**。
+   * 关键事实（踩了三次坑才确认）：
+   *   1) 项目行的「展开/收起」只有最左侧的折叠图标（chevron）能干；
+   *      点项目标题 = **跳转到项目页**，根本不是展开。
+   *   2) 所以绝不能拿 row.click() 当"按回去" —— 那一下会把人送去项目页，
+   *      还会触发路由变化，形成"按回去 → 跳转 → 再展开 → 再按回去"的循环，
+   *      表现就是"点击完全展不开"。前两版正是栽在这里。
+   *   3) 展开后行内会多出子项文字，任何"按名字判断"的方案都会失效
+   *      （名字从"写作项目"变成"写作项目 会话 1"）。故一律用 DOM 节点当键。
    *
-   * 为什么不能用"点击时间戳"判断是谁触发的（v0.18.5 的错法）：
-   * 点项目行会跳到 /g/g-p-xxx，路由随即变化；我们把路由变化当作
-   * "换了会话"从而清空 userTouchedAt，于是接着 React 异步把项目展开时，
-   * 这个时间戳已经归零 —— 判定成"自动展开"，把用户刚点开的按回去。
-   * 表现就是"点了没用/被锁死"。
-   *
-   * 现在改为**按项目名豁免**，不猜触发者：
-   *   · 用户点了某个项目行 → 该项目进入豁免期，期间任何展开都放行
-   *   · 豁免期要长到覆盖"点击 → 路由跳转 → React 异步展开"整条链
-   *   · 路由变化不再清空豁免，只重新计算窗口与基线
-   *   · 只有"没人豁免 + 窗口内 + 收起→展开"才按回去，且只按一次
+   * 现在的做法：
+   *   · 只观察，不点击。原生在加载会话后自动展开 → 记下来并停止干预，
+   *     交由下面的"收起"动作处理（用 chevron，不是 row.click）。
+   *   · 用户点了折叠图标 → 该项目进入豁免期，绝不再干预。
+   *   · 认不出折叠图标时**宁可什么都不做** —— 不干预只是回到原生行为，
+   *     而错误干预会把用户锁死，后者严重得多。
    */
   const folderProjGuard = {
-    armed: false,               // 我们主动按回去时置位，避免把自己的点击当成用户点击
-    routeKey: '',               // 上一次看到的完整路由，用于识别"换了会话"
-    windowUntil: 0,             // 抑制窗口截止时间（换会话后短暂开启）
-    exempt: Object.create(null),// 项目名 → 豁免截止时间（用户点过这个项目）
-    snap: Object.create(null)   // 项目名 → 上一 tick 的展开状态
+    armed: false,                 // 我们主动操作时置位
+    routeKey: '',                 // 上一次看到的路由
+    windowUntil: 0,               // 抑制窗口截止时间（换会话后短暂开启）
+    exempt: new Map(),            // rowEl -> 豁免截止时间（用户点过折叠图标）
+    snap: new Map()               // rowEl -> 上一 tick 的展开状态
   };
 
-  /* 抑制窗口：原生在会话加载后 0.3~1.5s 内展开，给足余量。
-   * 用户豁免期更长一些：点击 → 路由跳转 → 数据加载 → React 展开，
-   * 在慢网络下这条链可以走好几秒，宁可多放行也不能把用户的点击吃掉。 */
   const FOLDER_PROJ_WINDOW_MS = 2500;
   const FOLDER_PROJ_EXEMPT_MS = 8000;
 
@@ -11071,29 +11873,31 @@
     return row.getAttribute('aria-expanded') === 'true';
   }
 
-  /* 项目行的稳定标识。
-   * 不能整行 textContent：展开后行内会多出子项文字，名字跟着变。
-   * 也要避开我们注入的「更多操作」按钮 —— 它带 title，会把项目名认成
-   * "更多操作（文件夹 / 导出）"（实测两条项目同名）。 */
+  /* 在项目行里找"折叠图标"。
+   * 它是行内最靠左、可点、且不是标题文字的那个元素；
+   * 实测原生把 aria-expanded 挂在行本身，图标是行内第一个 svg/button。
+   * 找不到就返回 null —— 调用方必须能不依赖它继续工作。 */
+  function folderProjChevron(row) {
+    if (!row) return null;
+    // 优先：行内自带 aria-expanded 的可点元素（有些版本把状态放在图标上）
+    const own = row.querySelector('[aria-expanded]');
+    if (own && own !== row) return own;
+    // 其次：行内第一个 svg 的可点祖先
+    const svg = row.querySelector('svg');
+    if (svg) {
+      const btn = svg.closest('[role="button"], button');
+      if (btn && btn !== row) return btn;
+      return svg;
+    }
+    return null;
+  }
+
+  // 只用于日志/提示，不参与判定
   function folderProjRowName(row) {
     if (!row) return '';
     const aria = (row.getAttribute('aria-label') || '').trim();
     if (aria) return aria;
-    const own = (row.getAttribute('title') || '').trim();
-    if (own) return own;
-    // 取"文本最长且含字母/数字"的叶子元素：行首常是箭头 ▸，取第一个会拿到符号
-    let best = '';
-    for (const el of row.querySelectorAll('span, div, p')) {
-      if (el.querySelector('span, div, p')) continue;   // 只看叶子
-      if (el.closest('.craber-pj-btn')) continue;       // 跳过注入的按钮
-      const t = (el.textContent || '').trim();
-      if (!/[\p{L}\p{N}]/u.test(t)) continue;
-      if (t.length > best.length) best = t;
-    }
-    if (!best) {
-      best = (row.textContent || '').replace(/[\u25b8\u25be\u25b6\u25bc>]/g, '').trim();
-    }
-    return best.replace(/\s+/g, ' ').slice(0, 60);
+    return ((row.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40)) || '(未命名项目)';
   }
 
   // 收集原生「项目」区块里的项目行（排除区块标题与自家节点）
@@ -11109,11 +11913,19 @@
     });
   }
 
-  function folderProjIsExempt(name) {
-    const until = Number(folderProjGuard.exempt[name]) || 0;
+  function folderProjIsExempt(row) {
+    const until = Number(folderProjGuard.exempt.get(row)) || 0;
     if (!until) return false;
-    if (until <= Date.now()) { delete folderProjGuard.exempt[name]; return false; }
+    if (until <= Date.now()) { folderProjGuard.exempt.delete(row); return false; }
     return true;
+  }
+
+  function folderProjPrune(rows) {
+    const live = new Set(rows);
+    for (const k of [...folderProjGuard.snap.keys()]) if (!live.has(k)) folderProjGuard.snap.delete(k);
+    for (const k of [...folderProjGuard.exempt.keys()]) {
+      if (!live.has(k) && !k.isConnected) folderProjGuard.exempt.delete(k);
+    }
   }
 
   function folderGuardProjAutoExpand() {
@@ -11121,19 +11933,15 @@
 
     const now = Date.now();
     const rows = folderNativeProjRows();
+    folderProjPrune(rows);
 
-    /* 换会话/换项目：重开窗口并重建基线。
-     * 注意**不动豁免表** —— 用户刚才点的那个项目正处在豁免期，
-     * 而点击本身就会触发路由变化；清掉豁免正是老 bug 的来源。 */
+    // 换会话/换项目：重开窗口并重建基线；豁免表不动（用户点击本身就会换路由）
     const routeKey = location.pathname + location.search;
     if (routeKey !== folderProjGuard.routeKey) {
       folderProjGuard.routeKey = routeKey;
       folderProjGuard.windowUntil = now + FOLDER_PROJ_WINDOW_MS;
-      folderProjGuard.snap = Object.create(null);
-      for (const row of rows) {
-        const name = folderProjRowName(row);
-        if (name) folderProjGuard.snap[name] = folderProjRowExpanded(row);
-      }
+      folderProjGuard.snap = new Map();
+      for (const row of rows) folderProjGuard.snap.set(row, folderProjRowExpanded(row));
       return;
     }
 
@@ -11141,58 +11949,88 @@
     const inWindow = now < folderProjGuard.windowUntil;
 
     for (const row of rows) {
-      const name = folderProjRowName(row);
-      if (!name) continue;
       const expanded = folderProjRowExpanded(row);
-      const before = folderProjGuard.snap[name];
-      folderProjGuard.snap[name] = expanded;   // 供下一 tick 比较
+      const before = folderProjGuard.snap.get(row);
+      folderProjGuard.snap.set(row, expanded);
 
-      // 首次见到或状态没变：不干预
-      if (before === undefined || before === expanded) continue;
-      // 只看"收起 → 展开"
-      if (!expanded) continue;
-      // 用户点过这个项目：一律放行
-      if (folderProjIsExempt(name)) continue;
-      // 不在窗口内：说明不是会话加载引起的，交给原生
-      if (!inWindow) continue;
+      if (before === undefined || before === expanded) continue;   // 无变化
+      if (!expanded) continue;                                     // 只看收起→展开
+      if (folderProjIsExempt(row)) continue;                        // 用户点过：放行
+      if (!inWindow) continue;                                      // 不是会话加载引起的
 
+      /* 该收起了。只走折叠图标；认不出图标就放弃 ——
+       * 绝不能退回 row.click()，那是跳转。宁可让它展开，也不能锁死用户。 */
+      const chevron = folderProjChevron(row);
+      if (!chevron) {
+        folderProjGuard.snap.set(row, true);   // 认了，不再反复尝试
+        continue;
+      }
       folderProjGuard.armed = true;
-      try { row.click(); } catch (e) { /* 点不动就忽略 */ }
-      folderProjGuard.windowUntil = 0;   // 处理完这一次就关窗
-      folderProjGuard.snap[name] = false;
+      try { chevron.click(); } catch (e) { /* 点不动就忽略 */ }
+      folderProjGuard.windowUntil = 0;
+      folderProjGuard.snap.set(row, false);
       setTimeout(() => { folderProjGuard.armed = false; }, 200);
       break;
     }
   }
 
-  /* 用户亲手点项目行 → 给这个项目开豁免期。
-   * 用捕获阶段监听，赶在原生处理之前记下意图；
-   * 不关心它最终是展开还是收起 —— 用户点了，后续状态就该由用户决定。 */
+  /* 用户点了折叠图标 → 该项目进入豁免期。
+   * 只对"最左侧图标"授予豁免：点标题是导航，不该被当成展开意图。 */
   function folderBindProjRowClick() {
     const nav = document.querySelector('nav[aria-label="聊天记录"]');
     if (!nav || nav.dataset.craberProjGuard === '1') return;
     nav.dataset.craberProjGuard = '1';
+
+    /* 从事件目标往上找项目行。
+     * 坑：折叠图标本身也常带 role="button"，closest 会先命中图标，
+     * 于是拿到的"行"其实是图标 —— 豁免记在图标上，tick 时按行去查就查不到，
+     * 表现为"点了还是被按回去"。所以命中非项目行时要继续往上找。 */
+    const rowFrom = (target) => {
+      if (!target || !target.closest) return null;
+      let el = target.closest('[role="button"]');
+      let hops = 0;
+      while (el && hops++ < 6) {
+        if (folderIsProjectRow(el) && !el.closest('.craber-folders')) {
+          const t = (el.textContent || '').trim();
+          if (t && t !== '项目' && t !== '最近') return el;
+        }
+        el = el.parentElement ? el.parentElement.closest('[role="button"]') : null;
+      }
+      return null;
+    };
+    /* 这一下点击是不是落在折叠图标上？
+     * 宽松判定：目标不是标题文字节点、且行内有图标，就算图标区。
+     * 判不准时**授予豁免**（放行）—— 与"错杀用户操作"相比，
+     * 少挡一次自动展开是可以接受的代价。 */
+    const isChevronHit = (row, target) => {
+      const chevron = folderProjChevron(row);
+      if (!chevron) return true;
+      if (chevron === target) return true;
+      if (chevron.contains && chevron.contains(target)) return true;
+      // 点在行内第一个 svg 附近的空白也算
+      const svg = row.querySelector('svg');
+      if (svg && (svg === target || (svg.contains && svg.contains(target)))) return true;
+      return false;
+    };
+    const grant = (row) => {
+      folderProjGuard.exempt.set(row, Date.now() + FOLDER_PROJ_EXEMPT_MS);
+      folderProjGuard.windowUntil = 0;
+      folderProjGuard.snap.set(row, folderProjRowExpanded(row));
+    };
+
     nav.addEventListener('click', (e) => {
       if (!uiPrefs.lockProjExpand) return;
-      const row = e.target && e.target.closest ? e.target.closest('[role="button"]') : null;
-      if (!row || !folderIsProjectRow(row) || row.closest('.craber-folders')) return;
-      const t = (row.textContent || '').trim();
-      if (!t || t === '项目' || t === '最近') return;
-      const name = folderProjRowName(row);
-      if (!name) return;
-      folderProjGuard.exempt[name] = Date.now() + FOLDER_PROJ_EXEMPT_MS;
-      // 本次会话的抑制窗口也一并作废：用户已经明确动手了
-      folderProjGuard.windowUntil = 0;
+      const row = rowFrom(e.target);
+      if (!row) return;
+      if (!isChevronHit(row, e.target)) return;   // 点标题 = 导航，不涉及展开
+      grant(row);
     }, true);
 
-    /* 键盘展开（Enter/Space）与点击走同一个豁免路径 —— 否则键盘用户会被锁死 */
     nav.addEventListener('keydown', (e) => {
       if (!uiPrefs.lockProjExpand) return;
       if (e.key !== 'Enter' && e.key !== ' ') return;
-      const row = e.target && e.target.closest ? e.target.closest('[role="button"]') : null;
-      if (!row || !folderIsProjectRow(row) || row.closest('.craber-folders')) return;
-      const name = folderProjRowName(row);
-      if (name) folderProjGuard.exempt[name] = Date.now() + FOLDER_PROJ_EXEMPT_MS;
+      const row = rowFrom(e.target);
+      if (row) grant(row);
     }, true);
   }
 
@@ -11285,11 +12123,17 @@
   // 导出按钮与它的下拉菜单（都挂在原生顶栏里，见 mountFab）。
   let fabEl = null;
 
+  /* 侧边聊天的顶栏入口按钮。
+   * 声明放在这里而不是侧边聊天模块内部：mountFab 会引用它，
+   * 而 mountFab 的定义在模块之前。靠"异步回调不会早于同步段执行"也能跑，
+   * 但那是隐式约定，把声明提到使用点之前更稳。 */
+  let scMountBtn = null;
+
   // 界面增强开关。默认都开，用户可各自关掉。
   // 关掉必须真的卸载（移除已注入的节点 + 停掉后续挂载），而不是只隐藏 ——
   // 否则功能还在后台跑、还会去请求接口。
   const UI_PREFS_KEY = 'gpt_craber_ui_prefs';
-  const UI_PREFS_DEFAULT = { navRail: true, navOutline: true, projectUI: true, notify: false, folders: true, lockProjExpand: false };
+  const UI_PREFS_DEFAULT = { navRail: true, navOutline: true, projectUI: true, notify: false, folders: true, lockProjExpand: false, composerClear: true, sideChat: true, sideChatSel: true };
   let uiPrefs = (() => {
     try {
       const raw = localStorage.getItem(UI_PREFS_KEY);
@@ -11331,6 +12175,19 @@
       folderProjGuard.snap = Object.create(null);
       if (on) navToast('已锁定：只挡系统自动展开，手动点开照常生效');
       else navToast('已取消：项目展开完全交回 ChatGPT');
+    } else if (key === 'composerClear') {
+      if (on) craberComposerMount();
+      else craberComposerUnmount();
+    } else if (key === 'sideChat' || key === 'sideChatSel') {
+      /* 关掉侧边聊天要真正卸载：面板、入口按钮、选中浮按钮全部撤掉，
+       * 连正在跑的那条请求也停 —— 否则抽屉看不见了，请求还在烧 token。 */
+      if (key === 'sideChat') {
+        // 打开时按当前顶栏情况立即补挂（不必等下一轮 tick，点了开关就该看见）
+        if (on) craberSCMountButton(fabHost());
+        else scUnmount();
+      } else if (!on) {
+        scHideSelBtn();
+      }
     } else if (key === 'folders') {
       // 开：立刻挂上；关：撤掉区块和原生行上的小按钮
       if (on) { foldersTick(); }
@@ -11375,17 +12232,36 @@
   }
 
   // 导出按钮的宿主：顶栏右侧那排按钮组（"分享 / 更多"所在处）。
+  /* 导出/侧边聊天按钮的宿主：顶栏右侧那排按钮组。
+   *
+   * 判定放宽过一次（实测）：原来要求 height > 24，但按钮组里只有小图标按钮时
+   * 实测高度只有 23px，于是整组被过滤掉、按钮一个都挂不上
+   * （表现为"顶栏什么按钮都没有"）。现在阈值降到 18，并把"必须有 button"
+   * 保留为核心条件 —— 高度只是用来排除细分的视觉元素。
+   */
   function fabHost() {
-    const hdr = document.querySelector('header');
+    const hdr = scHeaderEl();
     if (!hdr) return null;
     const groups = [...hdr.querySelectorAll('div')].filter((d) => {
       const cs = getComputedStyle(d);
       if (cs.display !== 'flex') return false;
       if (cs.marginLeft !== 'auto' && cs.flexGrow !== '0') return false;
       const r = d.getBoundingClientRect();
-      return r.height > 24 && r.width > 40 && d.querySelectorAll('button').length > 0;
+      return r.height > 18 && r.width > 40 && d.querySelectorAll('button').length > 0;
     });
-    if (!groups.length) return null;
+    if (!groups.length) {
+      /* 兜底：按上面的条件一组都没匹配到时，退而求其次 ——
+       * 取 header 里"含按钮、且位置最靠右"的 flex 容器。
+       * 顶栏结构改版时上面那套启发式会静默失效，这个兜底能救回来。 */
+      const loose = [...hdr.querySelectorAll('div')].filter((d) => {
+        const r = d.getBoundingClientRect();
+        return r.width > 40 && r.height > 18 && d.querySelectorAll('button').length > 0
+          && getComputedStyle(d).display === 'flex';
+      });
+      if (!loose.length) return null;
+      loose.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+      return loose[0];
+    }
     // 取最靠右的那组
     groups.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
     return groups[0];
@@ -11410,10 +12286,10 @@
   // 滚动容器要等内容渲染出来才存在，首屏那几秒会漏设。main 始终在、且是这些
   // 吸顶条的共同祖先，设一处即可覆盖全部。
   function applyHeaderSpacing() {
-    const hdr = document.querySelector('header');
+    const hdr = scHeaderEl();
     if (!hdr) return;
     const h = Math.round(hdr.getBoundingClientRect().height);
-    const main = document.querySelector('main');
+    const main = scContentEl();
     if (main && h > 0) {
       const want = h + 'px';
       if (main.style.getPropertyValue('--sticky-padding-top') !== want) {
@@ -11425,42 +12301,50 @@
   // 导出按钮：固定进顶栏右侧，不再做可拖拽悬浮球。
   // 下载/导出和"分享"是同一类操作，放一起位置固定、可预期。
   function mountFab() {
-    // 非会话页（设置页 / 首页等）：按钮撤下，不留孤儿 —— 导出入口只在
-    // 能导出内容的地方有意义。
-    if (!isConvPage()) {
-      if (fabEl && fabEl.isConnected) fabEl.remove();
-        applyHeaderSpacing();   // 顺路保持吸顶条让位（同一处维护）
+    const conv = isConvPage();
+
+    // 导出按钮只在"能导出内容"的页面出现：设置页 / 首页这些地方撤下，不留孤儿。
+    if (!conv && fabEl && fabEl.isConnected) fabEl.remove();
+
+    applyHeaderSpacing();   // 顶栏高度变化时吸顶条跟着让位
+
+    const host = fabHost();
+    if (!host) {
+      // 顶栏还没渲染出来（首页首屏、登录落地页）：两个按钮都挂不了，
+      // 但对象保留着，下一轮 tick 会补挂
       return false;
     }
-    const host = fabHost();
-    applyHeaderSpacing();   // 顶栏高度变化时吸顶条跟着让位
-    if (!host) return false;
 
-    if (fabEl && fabEl.parentElement === host) { applyFabTheme(fabEl); return true; }
-
-    if (!fabEl) {
-      fabEl = document.createElement('button');
-      fabEl.className = 'craber-fab-btn';
-      fabEl.type = 'button';
-      fabEl.innerHTML = CRAB_SVG;
-      fabEl.title = '导出';
-      fabEl.setAttribute('aria-label', '导出');
-      fabEl.setAttribute('aria-haspopup', 'true');
-      fabEl.setAttribute('aria-expanded', 'false');
-      fabEl.addEventListener('click', (e) => {
-        // 点在按钮上只开面板；不要冒泡到页面（顶栏里有别的手势处理）
-        e.stopPropagation();
-        craberOpenSettings();
-      });
+    /* 顺序很重要：先挂导出按钮，再挂侧边聊天按钮。
+     * 侧边聊天是插到导出按钮后面的（insertAdjacentElement），
+     * 反过来先挂它的话，导出按钮后追加就跑到它右边去了，
+     * 视觉上会变成「侧边聊天 | 导出」，和预期的「🦀 | 气泡」相反。 */
+    if (conv && !(fabEl && fabEl.parentElement === host)) {
+      if (!fabEl) {
+        fabEl = document.createElement('button');
+        fabEl.className = 'craber-fab-btn';
+        fabEl.type = 'button';
+        fabEl.innerHTML = CRAB_SVG;
+        fabEl.title = '导出';
+        fabEl.setAttribute('aria-label', '导出');
+        fabEl.setAttribute('aria-haspopup', 'true');
+        fabEl.setAttribute('aria-expanded', 'false');
+        fabEl.addEventListener('click', (e) => {
+          // 点在按钮上只开面板；不要冒泡到页面（顶栏里有别的手势处理）
+          e.stopPropagation();
+          craberOpenSettings();
+        });
+      }
+      host.appendChild(fabEl);
     }
-    host.appendChild(fabEl);
 
+    /* 侧边聊天按钮独立挂载，不受"是否会话页"限制 ——
+     * 它在首页新开对话时最有用（那时 URL 还没有 /c/{id}）。
+     */
+    craberSCMountButton(host);
 
-
-    // 必须在 appendChild 之后再设主题色：元素尚未入 DOM 时先跑一次 transition
-    // 注册会生成一个 currentTime 停在 0 的动画，而"运行中的动画"优先级高于内联
-    // !important —— 颜色会被永久锁在起始值（实测）。插进文档再设才落得下来。
-    applyFabTheme(fabEl);
+    if (!conv) return false;
+    if (fabEl && fabEl.parentElement === host) applyFabTheme(fabEl);
 
     // 主题切换联动：data-theme 或 class 一变，所有"JS 算出来的颜色"都要重刷。
     // CSS 变量自己会跟（见样式表里的 html[data-theme] 档），但描边、顶栏底色、
@@ -11475,6 +12359,7 @@
         if (t === lastTheme) return;   // 只是 class 抖动，不是换主题
         lastTheme = t;
         applyFabTheme(fabEl);
+        applyFabTheme(scMountBtn);
         pbarTick();               // 项目条挂载状态由它自己判断，重复调用安全
       };
       new MutationObserver(onThemeChange)
@@ -11485,6 +12370,7 @@
           .addEventListener('change', () => {
             lastTheme = document.documentElement.dataset.theme || '';
             applyFabTheme(fabEl);
+            applyFabTheme(scMountBtn);
             pbarTick();
           });
       } catch (e) { /* 老浏览器不支持，忽略 */ }
@@ -11505,6 +12391,7 @@
   const CRAB_PAGES = [
     { id: 'conv-list', label: '会话列表', render: () => craberPageConvList() },
     { id: 'features', label: '功能开关', render: () => craberPageFeatures() },
+    { id: 'side-chat', label: '侧边聊天', render: () => craberPageSideChat() },
     { id: 'dav-conn', label: '连接设置', render: () => craberPageDavConn() },
     { id: 'dav-sync', label: '文件夹同步', render: () => craberPageDavSync() },
     { id: 'dav-backup', label: '会话备份', render: () => craberPageDavBackup() }
@@ -11532,7 +12419,11 @@
       + '<path d="M21 20.5V16h-4.5"/>'),
     // 备份：闭合云体 + 云内上传箭头（箭头不越出云外，16px 下仍清楚）
     'dav-backup': mi('<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9Z"/>'
-      + '<path d="M12 12v6"/><path d="m9 15 3-3 3 3"/>')
+      + '<path d="M12 12v6"/><path d="m9 15 3-3 3 3"/>'),
+    // 侧边聊天：右侧抽屉（外框 + 右侧分栏线 + 两条消息）
+    'side-chat': mi('<rect x="3" y="4.5" width="18" height="15" rx="2.5"/>'
+      + '<path d="M14.5 4.5v15"/>'
+      + '<path d="M6.2 9h5"/><path d="M6.2 12.5h5"/>')
   };
 
   // 打开设置中心。pageId 可指定初始页。
@@ -11544,10 +12435,14 @@
 
     const wrap = folderEl('div', 'craber-set');
     const nav = folderEl('nav', 'craber-set-nav');
+    nav.setAttribute('aria-label', '设置分类');
     const body = folderEl('div', 'craber-set-body');
 
     const navBtns = {};
     for (const p of CRAB_PAGES) {
+      if (p.id === 'conv-list' || p.id === 'dav-conn') {
+        nav.append(folderEl('div', 'craber-set-navgroup', p.id === 'conv-list' ? '通用' : '数据管理'));
+      }
       const b = folderEl('button', 'craber-set-item');
       b.type = 'button';
       const ic = folderEl('span', 'craber-set-itemico');
@@ -11563,7 +12458,11 @@
 
     function go(id) {
       active = id;
-      for (const k of Object.keys(navBtns)) navBtns[k].classList.toggle('on', k === id);
+      for (const k of Object.keys(navBtns)) {
+        navBtns[k].classList.toggle('on', k === id);
+        if (k === id) navBtns[k].setAttribute('aria-current', 'page');
+        else navBtns[k].removeAttribute('aria-current');
+      }
       body.innerHTML = '';
       const page = CRAB_PAGES.find((p) => p.id === id);
       if (page) {
@@ -11576,8 +12475,7 @@
     wrap.append(nav, body);
 
     craberDialog({
-      title: 'craber',
-      subtitle: '导出、界面增强与 WebDAV',
+      title: 'craber 设置',
       icon: CRAB_SVG,
       badge: CRABER_VERSION ? 'v' + CRABER_VERSION : '',
       body: wrap,
@@ -11840,7 +12738,7 @@
 
   // 页面 1：会话列表（在设置中心内直接勾选并批量导出）
   function craberPageConvList() {
-    const p = craberPage('会话列表', '按时间与项目筛选后勾选导出；列表有缓存，需要最新数据时点刷新。');
+    const p = craberPage('会话列表', '筛选会话，批量导出 Markdown。');
     p.classList.add('craber-set-fill');
 
     let metas = [];
@@ -12236,87 +13134,811 @@
 
   // 页面 2：功能开关
   function craberPageFeatures() {
-    const p = craberPage('功能开关', '关掉后对应功能立即卸载，刷新后保持。');
-    const list = folderEl('div', 'craber-set-list');
-    /* 每行一枚图标：都按 24 视框同一套圆角绘制。
-     * 原来"项目 UI 优化"画成信用卡、锁的锁体偏胖，和导航那套不像一家人。
-     */
-    const items = [
-      // 节点导航：竖向轨道 + 两个节点 + 对应的展开行
-      ['navRail', '节点导航', '在会话左侧显示回合节点轨道，可悬停预览、点击跳转',
-        '<path d="M6.5 4v16"/>'
-          + '<circle cx="6.5" cy="8.5" r="2" fill="currentColor" stroke="none"/>'
-          + '<circle cx="6.5" cy="15.5" r="2" fill="currentColor" stroke="none"/>'
-          + '<path d="M11.5 8.5H20"/><path d="M11.5 15.5H20"/>'],
-      // 消息内大纲：标题 + 两条缩进的小节（层级示意）
-      ['navOutline', '消息内大纲', '在节点卡片里列出回复的小标题，可点击直达该节',
-        '<path d="M4 6.5h16"/>'
-          + '<path d="M8 12h12"/><path d="M8 17.5h12"/>'
-          + '<circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/>'
-          + '<circle cx="5" cy="17.5" r="1.2" fill="currentColor" stroke="none"/>'],
-      // 项目 UI：顶栏 + 内容区（版式示意）
-      ['projectUI', '项目 UI 优化', '在顶栏里显示项目对话入口与当前对话位置',
-        '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/>'
-          + '<path d="M3 9.5h18"/>'
-          + '<path d="M6.5 6.9h3"/><path d="M6.5 12.8h6"/><path d="M6.5 16h4"/>'],
-      // 完成通知：铃铛（钟形 + 底部铃舌，下缘收窄成真实铃口）
-      ['notify', '完成通知', '回复生成完成后发送浏览器通知',
-        '<path d="M18 9.5a6 6 0 1 0-12 0c0 4-1.5 5.5-2.5 6.5h17c-1-1-2.5-2.5-2.5-6.5z"/>'
-          + '<path d="M10 19.5a2.2 2.2 0 0 0 4 0"/>'],
-      // 侧栏文件夹：与侧栏一致的小文件夹
-      ['folders', '侧栏文件夹', '在侧栏「项目」上方显示自定义文件夹',
-        '<path d="' + FOLDER_PATH + '"/>'],
-      // 锁定项目展开：锁（锁体 14 高、锁梁与锁体同宽，比例标准）
-      ['lockProjExpand', '锁定项目展开', '只挡系统在加载会话后的自动展开；你手动点开/收起始终生效',
-        '<rect x="4" y="10" width="16" height="10.5" rx="2.6"/>'
-          + '<path d="M8 10V7.6a4 4 0 0 1 8 0V10"/>'
-          + '<path d="M12 14v3"/>']
+    const p = craberPage('功能开关', '即时生效 · 自动保存');
+    p.classList.add('craber-set-features');
+    const groups = [
+      ['阅读与导航', [
+        ['navRail', '节点导航', '悬停预览，点击跳转到回合'],
+        ['navOutline', '消息内大纲', '在节点卡片中查看并跳转到小节']
+      ]],
+      ['侧栏与项目', [
+        ['folders', '侧栏文件夹', '用自定义文件夹整理会话与项目'],
+        ['projectUI', '项目导航', '在顶栏显示项目入口与会话位置'],
+        ['lockProjExpand', '锁定项目展开', '阻止自动展开，仍可手动展开或收起']
+      ]],
+      ['输入与聊天', [
+        ['composerClear', '输入框清除格式', '保留文字、换行与代码缩进'],
+        ['notify', '回复完成通知', '生成完成时发送浏览器通知'],
+        ['sideChat', '侧边聊天', '在右侧面板中独立对话'],
+        ['sideChatSel', '划词提问', '选中文字后显示「在侧边问」']
+      ]]
     ];
-    for (const [key, label, desc, iconPath] of items) {
-      // craber-fab-toggle 是开关选中态的选择器前缀（.craber-fab-toggle.on），
-      // 缺了它开关永远显示为关闭
-      const row = folderEl('button', 'craber-set-row craber-set-switch craber-fab-toggle');
-      row.type = 'button';
-      row.setAttribute('role', 'switch');
-      const ico = folderEl('span', 'craber-set-ico');
-      ico.innerHTML = mi(iconPath);
-      const main = folderEl('div', 'craber-set-rowmain');
-      main.append(folderEl('span', 'craber-set-rowlabel', label));
-      main.append(folderEl('span', 'craber-set-rowdesc', desc));
-      const sw = folderEl('span', 'craber-fab-switch');
-      row.append(ico, main, sw);
-      const sync = () => {
-        const on = !!uiPrefs[key];
-        row.setAttribute('aria-checked', on ? 'true' : 'false');
-        row.classList.toggle('on', on);
-      };
-      row.addEventListener('click', (e) => {
-        e.preventDefault();
-        setUiPref(key, !uiPrefs[key]);
+    for (const [title, items] of groups) {
+      const group = folderEl('section', 'craber-set-group');
+      const heading = folderEl('h4', 'craber-set-grouptitle', title);
+      const list = folderEl('div', 'craber-set-list');
+      group.append(heading, list);
+      p.append(group);
+      for (const [key, label, desc] of items) {
+        // craber-fab-toggle 提供右侧开关的选中样式。
+        const row = folderEl('button', 'craber-set-row craber-set-switch craber-fab-toggle');
+        row.type = 'button';
+        row.setAttribute('role', 'switch');
+        row.setAttribute('aria-label', label);
+        const main = folderEl('span', 'craber-set-rowmain');
+        main.append(folderEl('span', 'craber-set-rowlabel', label));
+        const hint = folderEl('span', 'craber-set-rowdesc', desc);
+        hint.id = 'craber-feature-' + key + '-hint';
+        row.setAttribute('aria-describedby', hint.id);
+        main.append(hint);
+        const sw = folderEl('span', 'craber-fab-switch');
+        sw.setAttribute('aria-hidden', 'true');
+        row.append(main, sw);
+        const sync = () => {
+          const on = !!uiPrefs[key];
+          row.setAttribute('aria-checked', on ? 'true' : 'false');
+          row.classList.toggle('on', on);
+        };
+        row.addEventListener('click', (e) => {
+          e.preventDefault();
+          setUiPref(key, !uiPrefs[key]);
+          sync();
+        });
         sync();
-      });
-      sync();
-      list.append(row);
+        list.append(row);
+      }
     }
-    p.append(list);
     return p;
   }
 
-  // 页面 3：WebDAV 连接设置
+  // 页面 3：侧边聊天（模型接口配置）
+  function craberPageSideChat() {
+    const cfg = scCfgLoad();
+    const p = folderEl('div', 'craber-set-page craber-sc-settings');
+    const hd = folderEl('div', 'craber-set-pagehd');
+    const hero = folderEl('div', 'craber-sc-hero');
+    const heroMain = folderEl('div', 'craber-sc-hero-main');
+    heroMain.append(folderEl('h3', 'craber-set-pagetitle', '侧边聊天'));
+    heroMain.append(folderEl('div', 'craber-set-pagedesc',
+      '配置模型接口与独立对话。'));
+    const ready = folderEl('span', 'craber-sc-ready', '待配置');
+    const syncReadyBadge = (c) => {
+      const on = scCfgReady(c || scCfgLoad());
+      ready.textContent = on ? '已配置' : '待配置';
+      ready.classList.toggle('on', on);
+    };
+    syncReadyBadge(cfg);
+    hero.append(heroMain, ready);
+    hd.append(hero);
+    p.append(hd);
+
+    let fieldSeq = 0;
+    const nextFieldId = (kind) => 'craber-sc-' + kind + '-' + (++fieldSeq);
+    const cardHead = (title, desc) => {
+      const head = folderEl('div', 'craber-backup-cardhd craber-sc-cardhd');
+      const text = folderEl('div', 'craber-sc-cardheadtext');
+      text.append(folderEl('div', 'craber-backup-cardtitle', title));
+      if (desc) text.append(folderEl('div', 'craber-sc-carddesc', desc));
+      head.append(text);
+      return head;
+    };
+
+    /* ---------- 接口与模型候选 ---------- */
+    const apiCard = folderEl('section', 'craber-backup-card craber-sc-card');
+    apiCard.append(cardHead('模型接口'));
+
+    const mkRow = (label, hint, value, ph, opts) => {
+      opts = opts || {};
+      const id = nextFieldId(opts.kind || 'field');
+      const row = folderEl('div', 'craber-backup-row craber-sc-row'
+        + (opts.kind === 'model' ? ' craber-sc-modelrow' : ''));
+      const col = folderEl('div', 'craber-backup-rowcol');
+      const lab = folderEl('label', 'craber-set-label', label);
+      lab.htmlFor = id;
+      if (opts.meta) {
+        const labelRow = folderEl('div', 'craber-sc-labelrow');
+        labelRow.append(lab, opts.meta);
+        col.append(labelRow);
+      } else {
+        col.append(lab);
+      }
+      if (hint) {
+        const hintEl = folderEl('div', 'craber-set-hint', hint);
+        hintEl.id = id + '-hint';
+        col.append(hintEl);
+      }
+      const ctrl = folderEl('div', 'craber-set-ctrl');
+      const inp = document.createElement('input');
+      inp.id = id;
+      inp.name = opts.name || id;
+      inp.type = opts.type || 'text';
+      inp.autocomplete = opts.autocomplete || 'off';
+      inp.spellcheck = false;
+      inp.setAttribute('autocapitalize', 'off');
+      inp.setAttribute('translate', 'no');
+      if (opts.inputMode) inp.inputMode = opts.inputMode;
+      if (hint) inp.setAttribute('aria-describedby', id + '-hint');
+      inp.className = 'craber-dlg-input';
+      inp.value = value || '';
+      if (ph) inp.placeholder = ph;
+      if (opts.secret) {
+        const wrap = folderEl('div', 'craber-sc-secret');
+        const eye = folderEl('button', 'craber-sc-eye');
+        eye.type = 'button';
+        eye.title = '显示 API Key';
+        eye.setAttribute('aria-label', '显示 API Key');
+        eye.setAttribute('aria-pressed', 'false');
+        const eyeOpen = mi('<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6S2.5 12 2.5 12z"/>'
+          + '<circle cx="12" cy="12" r="2.6"/>');
+        const eyeOff = mi('<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6S2.5 12 2.5 12z"/>'
+          + '<circle cx="12" cy="12" r="2.6"/><path d="m4 4 16 16"/>');
+        eye.innerHTML = eyeOpen;
+        eye.addEventListener('click', () => {
+          const show = inp.type === 'password';
+          inp.type = show ? 'text' : 'password';
+          eye.innerHTML = show ? eyeOff : eyeOpen;
+          eye.title = show ? '隐藏 API Key' : '显示 API Key';
+          eye.setAttribute('aria-label', eye.title);
+          eye.setAttribute('aria-pressed', show ? 'true' : 'false');
+          inp.focus();
+        });
+        wrap.append(inp, eye);
+        ctrl.append(wrap);
+      } else {
+        ctrl.append(inp);
+      }
+      row.append(col, ctrl);
+      (opts.container || apiCard).append(row);
+      return inp;
+    };
+
+    const urlIn = mkRow('API 地址', 'OpenAI 兼容接口，以 /v1 结尾',
+      cfg.baseUrl, 'https://api.deepseek.com/v1', {
+        kind: 'url', type: 'url', inputMode: 'url', name: 'craber_api_base_url'
+      });
+    const keyIn = mkRow('API Key', '仅用于此接口，保存在本机',
+      cfg.apiKey, 'sk-…', {
+        kind: 'key', type: 'password', autocomplete: 'new-password',
+        name: 'craber_api_key', secret: true
+      });
+    const candidateCount = folderEl('span', 'craber-sc-count');
+    const modelIn = mkRow('添加模型', '',
+      '', '搜索候选或输入模型 ID', {
+        kind: 'model', name: 'craber_api_model', meta: candidateCount
+      });
+    const modelList = document.createElement('datalist');
+    modelList.id = nextFieldId('model-list');
+    modelIn.setAttribute('list', modelList.id);
+    modelIn.setAttribute('aria-controls', modelList.id);
+    const modelCtrl = modelIn.parentElement;
+    const modelPick = folderEl('div', 'craber-sc-modelpick');
+    const modelActions = folderEl('div', 'craber-sc-model-actions');
+    const fetchModelsBtn = folderEl('button',
+      'craber-set-btn craber-set-btn-sm craber-sc-model-btn', '获取模型');
+    fetchModelsBtn.type = 'button';
+    fetchModelsBtn.title = '从接口的 /models 获取模型列表';
+    fetchModelsBtn.setAttribute('aria-label', '获取模型列表');
+    const addModelBtn = folderEl('button',
+      'craber-set-btn craber-set-btn-sm craber-sc-model-btn craber-sc-model-add', '添加模型');
+    addModelBtn.type = 'button';
+    addModelBtn.title = '将输入的模型 ID 加入侧边聊天模型列表';
+    modelActions.append(fetchModelsBtn, addModelBtn);
+    modelPick.append(modelIn, modelActions, modelList);
+    modelCtrl.replaceChildren(modelPick);
+
+    p.append(apiCard);
+
+    const modelCard = folderEl('section', 'craber-backup-card craber-sc-card');
+    const modelListHead = cardHead('可用模型', '点击模型配置上下文、模态与思考等级。');
+    const profileList = folderEl('div', 'craber-sc-profilelist');
+    modelCard.append(modelListHead, modelIn.closest('.craber-sc-modelrow'), profileList);
+    let profiles = cfg.modelConfigs.map((profile) => Object.assign({}, profile));
+    let activeModel = cfg.model || '';
+    let profileDialogOpen = false;
+    let availableModels = scModelOptions();
+    const setProfile = (id, patch) => {
+      const draft = Object.assign({}, cfg, { modelConfigs: profiles });
+      scSetModelConfig(draft, id, patch);
+      profiles = draft.modelConfigs;
+    };
+    const syncModelChoices = () => {
+      modelList.replaceChildren(...availableModels.map((model) => {
+        const option = document.createElement('option');
+        option.value = model.id;
+        const hint = [model.label, model.owner].filter(Boolean).join(' · ');
+        if (hint) option.label = hint;
+        return option;
+      }));
+      candidateCount.textContent = availableModels.length ? availableModels.length + ' 个候选' : '';
+    };
+    const modelIdentity = (id, label) => {
+      const identity = folderEl('span', 'craber-sc-profile-identity');
+      const name = folderEl('span', 'craber-sc-profile-name', label || id);
+      name.title = label || id;
+      identity.append(name);
+      if (label && label !== id) {
+        const sub = folderEl('span', 'craber-sc-profile-id', id);
+        sub.title = id;
+        identity.append(sub);
+      }
+      return identity;
+    };
+    const renderProfiles = (focusId) => {
+      profileList.replaceChildren();
+      if (!profiles.length) {
+        profileList.append(folderEl('div', 'craber-sc-profileempty',
+          '从候选列表选择或输入模型 ID，然后添加。'));
+      }
+      let focusRow;
+      for (const profile of profiles) {
+        const meta = availableModels.find((item) => item.id === profile.id) || {};
+        const row = folderEl('button', 'craber-sc-model-row');
+        row.type = 'button';
+        row.setAttribute('aria-haspopup', 'dialog');
+        const rowMeta = folderEl('span', 'craber-sc-model-rowmeta');
+        if (profile.id === activeModel) {
+          rowMeta.append(folderEl('span', 'craber-sc-profile-current', '当前模型'));
+        }
+        const chevron = folderEl('span', 'craber-sc-model-chevron', '›');
+        chevron.setAttribute('aria-hidden', 'true');
+        rowMeta.append(chevron);
+        row.append(modelIdentity(profile.id, meta.label), rowMeta);
+        row.addEventListener('click', () => openProfileDialog(profile));
+        profileList.append(row);
+        if (profile.id === focusId) focusRow = row;
+      }
+      if (focusId) (focusRow || profileList.querySelector('button') || modelIn).focus({ preventScroll: true });
+    };
+    const openProfileDialog = (profile) => {
+      const meta = availableModels.find((item) => item.id === profile.id) || {};
+      const modelName = meta.label || profile.id;
+      const draft = Object.assign({}, profile);
+      let makeActive = profile.id === activeModel;
+      let focusId = profile.id;
+      const body = folderEl('div', 'craber-dlg-body');
+      const modelState = folderEl('div', 'craber-sc-profile-state');
+      const currentBadge = () => folderEl('span', 'craber-sc-profile-current', '当前模型');
+      if (makeActive) {
+        modelState.append(currentBadge());
+      } else {
+        const useBtn = folderEl('button', 'craber-set-btn craber-sc-usemodel', '设为当前');
+        useBtn.type = 'button';
+        useBtn.addEventListener('click', () => {
+          makeActive = true;
+          useBtn.replaceWith(currentBadge());
+          mainInput.focus();
+        });
+        modelState.append(useBtn);
+      }
+      const controls = folderEl('div', 'craber-sc-profile-controls');
+      const saveHint = '应用后，点击设置页的「保存配置」生效。';
+      const hint = folderEl('div', 'craber-dlg-hint', saveHint);
+      hint.setAttribute('role', 'status');
+      const contextGroup = folderEl('div', 'craber-sc-profile-group');
+      const contextOptions = folderEl('div', 'craber-sc-context-options');
+      contextGroup.append(folderEl('div', 'craber-set-label', '主会话上下文'));
+      const scopes = folderEl('div', 'craber-sc-profile-scopes');
+      for (const [value, label] of [['turn', '选中区域的当前轮次'], ['all', '整个对话']]) {
+        const button = folderEl('button', 'craber-set-btn craber-sc-scopechoice'
+          + (profile.ctxMode === value ? ' on' : ''), label);
+        button.type = 'button';
+        button.setAttribute('aria-pressed', String(profile.ctxMode === value));
+        button.addEventListener('click', () => {
+          draft.ctxMode = value;
+          for (const choice of scopes.children) {
+            const on = choice === button;
+            choice.classList.toggle('on', on);
+            choice.setAttribute('aria-pressed', String(on));
+          }
+        });
+        scopes.append(button);
+      }
+      const mainLabel = folderEl('label', 'craber-sc-profile-toggle');
+      const mainInput = document.createElement('input');
+      mainInput.type = 'checkbox';
+      mainInput.checked = profile.mainContextEnabled !== false;
+      mainInput.addEventListener('change', () => {
+        draft.mainContextEnabled = mainInput.checked;
+      });
+      mainLabel.append(mainInput, folderEl('span', null, '附带主会话'));
+      contextOptions.append(mainLabel, scopes);
+      contextGroup.append(contextOptions);
+
+      const modalityGroup = folderEl('div', 'craber-sc-profile-group');
+      modalityGroup.append(folderEl('div', 'craber-set-label', '输入模态'));
+      const modalities = folderEl('div', 'craber-sc-profile-modalities');
+      for (const [key, label] of [['textEnabled', '文本'], ['imageEnabled', '图片']]) {
+        const toggle = folderEl('label', 'craber-sc-profile-toggle craber-sc-modality');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = profile[key] !== false;
+        input.addEventListener('change', () => {
+          const other = key === 'textEnabled' ? 'imageEnabled' : 'textEnabled';
+          if (!input.checked && !draft[other]) {
+            input.checked = true;
+            hint.textContent = '至少保留一种输入模态。';
+            return;
+          }
+          draft[key] = input.checked;
+          hint.textContent = saveHint;
+        });
+        toggle.append(input, folderEl('span', null, label));
+        modalities.append(toggle);
+      }
+      modalityGroup.append(modalities);
+
+      const effortGroup = folderEl('div', 'craber-sc-profile-group');
+      const effortLabel = folderEl('div', 'craber-set-label', '思考等级');
+      effortLabel.id = nextFieldId('effort');
+      const effortField = folderEl('div', 'craber-sc-effort-field');
+      const effortOptions = folderEl('div', 'craber-sc-effort-options');
+      effortOptions.setAttribute('role', 'group');
+      effortOptions.setAttribute('aria-labelledby', effortLabel.id);
+      const effortHint = folderEl('div', 'craber-set-hint', '勾选侧栏可用的档位；全不勾选则隐藏思考深度。');
+      effortHint.id = effortLabel.id + '-hint';
+      effortOptions.setAttribute('aria-describedby', effortHint.id);
+      const effortChecks = [];
+      for (const value of scEffortOptions()) {
+        const option = folderEl('label', 'craber-sc-profile-toggle craber-sc-modality');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = value;
+        input.checked = profile.enabledEfforts.includes(value);
+        option.append(input, folderEl('span', null, scEffortLabel(value)));
+        effortOptions.append(option);
+        effortChecks.push(input);
+      }
+      effortField.append(effortOptions, effortHint);
+      effortGroup.append(effortLabel, effortField);
+
+      controls.append(contextGroup, modalityGroup, effortGroup);
+      body.append(modelState, controls, hint);
+      const dialog = craberDialog({
+        title: '模型配置',
+        subtitle: modelName === profile.id ? modelName : modelName + ' · ' + profile.id,
+        body,
+        confirmText: '应用',
+        onConfirm(close) {
+          const enabledEfforts = effortChecks.filter((input) => input.checked).map((input) => input.value);
+          if (enabledEfforts.length !== profile.enabledEfforts.length
+            || enabledEfforts.some((value, index) => value !== profile.enabledEfforts[index])) {
+            draft.enabledEfforts = enabledEfforts;
+          }
+          const changed = Object.keys(draft).some((key) => draft[key] !== profile[key]);
+          if (changed || (makeActive && activeModel !== profile.id)) {
+            setProfile(profile.id, draft);
+            if (makeActive) activeModel = profile.id;
+            markDirty();
+          }
+          close();
+        },
+        extraButtons: [{
+          label: '移除模型', cls: 'craber-sc-removemodel',
+          onClick({ close }) {
+            profiles = profiles.filter((candidate) => candidate.id !== profile.id);
+            if (activeModel === profile.id) activeModel = profiles[0]?.id || '';
+            focusId = activeModel || profile.id;
+            markDirty();
+            close();
+          }
+        }],
+        onClose() {
+          profileDialogOpen = false;
+          if (p.isConnected) renderProfiles(focusId);
+        }
+      });
+      profileDialogOpen = true;
+      dialog.root.classList.add('craber-sc-profile-dialog');
+      dialog.root.setAttribute('role', 'dialog');
+      dialog.root.setAttribute('aria-modal', 'true');
+      dialog.root.setAttribute('aria-label', '模型配置：' + modelName);
+      dialog.root.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab') return;
+        const items = dialog.root.querySelectorAll('button:not(:disabled),input:not(:disabled)');
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey ? e.target === first : e.target === last) {
+          e.preventDefault();
+          (e.shiftKey ? last : first).focus();
+        }
+      });
+      mainInput.focus();
+    };
+    syncModelChoices();
+    renderProfiles();
+    p.append(modelCard);
+
+    /* ---------- 卡片 2：生成参数 ----------
+     * 温度与最大 token 都是可选项：留空就不发这个字段，用模型自己的默认值。
+     * 不做成必填 —— 大多数人不需要动。 */
+    const genCard = folderEl('details', 'craber-backup-card craber-sc-card craber-sc-advanced');
+    genCard.open = cfg.temperature != null || cfg.maxTokens != null || !!cfg.systemPrompt;
+    const genSummary = folderEl('summary');
+    genSummary.append(folderEl('span', null, '生成参数'),
+      folderEl('span', 'craber-set-hint', '温度、输出上限与提示词 · 可选'));
+    genCard.append(genSummary);
+
+    const paramGrid = folderEl('div', 'craber-sc-paramgrid');
+    const mkNumRow = (label, hint, value, ph, min, max, step) => {
+      const id = nextFieldId('number');
+      const row = folderEl('div', 'craber-backup-row craber-sc-param');
+      const col = folderEl('div', 'craber-backup-rowcol');
+      const lab = folderEl('label', 'craber-set-label', label);
+      lab.htmlFor = id;
+      col.append(lab);
+      if (hint) {
+        const hintEl = folderEl('div', 'craber-set-hint', hint);
+        hintEl.id = id + '-hint';
+        col.append(hintEl);
+      }
+      const ctrl = folderEl('div', 'craber-set-ctrl');
+      const inp = document.createElement('input');
+      inp.id = id;
+      inp.name = id;
+      inp.type = 'number';
+      inp.inputMode = step && String(step).indexOf('.') >= 0 ? 'decimal' : 'numeric';
+      inp.autocomplete = 'off';
+      inp.className = 'craber-dlg-input craber-backup-num';
+      if (min != null) inp.min = String(min);
+      if (max != null) inp.max = String(max);
+      if (step != null) inp.step = String(step);
+      inp.value = value == null ? '' : String(value);
+      if (ph) inp.placeholder = ph;
+      if (hint) inp.setAttribute('aria-describedby', id + '-hint');
+      ctrl.append(inp);
+      row.append(col, ctrl);
+      paramGrid.append(row);
+      return inp;
+    };
+
+    const tempIn = mkNumRow('温度', '0–2；越低越稳定，越高越发散',
+      cfg.temperature, '默认', 0, 2, 0.1);
+    const maxIn = mkNumRow('最大输出 token', '留空使用模型默认值',
+      cfg.maxTokens, '默认', 1, 2000000, 1);
+    genCard.append(paramGrid);
+
+    // 系统提示词：多行，占满整行（思路说明要写得下）
+    const spRow = folderEl('div',
+      'craber-backup-row craber-backup-row-stack craber-sc-system');
+    const spCol = folderEl('div', 'craber-backup-rowcol');
+    const spId = nextFieldId('system-prompt');
+    const spLabelRow = folderEl('div', 'craber-sc-labelrow');
+    const spLab = folderEl('label', 'craber-set-label', '系统提示词');
+    spLab.htmlFor = spId;
+    const spCount = folderEl('span', 'craber-sc-count', '0 字');
+    spLabelRow.append(spLab, spCount);
+    spCol.append(spLabelRow);
+    spCol.append(folderEl('div', 'craber-set-hint', '每次提问都会带上，可选'));
+    const spCtrl = folderEl('div', 'craber-set-ctrl');
+    const spIn = document.createElement('textarea');
+    spIn.id = spId;
+    spIn.name = 'craber_system_prompt';
+    spIn.autocomplete = 'off';
+    spIn.spellcheck = true;
+    spIn.setAttribute('translate', 'no');
+    spIn.className = 'craber-dlg-input craber-sc-sp';
+    spIn.rows = 3;
+    spIn.value = cfg.systemPrompt || '';
+    spIn.placeholder = '例如：回答简洁，直接给结论，不要客套';
+    const syncSpCount = () => {
+      const n = spIn.value.length;
+      spCount.textContent = n ? n + ' 字' : '0 字';
+    };
+    syncSpCount();
+    spIn.addEventListener('input', syncSpCount);
+    spCtrl.append(spIn);
+    spRow.append(spCol, spCtrl);
+    genCard.append(spRow);
+
+    p.append(genCard);
+
+    /* ---------- 状态 + 操作 ---------- */
+    const foot = folderEl('div', 'craber-sc-footer');
+    const status = folderEl('div', 'craber-sc-status');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    const statusDot = folderEl('span', 'craber-sc-status-dot');
+    statusDot.setAttribute('aria-hidden', 'true');
+    const statusText = folderEl('span', 'craber-sc-status-text');
+    status.append(statusDot, statusText);
+    const setStatus = (m, k) => {
+      statusText.textContent = m;
+      status.className = 'craber-sc-status' + (k ? ' ' + k : '');
+    };
+    setStatus('尚未测试连接', '');
+
+    const collect = () => {
+      const c = scCfgLoad();
+      c.baseUrl = urlIn.value.trim();
+      c.apiKey = keyIn.value.trim();
+      c.model = activeModel || (profiles[0] && profiles[0].id) || '';
+      c.modelConfigs = profiles.map((profile) => Object.assign({}, profile));
+      c.systemPrompt = spIn.value;
+      const t = parseFloat(tempIn.value);
+      c.temperature = Number.isFinite(t) ? t : null;
+      const mx = parseInt(maxIn.value, 10);
+      c.maxTokens = Number.isFinite(mx) ? mx : null;
+      const selectedProfile = profiles.find((profile) => profile.id === activeModel);
+      if (selectedProfile) {
+        c.ctxMode = selectedProfile.ctxMode;
+        c.reasoningEffort = selectedProfile.reasoningEffort;
+      }
+      return c;
+    };
+
+    /* 任一输入变化都说明当前状态不再可信：
+     * 上一次"连接成功"不能继续展示，否则用户会误以为新配置也已验证。 */
+    const markDirty = () => setStatus('配置有未保存的更改', '');
+    for (const el of [urlIn, keyIn, tempIn, maxIn, spIn]) {
+      el.addEventListener('input', markDirty);
+    }
+
+    addModelBtn.addEventListener('click', () => {
+      const id = modelIn.value.trim();
+      if (!id) {
+        setStatus('先选择或输入一个模型 ID', 'warn');
+        modelIn.focus();
+        return;
+      }
+      if (profiles.some((profile) => profile.id === id)) {
+        setStatus('该模型已经在列表中', 'warn');
+        return;
+      }
+      const next = {
+        id, ctxMode: 'turn', mainContextEnabled: true,
+        textEnabled: true, imageEnabled: true,
+        reasoningEffort: 'default', threadId: ''
+      };
+      setProfile(id, next);
+      if (!activeModel) activeModel = id;
+      modelIn.value = '';
+      renderProfiles();
+      markDirty();
+    });
+
+    let fetchingModels = false;
+    const syncFetchModelsBtn = () => {
+      fetchModelsBtn.disabled = fetchingModels || !urlIn.value.trim();
+    };
+    urlIn.addEventListener('input', () => {
+      syncFetchModelsBtn();
+      availableModels = scModelOptions({ baseUrl: urlIn.value });
+      syncModelChoices();
+      renderProfiles();
+    });
+    syncFetchModelsBtn();
+
+    fetchModelsBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const c = collect();
+      const testedBase = c.baseUrl.replace(/\/+$/, '');
+      const old = fetchModelsBtn.textContent;
+      fetchingModels = true;
+      fetchModelsBtn.textContent = '获取中…';
+      fetchModelsBtn.setAttribute('aria-busy', 'true');
+      setStatus('正在读取模型列表…', 'busy');
+      syncFetchModelsBtn();
+      try {
+        const models = await scFetchModels(c);
+        if (urlIn.value.trim().replace(/\/+$/, '') !== testedBase || keyIn.value.trim() !== c.apiKey) {
+          throw new Error('接口配置已更改，请重新获取');
+        }
+        availableModels = models;
+        syncModelChoices();
+        /* 候选用于用户主动添加，不自动把接口上的所有模型加入切换菜单。 */
+        scSaveModels(models, c);
+        const meta = models.find((m) => m.id === activeModel);
+        const max = meta?.maxOutputTokens;
+        maxIn.placeholder = max > 0 ? '模型上限 ' + max : '默认';
+        if (!profileDialogOpen) renderProfiles();
+        const overLimit = max > 0 && Number(maxIn.value) > max;
+        setStatus('已获取 ' + models.length + ' 个候选模型；选择后点「添加模型」'
+          + (overLimit ? '。当前最大输出 token 超过模型上限 ' + max : ''), overLimit ? 'warn' : 'ok');
+        if (!profileDialogOpen) modelIn.focus();
+      } catch (err) {
+        setStatus('获取模型失败 · ' + (err && err.message ? err.message : '未知错误'), 'err');
+      } finally {
+        fetchingModels = false;
+        fetchModelsBtn.textContent = old;
+        fetchModelsBtn.removeAttribute('aria-busy');
+        syncFetchModelsBtn();
+      }
+    });
+
+    const bar = folderEl('div', 'craber-set-actions craber-sc-actions');
+
+    const testBtn = folderEl('button', 'craber-set-btn', '测试连接');
+    testBtn.type = 'button';
+    testBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const c = collect();
+      if (!c.baseUrl) {
+        setStatus('请先填写 API 地址', 'err');
+        urlIn.focus();
+        return;
+      }
+      if (!c.model) {
+        setStatus('请先添加至少一个模型并设为当前模型', 'err');
+        modelIn.focus();
+        return;
+      }
+      if (!scModelConfigFor(c).textEnabled) {
+        setStatus('连接测试使用文本消息。仅图片模型请打开侧栏，添加一张图片测试。', 'warn');
+        return;
+      }
+      const old = testBtn.textContent;
+      testBtn.disabled = true;
+      testBtn.textContent = '测试中…';
+      setStatus('正在请求模型服务…', 'busy');
+      // 测试也用真实的一问一答，但只要求回两个字：
+      // 只 ping /models 是测不出密钥权限、模型可用性与响应解析的。
+      const probeOnce = (testCfg, timeoutMs) => new Promise((resolve) => {
+        let answer = '';
+        let thought = '';
+        let done = false;
+        let failMsg = '';
+        let handle = null;
+        let timer = 0;
+        const finish = (kind) => {
+          if (done) return;
+          done = true;
+          if (timer) clearTimeout(timer);
+          resolve({ kind, answer: answer.trim(), thought: thought.trim(), error: failMsg });
+        };
+        handle = scStream(testCfg, [{ role: 'user', content: '只回复"ok"两个字' }],
+          (d) => { answer += d; },
+          () => finish('done'),
+          (err) => {
+            failMsg = (err && err.message) || '请求失败';
+            finish('error');
+          },
+          (t) => { thought += t; });
+        timer = setTimeout(() => {
+          try { handle && handle.abort(); } catch (err) {}
+          finish('timeout');
+        }, timeoutMs);
+      });
+
+      try {
+        let result = await probeOnce(c, 15000);
+        if (result.kind === 'timeout') {
+          setStatus('超时：15 秒内接口没有完成响应', 'err');
+          return;
+        }
+        if (result.kind === 'error') {
+          setStatus('连接失败 · ' + result.error, 'err');
+          return;
+        }
+        if (result.answer) {
+          setStatus('连接成功 · 模型返回 ' + result.answer.slice(0, 40), 'ok');
+          return;
+        }
+        if (result.thought) {
+          setStatus('模型可用并返回了思考内容，但没有最终正文；请降低思考等级或关闭思考后重试', 'warn');
+          return;
+        }
+
+        /* 模型存在但当前生成参数可能不被网关接受（尤其超大 max_tokens、
+         * reasoning_effort 组合）。用最小参数再确认一次，避免把“参数不兼容”
+         * 误报成“模型名称不可用”。 */
+        setStatus('已连接但首次没有正文，正在用默认参数重试…', 'busy');
+        result = await probeOnce(Object.assign({}, c, {
+          temperature: null,
+          maxTokens: null,
+          reasoningEffort: 'default'
+        }), 15000);
+        if (result.kind === 'timeout') {
+          setStatus('模型可用但响应超时；请检查网络或降低思考等级', 'warn');
+        } else if (result.kind === 'error') {
+          setStatus('默认参数重试失败 · ' + result.error, 'err');
+        } else if (result.answer) {
+          setStatus('模型可用；当前温度、token 或思考参数可能不兼容，建议改用默认参数', 'warn');
+        } else if (result.thought) {
+          setStatus('模型可用并返回了思考内容，但当前模型没有输出最终正文；请关闭思考后重试', 'warn');
+        } else {
+          setStatus('接口连接正常，但两种参数组合都没有返回正文；请查看网关日志或模型输出设置', 'err');
+        }
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = old;
+      }
+    });
+
+    const saveBtn = folderEl('button',
+      'craber-set-btn craber-set-btn-primary craber-sc-save', '保存配置');
+    saveBtn.type = 'button';
+    saveBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const c = collect();
+      if (c.model && !c.modelConfigs.some((profile) => profile.id === c.model)) {
+        setStatus('请先点击「添加模型」，再保存为当前模型', 'warn');
+        modelIn.focus();
+        return;
+      }
+      if (scStreamHandle || scPreparingSend || scReadingAttachments) {
+        setStatus('侧栏正在处理消息或附件，请稍后保存', 'warn');
+        return;
+      }
+      scCfgSave(c);
+      syncReadyBadge(c);
+      setStatus('配置已保存，可以直接打开侧栏', 'ok');
+      /* 面板可能正开着（"去配置"就是从这里跳来的）：
+       * 上下文条、引导卡、输入框禁用态都要按新配置重画一遍，
+       * 否则用户保存完切回面板，看到的还是"未配置"。 */
+      if (scRefs) {
+        scEnsureThread();
+        scRenderTitle();
+        scCloseMenus();
+        scSyncCtxBar();
+        scRenderMessages();
+        if (!scRefs.hist.hidden) scRenderHistory();
+      }
+    });
+
+    const openBtn = folderEl('button', 'craber-set-btn', '打开侧栏');
+    openBtn.type = 'button';
+    openBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const c = collect();
+      if (c.model && !c.modelConfigs.some((profile) => profile.id === c.model)) {
+        setStatus('请先点击「添加模型」，再打开侧栏', 'warn');
+        modelIn.focus();
+        return;
+      }
+      if (!scCfgReady(c)) {
+        setStatus('填写 API 地址并添加一个启用输入模态的模型后即可打开', 'err');
+        (!c.baseUrl ? urlIn : modelIn).focus();
+        return;
+      }
+      if (scStreamHandle || scPreparingSend || scReadingAttachments) {
+        setStatus('侧栏正在处理消息或附件，请稍后打开', 'warn');
+        return;
+      }
+      scCfgSave(c);
+      syncReadyBadge(c);
+      /* 设置中心是模态（z 900），抽屉只有 40：不关掉模态，
+       * 抽屉会开在遮罩底下，用户只会觉得"点了没反应"。先关模态再开。 */
+      craberDialogClose(craberDialogTop());
+      setTimeout(() => scMount(), 0);
+    });
+
+    bar.append(testBtn, openBtn, saveBtn);
+    foot.append(status, bar);
+    p.append(foot);
+
+    /* 用法说明：写清楚"侧栏不进主对话"这个边界，
+     * 否则用户会奇怪为什么侧栏问的东西在会话列表里找不到。 */
+    const tip = document.createElement('details');
+    tip.className = 'craber-sc-help';
+    tip.open = false;
+    const tipSummary = folderEl('summary', null, '侧边聊天如何工作');
+    const tipBody = folderEl('div', 'craber-sc-help-body');
+    tipBody.innerHTML = '侧栏对话只存在本机浏览器里，不写进 ChatGPT 的会话列表，'
+      + '也不消耗你 ChatGPT 账号的额度。侧聊历史按模型分开；开启主会话上下文后，'
+      + '可附带<b>选中区域的当前轮次</b>或<b>整个对话</b>。';
+    tip.append(tipSummary, tipBody);
+    p.append(tip);
+    return p;
+  }
+
+  // 页面 4：WebDAV 连接设置
   function craberPageDavConn() {
     const cfg = davLoad();
-    const p = craberPage('连接设置', '数据存在你自己的网盘里，只同步文件夹结构。');
+    const p = craberPage('连接设置', '配置 WebDAV，用于文件夹同步与会话备份。');
 
     const box = folderEl('div', 'craber-set-form');
     // 横向行：左边标签+说明，右边输入框
     const mkField = (label, hint, value, ph, type) => {
       const w = folderEl('div', 'craber-set-field');
       const col = folderEl('div', 'craber-set-fieldcol');
-      col.append(folderEl('div', 'craber-set-label', label));
+      const lab = folderEl('label', 'craber-set-label', label);
+      col.append(lab);
       if (hint) col.append(folderEl('div', 'craber-set-hint', hint));
       const ctrl = folderEl('div', 'craber-set-ctrl');
       const inp = document.createElement('input');
       inp.type = type || 'text';
+      inp.id = 'craber-dav-field-' + box.children.length;
+      lab.htmlFor = inp.id;
       inp.className = 'craber-dlg-input';
       inp.value = value || '';
       if (ph) inp.placeholder = ph;
@@ -12325,8 +13947,8 @@
       box.append(w);
       return inp;
     };
-    const urlIn = mkField('服务器地址', 'WebDAV 的根地址', cfg.url, 'https://example.com/dav/');
-    const userIn = mkField('用户名', '', cfg.user, '一般就是 WebDAV 的登录名');
+    const urlIn = mkField('服务器地址', '', cfg.url, 'https://example.com/dav/');
+    const userIn = mkField('用户名', '', cfg.user, 'WebDAV 用户名');
     const passIn = mkField('密码', '部分服务要填应用密码', cfg.pass, '••••••••', 'password');
 
     const status = folderEl('div', 'craber-dav-status', '');
@@ -12382,7 +14004,7 @@
   /* ---------- 页面 4：文件夹同步 ---------- */
   function craberPageDavSync() {
     const cfg = davLoad();
-    const p = craberPage('文件夹同步', '按文件夹名合并：两边各有的都保留，同名的把条目并起来。');
+    const p = craberPage('文件夹同步', '同名文件夹合并条目，两端独有内容保留。');
 
     /* 每个账号一个远端文件：同一个 WebDAV 多账号用时互不覆盖。
      * 页面上直接写清楚"同步的是哪个文件"，换账号后发现看不到旧数据时不会以为丢东西。
@@ -12876,7 +14498,7 @@
     const doneCount = Object.keys(state.done || {}).length;
     const blog = davBackupLogLoad();
 
-    const p = craberPage('会话备份', '把会话导出成 zip 存到 WebDAV，按账号与日期分目录。');
+    const p = craberPage('会话备份', '导出 ZIP 到 WebDAV，按账号与日期归档。');
 
     const fmtBytes = (n) => {
       const b = Number(n) || 0;
@@ -13395,8 +15017,8 @@
     tip.style.display = 'block';
     tip.classList.remove('craber-tip-up');
 
-    // 目标在自家模态里 → 抬高层级；在页面正文里 → 保持低调，别盖住原生菜单
-    tip.classList.toggle('craber-tip-modal', !!el.closest('.craber-dlg-mask'));
+    // 模型菜单与模态同样在高层；正文提示维持默认层级。
+    tip.classList.toggle('craber-tip-modal', !!el.closest('.craber-dlg-mask, .craber-sc-modelmenu'));
 
     const r = el.getBoundingClientRect();
     const tw = tip.offsetWidth;
@@ -13466,13 +15088,17 @@
   const TIP_OWN_ATTR = 'data-craber-title';
   function isOwnUi(el) {
     if (!el) return false;
+    /* 侧边聊天面板内的元素不接管 title：那是贴右边缘的窄栏，
+     * 全局气泡按视口夹位置，会显示到面板外面去（看着像从面板里飘出来）。
+     * 面板内保持浏览器原生 tooltip 更自然。 */
+    if (el.closest && el.closest('.craber-sc')) return false;
     const c = el.className;
     if (typeof c === 'string') return c.indexOf('craber-') >= 0;
     // SVG 元素的 className 是 SVGAnimatedString；closest('[title]') 也可能落到 path 上
     if (c && typeof c.baseVal === 'string') return c.baseVal.indexOf('craber-') >= 0;
     // 兜底：按钮里嵌的 svg 没有 class，往上找一层
     const host = el.closest('.craber-tip, [class*="craber-"]');
-    return !!host;
+    return !!host && !(host.closest && host.closest('.craber-sc'));
   }
 
   function installTitleTooltip() {
@@ -13589,6 +15215,357 @@
     });
   }
 
+  /* ============================================================
+   * 输入框：清除格式（只处理草稿，不碰消息和附件）
+   * ========================================================== */
+
+  // 每个块之间补一个换行，块里已有的空行不压缩；行内节点直接相接。
+  // 不能用 textContent（会粘行）或剥 Markdown 的正则（会误删代码字符）。
+  function craberComposerJoin(parts, separator) {
+    let text = '';
+    parts.forEach((part, i) => {
+      if (i) text += separator !== undefined ? separator : (part.block || parts[i - 1].block ? '\n' : '');
+      text += part.text;
+    });
+    return { text, formatted: parts.some((part) => part.formatted), block: false };
+  }
+
+  function craberComposerReadDom(root) {
+    const blocks = new Set(['P', 'DIV', 'PRE', 'BLOCKQUOTE', 'UL', 'OL', 'LI',
+      'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'HR']);
+    const inline = new Set(['SPAN', 'A', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'DEL', 'STRIKE',
+      'CODE', 'MARK', 'SUB', 'SUP', 'FONT', 'BR']);
+    const walk = (node) => {
+      if (node.nodeType === 3) return { text: node.nodeValue || '', block: false, formatted: false };
+      if (node.nodeType === 8) return null;
+      const tag = node.tagName;
+      if (node.nodeType !== 1 || (!blocks.has(tag) && !inline.has(tag))) {
+        throw new Error('输入框含有附件或不支持的非文本内容，已保留原稿');
+      }
+      if (node !== root && (node.hasAttribute('contenteditable') ||
+          /mention|attachment|image|file|embed/i.test(node.getAttribute('data-type') || node.getAttribute('data-node-type') || ''))) {
+        throw new Error('输入框含有附件、提及或嵌入内容，已保留原稿');
+      }
+      if (tag === 'BR') {
+        if (node.classList.contains('ProseMirror-trailingBreak')) return null;
+        return { text: '\n', block: false, formatted: false };
+      }
+      const children = Array.from(node.childNodes).filter((child) => child.nodeType !== 8);
+      // 一个独立的 <p><br></p> 是空段落，不是两个空行。
+      const placeholder = (tag === 'P' || tag === 'DIV') && children.length === 1 && children[0].tagName === 'BR';
+      const parts = placeholder ? [] : children.map(walk).filter(Boolean);
+      const result = craberComposerJoin(parts, tag === 'TR' ? '\t' : undefined);
+      result.block = blocks.has(tag);
+      result.formatted = result.formatted || (node !== root &&
+        (!['P', 'DIV', 'SPAN'].includes(tag) || !!node.getAttribute('style')));
+      return result;
+    };
+    return walk(root);
+  }
+
+  function craberComposerReadModel(json) {
+    const blocks = new Set(['doc', 'paragraph', 'heading', 'codeblock', 'blockquote',
+      'bulletlist', 'orderedlist', 'listitem', 'table', 'tablerow', 'tablecell', 'tableheader', 'horizontalrule']);
+    const walk = (node) => {
+      const type = String(node.type || '').replace(/_/g, '').toLowerCase();
+      if (type === 'text') return { text: node.text || '', block: false, formatted: !!(node.marks && node.marks.length) };
+      if (type === 'hardbreak') return { text: '\n', block: false, formatted: false };
+      if (!blocks.has(type)) throw new Error('输入框含有附件或不支持的非文本内容，已保留原稿');
+      const result = craberComposerJoin((node.content || []).map(walk), type === 'tablerow' ? '\t' : undefined);
+      result.block = true;
+      const attrs = node.attrs || {};
+      const styled = ['textAlign', 'align', 'indent', 'color', 'backgroundColor', 'fontSize', 'fontFamily', 'style']
+        .some((key) => attrs[key] && attrs[key] !== 'left');
+      result.formatted = result.formatted || !['doc', 'paragraph'].includes(type) || styled || !!(node.marks && node.marks.length);
+      return result;
+    };
+    return walk(json);
+  }
+
+  function craberComposerPlainHtml(text) {
+    return text.split('\n').map((line) => '<p>' + (line ? escapeHtml(line) : '<br>') + '</p>').join('');
+  }
+
+  function craberComposerView(editor) {
+    // Tiptap / ProseMirror 的 DOM 引用不是公开承诺，逐项做能力检查。
+    // 油猴隔离环境读不到时走原生编辑命令，不扫描 React 私有状态。
+    const probes = [() => editor.editor && editor.editor.view,
+      () => editor.pmViewDesc && editor.pmViewDesc.view,
+      () => editor.pmViewDesc && editor.pmViewDesc.root && editor.pmViewDesc.root.view];
+    for (const probe of probes) {
+      try {
+        const view = probe();
+        if (view && view.dom === editor && !view.isDestroyed && view.state &&
+            typeof view.state.doc.toJSON === 'function' && typeof view.dispatch === 'function') return view;
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  const CRABER_COMPOSER_ICON = '<path d="m16 3 5 5-11 11H5l-3-3L16 3Z"/>'
+    + '<path d="m10 9 5 5M10 19h11"/>';
+  let craberComposer = null;
+
+  function craberComposerCheck(editor, view) {
+    if (!editor || !editor.isConnected || editor.getAttribute('contenteditable') !== 'true' ||
+        editor.getAttribute('aria-disabled') === 'true' || editor.getAttribute('aria-readonly') === 'true') {
+      throw new Error('输入框已切换或暂时不可编辑，请稍后重试');
+    }
+    if ((craberComposer && craberComposer.editor === editor && craberComposer.composing) || (view && view.composing)) {
+      throw new Error('请先完成当前的中文输入，再清除格式');
+    }
+  }
+
+  async function craberComposerWriteModel(editor, view, before) {
+    const original = view.state;
+    const schema = original.schema;
+    const paragraph = schema && schema.nodes.paragraph;
+    const tr = original.tr;
+    if (!paragraph || typeof paragraph.create !== 'function' || typeof schema.text !== 'function' ||
+        !tr || typeof tr.replaceWith !== 'function' || typeof tr.setStoredMarks !== 'function') {
+      throw new Error('当前编辑器不支持安全清除格式，已保留原稿');
+    }
+    const nodes = before.text.split('\n').map((line) => paragraph.create(null, line ? schema.text(line) : null));
+    tr.replaceWith(0, original.doc.content.size, nodes);
+    tr.setStoredMarks([]);
+    if (typeof tr.setMeta === 'function') {
+      tr.setMeta('uiEvent', 'craber-clear-format');
+      // 标准 ProseMirror history 的前边界；key 属于宿主内部约定，实际撤销分组仍须实测。
+      tr.setMeta('closeHistory$', true);
+    }
+    // history 用 transaction.time 决定是否与下一次输入合并；清理后立即打字也要单独撤销。
+    if (typeof tr.setTime === 'function') tr.setTime(0);
+    const Selection = original.selection && original.selection.constructor;
+    if (Selection && typeof Selection.atEnd === 'function' && typeof tr.setSelection === 'function') {
+      tr.setSelection(Selection.atEnd(tr.doc));
+      tr.setStoredMarks([]); // setSelection 会清掉 storedMarks，须放在它后面
+    }
+    const expected = tr.doc;
+    const next = craberComposerReadModel(expected.toJSON());
+    if (next.text !== before.text || next.formatted) throw new Error('无法无损转换当前草稿，已保留原稿');
+    let written = null;
+    try {
+      view.dispatch(tr);
+      written = view.state.doc;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      craberComposerCheck(editor, view);
+      const result = craberComposerReadModel(view.state.doc.toJSON());
+      if (result.text !== before.text || result.formatted ||
+          (view.state.storedMarks && view.state.storedMarks.length)) {
+        throw new Error('编辑器未接受清除格式操作');
+      }
+      view.focus();
+      return 'cleared';
+    } catch (err) {
+      // 仅回滚本次写入；等待期间如有新输入/路由切换，绝不覆盖后来的草稿。
+      if (written && written !== original.doc && view.state.doc === written && editor.isConnected && !view.composing) {
+        try {
+          const restore = view.state.tr.replaceWith(0, written.content.size, original.doc.content);
+          // Selection 持有旧 doc 的 ResolvedPos，直接塞给新事务会被 ProseMirror 拒绝。
+          // 用 bookmark 在恢复后的 doc 上重新解析，才能保留原来的光标/选区。
+          const bookmark = original.selection && typeof original.selection.getBookmark === 'function'
+            ? original.selection.getBookmark() : null;
+          if (bookmark) restore.setSelection(bookmark.resolve(restore.doc));
+          restore.setStoredMarks(original.storedMarks);
+          restore.setMeta('addToHistory', false);
+          view.dispatch(restore);
+        } catch (e) {}
+      }
+      throw err;
+    }
+  }
+
+  function craberComposerSelect(editor) {
+    const doc = editor.ownerDocument;
+    const selection = doc.getSelection();
+    if (!selection) throw new Error('当前浏览器不支持编辑草稿，已保留原稿');
+    editor.focus({ preventScroll: true });
+    const range = doc.createRange();
+    range.selectNodeContents(editor); // 只选这个输入框，不能用页面级 selectAll
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  // 原生命令失败时的局部恢复片段：只复制已检查过的文字结构及安全格式属性。
+  // 不直接回灌原始 innerHTML，避免事件属性、脚本 URL 等随着恢复被执行。
+  function craberComposerRestoreHtml(editor) {
+    const cssNames = new Set(['font-weight', 'font-style', 'font-size', 'font-family', 'color',
+      'background-color', 'text-decoration', 'text-decoration-line', 'text-align', 'text-indent', 'white-space']);
+    const walk = (node) => {
+      if (node.nodeType === 3) return escapeHtml(node.nodeValue || '');
+      if (node.nodeType !== 1) return '';
+      const tag = node.tagName.toLowerCase();
+      if (tag === 'br' && node.classList.contains('ProseMirror-trailingBreak')) return '';
+      let attrs = '';
+      for (const key of ['href', 'title', 'start', 'reversed', 'value', 'colspan', 'rowspan', 'align', 'dir', 'color', 'face', 'size']) {
+        const value = node.getAttribute(key);
+        if (value === null || (key === 'href' && !/^(https?:|mailto:|tel:|\/|#)/i.test(value))) continue;
+        attrs += ' ' + key + '="' + escapeHtml(value) + '"';
+      }
+      const css = (node.getAttribute('style') || '').split(';').filter((rule) => {
+        const colon = rule.indexOf(':');
+        return colon > 0 && cssNames.has(rule.slice(0, colon).trim().toLowerCase()) && !/url\s*\(|expression\s*\(|[<>{}\\]/i.test(rule);
+      }).join(';');
+      if (css) attrs += ' style="' + escapeHtml(css) + '"';
+      return '<' + tag + attrs + '>' + (tag === 'br' || tag === 'hr' ? '' : Array.from(node.childNodes).map(walk).join('') + '</' + tag + '>');
+    };
+    return Array.from(editor.childNodes).map(walk).join('');
+  }
+
+  async function craberComposerWriteNative(editor, before) {
+    const doc = editor.ownerDocument;
+    if (typeof doc.execCommand !== 'function' || (typeof doc.queryCommandSupported === 'function' && !doc.queryCommandSupported('insertHTML'))) {
+      throw new Error('当前浏览器不支持安全清除格式，已保留原稿');
+    }
+    const originalHtml = editor.innerHTML;
+    const restoreHtml = craberComposerRestoreHtml(editor);
+    const selection = doc.getSelection();
+    const previous = selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+    let writing = true;
+    let interrupted = false;
+    let writtenHtml = originalHtml;
+    const onInput = () => { if (!writing) interrupted = true; };
+    editor.addEventListener('input', onInput);
+    editor.addEventListener('compositionstart', onInput);
+    try {
+      craberComposerSelect(editor);
+      // 单次原生编辑会通知编辑器并进入撤销栈；直接改 innerHTML 没有这些保证。
+      const accepted = doc.execCommand('insertHTML', false, craberComposerPlainHtml(before.text));
+      writtenHtml = editor.innerHTML;
+      writing = false;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      craberComposerCheck(editor, null);
+      if (interrupted) throw new Error('草稿在操作期间发生变化，请检查内容后重试');
+      const result = craberComposerReadDom(editor);
+      if (!accepted || result.text !== before.text || result.formatted) throw new Error('编辑器未接受清除格式操作');
+      const caret = doc.getSelection();
+      if (caret && caret.rangeCount && editor.contains(caret.getRangeAt(0).commonAncestorContainer)) {
+        const range = caret.getRangeAt(0);
+        range.collapse(false);
+        caret.removeAllRanges();
+        caret.addRange(range);
+      }
+      return 'cleared';
+    } catch (err) {
+      // 不用页面级 undo：它的栈顶未必是本次操作。只在没有后续输入、焦点和
+      // 内容仍属于本次操作时，尝试一次局部恢复；恢复失败则留给用户检查。
+      let restored = false;
+      if (!interrupted && editor.isConnected && editor.innerHTML === writtenHtml && writtenHtml !== originalHtml &&
+          (doc.activeElement === editor || editor.contains(doc.activeElement))) {
+        try {
+          craberComposerCheck(editor, null);
+          writing = true;
+          craberComposerSelect(editor);
+          const accepted = doc.execCommand('insertHTML', false, restoreHtml);
+          writing = false;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          craberComposerCheck(editor, null);
+          const current = craberComposerReadDom(editor);
+          restored = !interrupted && accepted && current.text === before.text && current.formatted === before.formatted;
+        } catch (e) { writing = false; }
+        if (!restored) throw new Error('清除格式未完成，无法确认原稿已恢复；请检查输入框后再继续');
+      }
+      if (!interrupted && editor.isConnected && editor.innerHTML === originalHtml && previous &&
+          editor.contains(previous.commonAncestorContainer)) {
+        selection.removeAllRanges();
+        selection.addRange(previous);
+      }
+      if (restored) throw new Error('编辑器未接受清除格式，已恢复原稿文字；请检查格式后重试');
+      throw err;
+    } finally {
+      editor.removeEventListener('input', onInput);
+      editor.removeEventListener('compositionstart', onInput);
+    }
+  }
+
+  async function craberComposerClear(editor) {
+    const view = editor && craberComposerView(editor);
+    craberComposerCheck(editor, view);
+    const before = view ? craberComposerReadModel(view.state.doc.toJSON()) : craberComposerReadDom(editor);
+    const activeMarks = !!(view && view.state.storedMarks && view.state.storedMarks.length);
+    if (!before.formatted && !activeMarks) return before.text.length ? 'plain' : 'empty';
+    return view ? craberComposerWriteModel(editor, view, before) : craberComposerWriteNative(editor, before);
+  }
+
+  function craberComposerFind() {
+    // 只认发送草稿输入框；不能用宽泛的 [contenteditable] 命中历史消息编辑或 Canvas。
+    const editors = Array.from(document.querySelectorAll('#prompt-textarea[contenteditable="true"]'));
+    for (const editor of editors) {
+      if (!editor.isConnected || !editor.getClientRects().length || editor.closest('[data-message-author-role], [data-turn-key]')) continue;
+      const scope = editor.closest('form, [data-type="unified-composer"], [data-testid="composer"]');
+      if (!scope) continue;
+      const plus = scope.querySelector('button[data-testid="composer-plus-btn"], button#upload-file-btn, button[aria-label="Add files and more"], button[aria-label="添加文件及更多内容"], button[aria-label="添加照片和文件"]');
+      if (!plus || editor.contains(plus)) continue;
+      // 从＋按钮向外找横向工具组，不插进原生按钮内部，也不改工具栏原有同级节点。
+      for (let host = plus.parentElement; host && host !== scope; host = host.parentElement) {
+        if (host.contains(editor) || host.tagName === 'BUTTON') break;
+        const css = getComputedStyle(host);
+        if ((css.display === 'flex' || css.display === 'inline-flex') &&
+            (css.flexDirection === 'row' || css.flexDirection === 'row-reverse')) {
+          return { editor, host };
+        }
+      }
+    }
+    return null;
+  }
+
+  function craberComposerUnmount() {
+    const old = craberComposer;
+    if (!old) return;
+    if (_tipOwner === old.button) craberTipHide();
+    old.editor.removeEventListener('compositionstart', old.onStart);
+    old.editor.removeEventListener('compositionend', old.onEnd);
+    old.button.remove();
+    craberComposer = null;
+  }
+
+  function craberComposerMount() {
+    if (!uiPrefs.composerClear) { craberComposerUnmount(); return; }
+    const target = craberComposerFind();
+    if (!target) { craberComposerUnmount(); return; }
+    if (craberComposer && craberComposer.editor === target.editor) {
+      // React 只重建工具栏时复用按钮与监听，不能把进行中的组合输入/busy 状态清零。
+      if (craberComposer.button.parentElement !== target.host) target.host.appendChild(craberComposer.button);
+      craberComposer.host = target.host;
+      return;
+    }
+    craberComposerUnmount();
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'craber-composer-clear';
+    button.setAttribute('data-craber-composer-clear', '1');
+    button.setAttribute('aria-label', '清除输入框 Markdown 格式');
+    button.innerHTML = mi(CRABER_COMPOSER_ICON);
+    bindTooltip(button, '清除格式（保留文字和换行）');
+    const entry = { ...target, button, composing: false, busy: false };
+    entry.onStart = () => { entry.composing = true; button.disabled = true; };
+    entry.onEnd = () => { entry.composing = false; button.disabled = entry.busy; };
+    entry.editor.addEventListener('compositionstart', entry.onStart);
+    entry.editor.addEventListener('compositionend', entry.onEnd);
+    // 保留编辑器焦点，避免一次鼠标点击先结束组合输入、再误清除尚未确认的字。
+    button.addEventListener('mousedown', (e) => { if (e.button === 0) e.preventDefault(); });
+    button.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (entry.busy || entry.composing || craberComposer !== entry) return;
+      entry.busy = true;
+      button.disabled = true;
+      try {
+        const result = await craberComposerClear(entry.editor);
+        navToast(result === 'empty' ? '输入框为空' : result === 'plain' ? '当前已经是普通文本' : '已清除格式，可继续编辑或按 Ctrl+Z 撤销');
+      } catch (err) {
+        console.error('[gpt-craber] 清除格式失败', err);
+        navToast(err && err.message ? err.message : '清除格式失败，请检查草稿');
+      } finally {
+        entry.busy = false;
+        button.disabled = entry.composing;
+      }
+    });
+    target.host.appendChild(button);
+    craberComposer = entry;
+  }
+
   // MutationObserver 跟进虚拟滚动挂载的新消息节点。
   // 注意：injectSingleButtons 会写 node.style.position，本身也会触发 DOM 变更，
   // 若直接在回调里同步执行会自我触发、加上 ChatGPT 流式更新造成疯狂重入（闪烁）。
@@ -13599,8 +15576,10 @@
     scheduled = true;
     setTimeout(() => {
       scheduled = false;
+      scPlaceholderTick();
       mountFab();
       injectSingleButtons();
+      craberComposerMount();
       maybeRefreshNavRail();
     }, 250);
   }
@@ -13617,28 +15596,3102 @@
       scheduleScan();
       scheduleNavRender(NAV_SWITCH_DELAY);   // 别立刻拉，会和 ChatGPT 自己的首屏请求撞车
       pbarCloseMenu();
+      /* 换会话：React 会重建整个内容区，之前给 body 写的 padding 可能被冲掉，
+       * 面板也可能被挤出正确位置。这里补一次让位（不重开/关闭，只维持状态）。
+       * 另外如果记着"开"但面板因页面重建而丢了，补开一次。 */
+      if (scOpenStateLoad() && uiPrefs.sideChat) {
+        setTimeout(() => {
+          // 切到非会话页（设置页等）时不该有面板：收起但保留记忆
+          if (!isConvPage()) {
+            if (scOpen) {
+              scOpen = false;
+              if (scEl) scEl.classList.remove('craber-open');
+              scApplyPlaceholder(false);
+            }
+            return;
+          }
+          if (!scOpen || !scEl) scRestoreOpenState();
+          else scApplyPlaceholder(true, scWidthLoad());
+        }, 800);
+      }
     } else {
       // 路径没变时也轻量重定位：侧边栏收起/展开会改变 main 的左边缘
       updateNavRailPos();
     }
     // 顶栏里的导出按钮会被 React 重建清掉，每秒补挂一次（已挂则是空操作）
     mountFab();
+    craberComposerMount();
     // 项目条：位置要跟着 header 高度与窗口变化走，同时判断是否还在项目内对话页
     pbarTick();
     // 对话完成通知：下降沿检测，见 notifyTick
     notifyTick();
     // 侧栏文件夹：原生侧栏会被 React 重建，每秒补挂一次（有指纹比对，无变化不做）
     foldersTick();
+    // 侧边聊天占位：站点/React 可能改写 body 的 padding，每秒比对拉回
+    scPlaceholderTick();
   }, 1000);
+
+  /* ============================================================
+   * 侧边聊天
+   *
+   * 定位：在 ChatGPT 页面右侧开一个抽屉，装一条与主对话并行的问答线。
+   *
+   * 为什么自建面板 + 接外部 OpenAI 兼容接口，而不是内嵌官网 iframe：
+   * - iframe 里是完整一套 ChatGPT，自带滚动容器、顶栏、输入框，窄宽度下
+   *   官方布局会挤成一条；我们也没法控制它的样式与行为。
+   * - 自建面板能把宽度、气泡、上下文注入全部拿在手里。
+   * 代价是要自己管接口与流式解析 —— 见 scStream。
+   *
+   * 为什么必须走 GM_xmlhttpRequest 而不是 fetch：
+   * chatgpt.com 的 CSP connect-src 是一份白名单，不带任意第三方域名，
+   * 页面里的 fetch 打外部 API 会被直接拦掉。脚本有 @connect *，
+   * 走 GM_xmlhttpRequest 才能绕开这条限制。
+   * ========================================================== */
+
+  const SC_CFG_KEY = 'gpt_craber_sidechat_cfg';
+  const SC_THREADS_KEY = 'gpt_craber_sidechat_threads';
+  const SC_WIDTH_KEY = 'gpt_craber_sidechat_width';
+  // 展开状态记忆：刷新 / 换会话后仍保持上次的开合状态
+  const SC_OPEN_KEY = 'gpt_craber_sidechat_open';
+  const SC_THREADS_MAX = 40;
+
+  // 选区入口带过来的文字。侧栏打开后用户的选区就没了（焦点进了输入框），
+  // 所以必须在这里留一份，否则"在侧边问"点下去上下文是空的。
+  // 放在模块最前面：scBuildContext 要读它，声明晚于使用会踩 TDZ。
+  let scPendingSelection = '';
+  let scPendingTurn = null;
+  let scSelectionPath = '';
+  // 上下文长度上限：按字符粗估（中文约 1 字 1 token，英文约 4 字符 1 token）。
+  // 超了就从最早的内容开始砍，保住最近的对话。
+  const SC_CTX_MAX_CHARS = 12000;
+  const SC_EFFORT_LABELS = { off: '关闭', low: '低', medium: '中', high: '高', max: '最高' };
+
+  const SC_CFG_DEFAULT = {
+    baseUrl: '',
+    apiKey: '',
+    model: '',
+    modelConfigs: [],
+    systemPrompt: '',
+    temperature: null,
+    maxTokens: null,
+    // default 是未指定状态，不算档位，也不发推理字段。
+    reasoningEffort: 'default',
+    // turn = 选中区域所属的问答轮次；all = 当前分支的整个主对话。
+    ctxMode: 'turn'
+  };
+
+  function scNormalizeModelConfigs(cfg) {
+    const profiles = [];
+    const seen = new Set();
+    const rows = Array.isArray(cfg.modelConfigs) ? cfg.modelConfigs : [];
+    for (const row of rows) {
+      const id = String(row && (row.id || row.model) || '').trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const enabledEfforts = scEffortOptions(row.enabledEfforts);
+      const profile = {
+        id,
+        ctxMode: row.ctxMode === 'all' ? 'all' : 'turn',
+        mainContextEnabled: row.mainContextEnabled !== false,
+        textEnabled: row.textEnabled !== false,
+        imageEnabled: row.imageEnabled !== false,
+        enabledEfforts,
+        reasoningEffort: scNormalizeEffort(row.reasoningEffort, enabledEfforts),
+        threadId: String(row.threadId || '')
+      };
+      if (!profile.textEnabled && !profile.imageEnabled) profile.textEnabled = true;
+      profiles.push(profile);
+    }
+    const active = String(cfg.model || '').trim();
+    if (active && !seen.has(active)) {
+      profiles.unshift({
+        id: active,
+        ctxMode: cfg.ctxMode === 'all' ? 'all' : 'turn',
+        mainContextEnabled: true,
+        textEnabled: true,
+        imageEnabled: true,
+        enabledEfforts: scEffortOptions(),
+        reasoningEffort: scNormalizeEffort(cfg.reasoningEffort),
+        threadId: ''
+      });
+    }
+    if (!active && profiles.length) cfg.model = profiles[0].id;
+    return profiles;
+  }
+
+  function scCfgLoad() {
+    let raw = null;
+    try {
+      const stored = localStorage.getItem(SC_CFG_KEY);
+      raw = stored ? JSON.parse(stored) : {};
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
+    } catch (e) { raw = {}; }
+    const hadModelConfigs = Array.isArray(raw.modelConfigs);
+    const cfg = Object.assign({}, SC_CFG_DEFAULT, raw);
+    cfg.modelConfigs = scNormalizeModelConfigs(cfg);
+
+    /* 一次性将旧版单模型配置和历史线程归到当前模型下。
+     * 线程正文原样保留，只补 modelId 和该模型正在使用的 threadId。 */
+    if (!hadModelConfigs && cfg.model) {
+      const profile = cfg.modelConfigs.find((item) => item.id === cfg.model);
+      if (profile) profile.mainContextEnabled = scLegacyMainContext();
+      const threads = scThreadsLoad();
+      let changed = false;
+      for (const thread of threads) {
+        if (thread && !thread.modelId) {
+          thread.modelId = cfg.model;
+          thread.baseUrl = scEndpoint(cfg);
+          changed = true;
+        }
+      }
+      const first = threads.find((thread) => scThreadMatches(thread, cfg));
+      if (first && profile && !profile.threadId) profile.threadId = first.id;
+      if (!changed || scThreadsSave(threads)) scCfgSave(cfg);
+    }
+    return cfg;
+  }
+
+  function scLegacyMainContext() {
+    try { return localStorage.getItem('gpt_craber_sidechat_mainctx') !== '0'; }
+    catch (e) { return true; }
+  }
+  function scCfgSave(c) {
+    try {
+      const cfg = Object.assign({}, SC_CFG_DEFAULT, c || {});
+      cfg.modelConfigs = scNormalizeModelConfigs(cfg);
+      const profile = cfg.modelConfigs.find((item) => item.id === cfg.model);
+      if (profile) {
+        cfg.ctxMode = profile.ctxMode;
+        cfg.reasoningEffort = profile.reasoningEffort;
+      }
+      localStorage.setItem(SC_CFG_KEY, JSON.stringify(cfg));
+    } catch (e) {}
+  }
+  function scModelConfigFor(cfg, id) {
+    const base = cfg || scCfgLoad();
+    const model = String(id || base.model || '').trim();
+    const profile = (base.modelConfigs || []).find((item) => item.id === model);
+    const enabledEfforts = scEffortOptions((profile || base).enabledEfforts);
+    return Object.assign({}, base, profile || {}, {
+      model,
+      ctxMode: profile ? profile.ctxMode : (base.ctxMode === 'all' ? 'all' : 'turn'),
+      mainContextEnabled: profile ? profile.mainContextEnabled !== false : scLegacyMainContext(),
+      textEnabled: profile ? profile.textEnabled !== false : true,
+      imageEnabled: profile ? profile.imageEnabled !== false : true,
+      enabledEfforts,
+      reasoningEffort: scNormalizeEffort(profile ? profile.reasoningEffort : base.reasoningEffort, enabledEfforts)
+    });
+  }
+  function scSetModelConfig(cfg, id, patch) {
+    const model = String(id || '').trim();
+    if (!model) return cfg;
+    cfg.modelConfigs = Array.isArray(cfg.modelConfigs) ? cfg.modelConfigs : [];
+    let profile = cfg.modelConfigs.find((item) => item.id === model);
+    if (!profile) {
+      const prior = model === cfg.model ? scModelConfigFor(cfg, model) : null;
+      profile = {
+        id: model,
+        ctxMode: prior ? prior.ctxMode : 'turn',
+        mainContextEnabled: prior ? prior.mainContextEnabled : true,
+        textEnabled: prior ? prior.textEnabled : true,
+        imageEnabled: prior ? prior.imageEnabled : true,
+        enabledEfforts: prior ? prior.enabledEfforts : scEffortOptions(),
+        reasoningEffort: prior ? prior.reasoningEffort : 'default',
+        threadId: prior ? prior.threadId : ''
+      };
+      cfg.modelConfigs.push(profile);
+    }
+    Object.assign(profile, patch || {});
+    profile.id = model;
+    profile.ctxMode = profile.ctxMode === 'all' ? 'all' : 'turn';
+    profile.mainContextEnabled = profile.mainContextEnabled !== false;
+    profile.textEnabled = profile.textEnabled !== false;
+    profile.imageEnabled = profile.imageEnabled !== false;
+    if (!profile.textEnabled && !profile.imageEnabled) profile.textEnabled = true;
+    profile.enabledEfforts = scEffortOptions(profile.enabledEfforts);
+    profile.reasoningEffort = scNormalizeEffort(profile.reasoningEffort, profile.enabledEfforts);
+    profile.threadId = String(profile.threadId || '');
+    return cfg;
+  }
+  function scCfgReady(c) {
+    const cfg = c || scCfgLoad();
+    const profile = scModelConfigFor(cfg);
+    return !!(cfg.baseUrl && cfg.model && (profile.textEnabled || profile.imageEnabled));
+  }
+
+  function scEndpoint(cfg) {
+    return String(cfg.baseUrl || '').trim().replace(/\/+$/, '');
+  }
+
+  function scThreadMatches(thread, cfg) {
+    return thread && thread.modelId === cfg.model && thread.baseUrl === scEndpoint(cfg);
+  }
+
+  /* /models 的返回格式并不完全统一：
+   * - OpenAI 标准：{ data: [{ id, owned_by }] }
+   * - Ollama / 部分网关：{ models: [...] }
+   * - 少数代理直接返回数组，或套在 data.models 里。
+   * 这里只提取“能作为请求 model 参数使用”的 id，并保留可选显示名。
+   */
+  function scModelsFromResponse(payload) {
+    let rows = null;
+    if (Array.isArray(payload)) rows = payload;
+    else if (payload && Array.isArray(payload.data)) rows = payload.data;
+    else if (payload && Array.isArray(payload.models)) rows = payload.models;
+    else if (payload && payload.data && Array.isArray(payload.data.models)) rows = payload.data.models;
+    else if (payload && payload.result && Array.isArray(payload.result.data)) rows = payload.result.data;
+    if (!rows) return [];
+
+    const byId = new Map();
+    for (const row of rows) {
+      let id = '';
+      let label = '';
+      let owner = '';
+      let maxOutputTokens = 0;
+      let efforts = [];
+      let onlyReasoning = false;
+      if (typeof row === 'string') {
+        id = row.trim();
+      } else if (row && typeof row === 'object') {
+        const model = typeof row.model === 'object' && row.model
+          ? row.model.id || row.model.name : row.model;
+        id = String(row.id || model || row.slug || row.model_id || '').trim();
+        label = String(row.display_name || row.displayName || row.label || row.title || '').trim();
+        owner = String(row.owned_by || row.owner || '').trim();
+        // 顺带记下能力元数据：面板可以据此给出更准的提示
+        maxOutputTokens = Number(row.max_output_tokens || row.maxOutputTokens || 0) || 0;
+        const rawEfforts = row.reasoning_supported_efforts || row.efforts
+          || row.reasoningSupportedEfforts
+          || (Array.isArray(row.supported_reasoning_levels)
+            ? row.supported_reasoning_levels.map((x) => (x && x.effort) || x)
+            : []);
+        efforts = Array.isArray(rawEfforts)
+          ? rawEfforts.map((x) => String(x || '').trim()).filter(Boolean)
+          : [];
+        onlyReasoning = row.only_reasoning === true || row.onlyReasoning === true;
+      }
+      if (!id || byId.has(id)) continue;
+      if (!label && typeof row === 'object' && row.name && row.name !== id) {
+        label = String(row.name).trim();
+      }
+      byId.set(id, {
+        id,
+        label: label && label !== id ? label : '',
+        owner,
+        maxOutputTokens,
+        efforts,
+        onlyReasoning
+      });
+    }
+    return [...byId.values()]
+      .sort((a, b) => a.id.localeCompare(b.id, 'en'))
+      .slice(0, 2000);
+  }
+
+  function scModelErrorText(body, status) {
+    let detail = '';
+    try {
+      const j = typeof body === 'string' ? JSON.parse(body) : body;
+      detail = (j && j.error && (j.error.message || j.error))
+        || (j && (j.message || j.detail)) || '';
+    } catch (e) {
+      detail = String(body || '').trim();
+    }
+    if (detail && typeof detail === 'object') detail = JSON.stringify(detail);
+    detail = String(detail || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+    return 'HTTP ' + status + (detail ? ' · ' + detail : '');
+  }
+
+  function scModelOptions(cfg) {
+    try {
+      const source = localStorage.getItem('gpt_craber_model_source');
+      if (source && source !== String((cfg || scCfgLoad()).baseUrl || '').trim().replace(/\/+$/, '')) return [];
+      return scModelsFromResponse(JSON.parse(localStorage.getItem('gpt_craber_model_opts') || '[]'));
+    } catch (e) { return []; }
+  }
+
+  function scConfiguredModels(cfg) {
+    const current = cfg || scCfgLoad();
+    const available = scModelOptions(current);
+    return (current.modelConfigs || []).map((profile) => {
+      const meta = available.find((item) => item.id === profile.id);
+      return Object.assign({}, meta || {}, profile, { id: profile.id });
+    });
+  }
+
+  function scSaveModels(models, cfg) {
+    try {
+      localStorage.setItem('gpt_craber_model_opts', JSON.stringify(models));
+      localStorage.setItem('gpt_craber_model_source', String(cfg.baseUrl || '').replace(/\/+$/, ''));
+    } catch (e) {}
+  }
+
+  function scEffortOptions(enabled) {
+    const options = Object.keys(SC_EFFORT_LABELS);
+    return Array.isArray(enabled) ? options.filter((value) => enabled.includes(value)) : options;
+  }
+
+  function scNormalizeEffort(value, enabled) {
+    if (value === 'minimal') value = 'low';
+    if (value === 'xhigh') value = 'max';
+    return Object.hasOwn(SC_EFFORT_LABELS, value) && (!Array.isArray(enabled) || enabled.includes(value))
+      ? value : 'default';
+  }
+
+  function scEffortLabel(effort) {
+    return SC_EFFORT_LABELS[scNormalizeEffort(effort)] || '未设置';
+  }
+
+  function scAttachmentContent(message, text, profile) {
+    const allowText = !profile || profile.textEnabled !== false;
+    const allowImages = !profile || profile.imageEnabled !== false;
+    let body = allowText ? (text == null ? message.content || '' : text) : '';
+    const files = message.attachments || [];
+    for (const file of allowText ? files : []) {
+      if (file.kind === 'text') body += '\n\n【附件：' + file.name + '】\n' + file.text;
+    }
+    const binary = allowImages ? files.filter((file) => file.kind === 'image' || file.kind === 'pdf') : [];
+    if (!binary.length) return body;
+    return [...(body ? [{ type: 'text', text: body }] : []), ...binary.map((file) => file.kind === 'pdf'
+      ? { type: 'file', file: { filename: file.name, file_data: file.dataUrl } }
+      : { type: 'image_url', image_url: { url: file.dataUrl } })];
+  }
+
+  function scInputError(message, profile) {
+    const files = message.attachments || [];
+    if (!profile.textEnabled && (message.content || files.some((file) => file.kind === 'text'))) {
+      return '当前模型未启用文本输入，请移除文本或切换模型';
+    }
+    if (!profile.imageEnabled && files.some((file) => file.kind === 'image' || file.kind === 'pdf')) {
+      return '当前模型未启用图片输入，请移除图片或 PDF，或切换模型';
+    }
+    return '';
+  }
+
+  function scTurnMessages(thread, question, profile) {
+    const messages = [];
+    if (profile.textEnabled && profile.systemPrompt?.trim()) {
+      messages.push({ role: 'system', content: profile.systemPrompt.trim() });
+    }
+    let includeAnswer = false;
+    for (const message of thread.messages) {
+      if (message === question) break;
+      if (message.role === 'user') {
+        const content = scAttachmentContent(message, undefined, profile);
+        includeAnswer = !!content;
+        if (content) messages.push({ role: 'user', content });
+      } else if (includeAnswer && profile.textEnabled && message.content && !message.error) {
+        messages.push({ role: 'assistant', content: message.content });
+      }
+    }
+    // 主会话上下文只附加在当前问题，不重复发送历史轮次的主会话正文。
+    const context = profile.mainContextEnabled && profile.textEnabled ? question.ctx : '';
+    const text = context ? context + '\n\n【我的问题】\n' + (question.content || '') : question.content;
+    messages.push({ role: 'user', content: scAttachmentContent(question, text, profile) });
+    return messages;
+  }
+
+  async function scReadAttachment(file) {
+    if (file.size > 10 * 1024 * 1024) throw new Error(file.name + ' 超过 10 MB');
+    const pdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    if (pdf || /^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('读取失败：' + file.name));
+        reader.readAsDataURL(file);
+      });
+      return { kind: pdf ? 'pdf' : 'image', name: file.name, size: file.size, dataUrl };
+    }
+    if (/^text\//.test(file.type) || /\.(txt|md|csv|tsv|json|jsonl|xml|html|css|js|mjs|cjs|ts|tsx|jsx|py|yml|yaml|log|sql|sh|c|cpp|h|hpp|java|go|rs|rb|toml|ini)$/i.test(file.name)) {
+      if (file.size > 1024 * 1024) throw new Error(file.name + ' 超过文本附件的 1 MB 限制');
+      return { kind: 'text', name: file.name, size: file.size, text: await file.text() };
+    }
+    throw new Error('暂不支持此文件格式：' + file.name + '，可添加图片、PDF 或文本文件');
+  }
+
+  /* 有些 OpenAI 兼容网关把 content 从字符串改成了数组/对象：
+   *   [{ type:'text', text:'…' }]
+   *   { type:'output_text', text:'…' }
+   *   { text:'…' } / { content:'…' }
+   * 统一递归取出可用文本，避免“响应明明有内容却被当成空”。
+   */
+  function scApiText(value, depth) {
+    const level = depth || 0;
+    if (level > 5 || value == null) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+      return value.map((x) => scApiText(x, level + 1)).join('');
+    }
+    if (typeof value === 'object') {
+      const direct = value.text ?? value.output_text ?? value.value;
+      if (typeof direct === 'string') return direct;
+      if (Array.isArray(value.parts)) return value.parts.map((x) => scApiText(x, level + 1)).join('');
+      if (value.content != null) return scApiText(value.content, level + 1);
+    }
+    return '';
+  }
+
+  // 读取 {baseUrl}/models。必须走 GM 请求，页面 fetch 会被 ChatGPT 的 CSP 拦截。
+  function scFetchModels(cfg) {
+    return new Promise((resolve, reject) => {
+      const base = String((cfg && cfg.baseUrl) || '').trim().replace(/\/+$/, '');
+      if (!base) {
+        reject(new Error('请先填写 API 地址'));
+        return;
+      }
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        reject(new Error('GM_xmlhttpRequest 不可用'));
+        return;
+      }
+      const headers = { Accept: 'application/json' };
+      const key = String((cfg && cfg.apiKey) || '').trim();
+      if (key) headers.Authorization = 'Bearer ' + key;
+
+      let settled = false;
+      const fail = (err) => {
+        if (settled) return;
+        settled = true;
+        reject(err instanceof Error ? err : new Error(String(err || '获取模型列表失败')));
+      };
+      const ok = (models) => {
+        if (settled) return;
+        settled = true;
+        resolve(models);
+      };
+
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: base + '/models',
+          headers,
+          timeout: 15000,
+          onload: (r) => {
+            if (r.status < 200 || r.status >= 300) {
+              fail(new Error(scModelErrorText(r.responseText, r.status)));
+              return;
+            }
+            let payload = null;
+            try {
+              payload = JSON.parse(r.responseText || '{}');
+            } catch (e) {
+              fail(new Error('模型列表不是有效 JSON'));
+              return;
+            }
+            const models = scModelsFromResponse(payload);
+            if (!models.length) {
+              fail(new Error('接口返回中没有可识别的模型 ID'));
+              return;
+            }
+            ok(models);
+          },
+          onerror: () => fail(new Error('网络错误：连不上模型列表接口')),
+          ontimeout: () => fail(new Error('请求超时：15 秒内没有响应')),
+          onabort: () => fail(new Error('已取消获取模型列表'))
+        });
+      } catch (e) {
+        fail(e);
+      }
+    });
+  }
+
+  /* ---------- 会话记录（都存在本地，不上传） ---------- */
+  function scThreadsLoad() {
+    try {
+      const j = JSON.parse(localStorage.getItem(SC_THREADS_KEY) || '[]');
+      return Array.isArray(j) ? j : [];
+    } catch (e) { return []; }
+  }
+  function scThreadsSave(list) {
+    try {
+      localStorage.setItem(SC_THREADS_KEY, JSON.stringify(list.slice(0, SC_THREADS_MAX)));
+      return true;
+    } catch (e) { return false; }
+  }
+  function scNewThread(modelId = '', baseUrl = '') {
+    return { id: 'sc' + Date.now() + Math.random().toString(36).slice(2, 7),
+      title: '', createdAt: Date.now(), updatedAt: Date.now(), modelId,
+      baseUrl: scEndpoint({ baseUrl }), messages: [] };
+  }
+
+  /* ---------- 主对话上下文采集 ----------
+   * 直接读页面 DOM，不调 /backend-api —— 侧栏是随手问一句的工具，
+   * 不该因为取上下文去碰限流（实测连续取会话很快就 429）。
+   */
+  function scDomTurn(turn) {
+    const qEl = turn.querySelector('[data-user-message-bubble]')
+      || turn.querySelector('[data-message-author-role="user"]');
+    // 当前版 ChatGPT 的 data-conversation-role 标在 sr-only 标题上，
+    // 真正的回复正文是同一消息单元里的 [data-response-body]。
+    const aRoleEl = turn.querySelector('[data-conversation-role="assistant"]');
+    const aEl = (aRoleEl && aRoleEl.parentElement
+      && aRoleEl.parentElement.querySelector('[data-response-body]'))
+      || turn.querySelector('[data-response-body]')
+      || turn.querySelector('[data-message-author-role="assistant"]')
+      || aRoleEl;
+    return { key: turn.getAttribute('data-turn-key') || '',
+      q: qEl ? (qEl.innerText || '').trim() : '',
+      a: aEl ? (aEl.innerText || '').trim() : '' };
+  }
+
+  function scVisibleTurns() {
+    const out = [];
+    const seen = new Set();
+    document.querySelectorAll('[data-turn-key]').forEach((turn) => {
+      const key = turn.getAttribute('data-turn-key') || '';
+      // 虚拟滚动会给每个回合留一个 0×0 的占位符，同 key 只取真正渲染的那个
+      if (!turn.offsetHeight) return;
+      if (key && seen.has(key)) return;
+      if (key) seen.add(key);
+      const t = scDomTurn(turn);
+      if (t.q || t.a) out.push(t);
+    });
+    return out;
+  }
+
+  // 选区只取正文区里的，避免把面板/输入框里的选择也算进来
+  function scCurrentSelection() {
+    try {
+      const sel = document.getSelection();
+      if (!sel || sel.isCollapsed) return '';
+      const text = String(sel.toString() || '').trim();
+      if (!text) return '';
+      const node = sel.anchorNode;
+      const el = node && (node.nodeType === 1 ? node : node.parentElement);
+      if (el && el.closest('.craber-sc,.craber-dlg-mask,.craber-set')) return '';
+      return text;
+    } catch (e) { return ''; }
+  }
+
+  function scCaptureSelection() {
+    const text = scCurrentSelection();
+    if (!text) return;
+    const selection = document.getSelection();
+    const node = selection && selection.anchorNode;
+    const el = node && (node.nodeType === 1 ? node : node.parentElement);
+    const turn = el && el.closest('[data-turn-key]');
+    if (!turn) return;
+    scPendingSelection = text;
+    scPendingTurn = scDomTurn(turn);
+    scSelectionPath = location.pathname;
+  }
+
+  async function scCollectContext(mode, profile = scModelConfigFor()) {
+    if (!profile.mainContextEnabled || !profile.textEnabled || mode !== 'all' || !getConvId()) {
+      return scBuildContext(mode, undefined, profile);
+    }
+    // 重新读取当前分支，补齐虚拟滚动未挂载的消息和最新回复。
+    const st = await ensureState(true);
+    const turns = st.turns.map((t) => ({
+      q: extractText(t.question),
+      a: t.answers.filter((n) => craberRole(n.message) === 'assistant')
+        .map(extractText).filter(Boolean).join('\n\n')
+    }));
+    return scBuildContext('all', turns, profile);
+  }
+
+  // 把上下文按档位拼成一段文本。返回 { text, label }，label 给面板上的提示用。
+  function scBuildContext(mode, completeTurns, profile = scModelConfigFor()) {
+    /* 设计稿里的「主会话」开关关掉时，完全不把主对话内容带进侧栏。
+     * 这是显式选择，不能再偷偷按档位塞上下文。 */
+    if (!profile.textEnabled) return { text: '', label: '仅图片输入' };
+    if (!profile.mainContextEnabled) return { text: '', label: '未带主会话' };
+    const m = mode || profile.ctxMode;
+    // 从"在侧边问"按钮进来时，选区已经因为焦点转移而消失，
+    // 这时用记下来的那份；没有就现取。
+    const sel = scPendingSelection || scCurrentSelection();
+    const parts = [];
+    let label = '';
+    let cut0 = false;   // 逐段预截断时置位（见下面的 per 配额）
+
+    /* 只有两档：
+     *   turn = 选区 + 主对话当前这一轮（默认）
+     *   all  = 整个对话
+     * 历史版本里的 'selection' 一律按 turn 处理，避免老配置残留成空上下文。 */
+    if (m !== 'all') {
+      const turns = scVisibleTurns();
+      const last = scPendingTurn || (turns.length ? turns[turns.length - 1] : null);
+      if (last) {
+        if (last.q) parts.push({ k: '问', head: '【我在主对话里的提问】', body: last.q });
+        if (last.a) parts.push({ k: '答', head: '【主对话当前的回复】', body: last.a });
+      }
+      if (sel && (!last || sel !== last.a)) {
+        parts.push({ k: '选区', head: '【我选中的内容】', body: sel });
+      }
+      label = (last ? '当前轮' : '无对话') + (sel ? ' + 选区' : '');
+    } else {
+      const turns = completeTurns || scVisibleTurns();
+      // 全对话档的单条更容易超长：先给每段一个上限，再整体兜底，
+      // 否则最后一轮的长回答一进来就把前面全挤掉了。
+      const per = Math.max(400, Math.floor(SC_CTX_MAX_CHARS / Math.max(2, turns.length * 2)));
+      for (const t of turns) {
+        if (t.q) parts.push({ k: '问', head: '我问', body: scClipText(t.q, per, () => { cut0 = true; }) });
+        if (t.a) parts.push({ k: '答', head: 'AI 答', body: scClipText(t.a, per, () => { cut0 = true; }) });
+      }
+      if (sel) parts.push({ k: '选区', head: '【我选中的内容】', body: sel });
+      label = '全对话 ' + turns.length + ' 轮';
+    }
+
+    /* 拼接与截断。
+     * 早先是"整段砍头保尾"，结果把问题本身砍掉了、只留一大截回答的尾巴 ——
+     * 模型拿到的是没有问题的半截回答。现在按段处理：
+     * 每段先按配额截，超总量再从**最早**的段开始整段丢弃，
+     * 保证最后一段（也就是提问所在的位置）永远完整保留。 */
+    const total = () => parts.reduce((n, p) => n + p.head.length + p.body.length + 2, 0);
+    let cut = cut0;
+    for (const p of parts) {
+      const quota = Math.max(300, Math.floor(SC_CTX_MAX_CHARS / Math.max(1, parts.length)));
+      if (p.body.length > quota) {
+        p.body = scClipText(p.body, quota);
+        cut = true;
+      }
+    }
+    while (parts.length > 1 && total() > SC_CTX_MAX_CHARS) {
+      parts.shift();   // 从最早的开始丢，保住最近的
+      cut = true;
+    }
+    let text = parts.map((p) => p.head + '\n' + p.body).join('\n\n');
+    if (text.length > SC_CTX_MAX_CHARS) {
+      // 只剩一段还超长（极端情况）：这一段本身再截，但不砍掉开头
+      text = scClipText(text, SC_CTX_MAX_CHARS);
+      cut = true;
+    }
+    if (cut) label += '（已截断）';
+    return { text, label };
+  }
+
+  // 中间省略式截取：保留首尾，比"只留尾巴"更能保住语义。
+  // onCut 用来告诉调用方"这次确实截了"，好让面板上标出"已截断"。
+  function scClipText(s, limit, onCut) {
+    const t = String(s || '');
+    if (t.length <= limit) return t;
+    // 首 2 尾 1：开头通常是结论句，结尾常常是"所以…"，两头都比中间有用
+    const head = Math.floor(limit * 0.66);
+    const tail = Math.max(0, limit - head - 12);
+    if (onCut) onCut();
+    return t.slice(0, head) + '\n…（中间省略）…\n' + t.slice(-tail);
+  }
+
+  /* ---------- 流式请求 ----------
+   * 统一按 OpenAI 兼容协议发：POST {baseUrl}/chat/completions，stream:true。
+   * 返回一个带 abort() 的句柄，供"停止"按钮用。
+   *
+   * 回调：
+   *   onDelta(text)   正文增量
+   *   onThink(text)   思考/推理增量（可选，模型支持时才有）
+   *   onDone()        正常结束
+   *   onError(err)    出错
+   * 靠 settled 位保证收尾只走一次（onDelta/onThink 可多次）。
+   *
+   * 为什么单开思考通道：DeepSeek-R1 / QwQ / o 系列把过程放在
+   * delta.reasoning_content（或 reasoning）里，跟 delta.content 是两个字段。
+   * 早先只读 content，思考内容被整段丢掉 —— 表现为"面板先空白好几秒"，
+   * 用户会以为卡死。现在分开收，界面才能放进折叠容器里。
+   */
+  function scStream(cfg, messages, onDelta, onDone, onError, onThink) {
+    let settled = false;
+    let handle = null;
+    let lastLen = 0;
+    let buf = '';
+    let sawDelta = false;   // 是否从流里真的吐过内容（用于识别非流式响应）
+
+    const settle = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      fn(arg);
+    };
+
+    /* 取一帧里的正文与思考。不同后端命名不统一，都认：
+     *   reasoning_content  DeepSeek-R1 / QwQ / 硅基流动
+     *   reasoning          部分中转与 OpenRouter 归一化后的名字
+     *   thinking           Anthropic 风格转 OpenAI 时常见
+     *   reasoning_details[] 少数网关的数组形态
+     * 正文与思考各自取，互不影响。 */
+    function extractDelta(d, choice) {
+      let think = '';
+      let content = '';
+      if (d) {
+        think = scApiText(d.reasoning_content) || scApiText(d.reasoning)
+          || scApiText(d.thinking) || scApiText(d.reasoning_details);
+        content = scApiText(d.content) || scApiText(d.text);
+      }
+      // 非流式的 message 也带同样字段（收尾兜底时会走到）
+      const m = choice && choice.message;
+      if (m) {
+        if (!content) content = scApiText(m.content) || scApiText(m.text);
+        if (!think) {
+          think = scApiText(m.reasoning_content) || scApiText(m.reasoning)
+            || scApiText(m.thinking);
+        }
+      }
+      if (!content && choice) content = scApiText(choice.text);
+      return { content, think };
+    }
+
+    // 逐行解析 SSE。onprogress 给的是累计文本，所以要记 lastLen 取增量 ——
+    // 每来一次就重新整体扫描会把同一段文字重复吐给 UI。
+    const drain = (endOfStream) => {
+      let ix;
+      while ((ix = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, ix).trim();
+        buf = buf.slice(ix + 1);
+        if (!line || line.startsWith(':')) continue;
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        let j;
+        try { j = JSON.parse(data); } catch (e) { continue; }
+        // 有些中转站会把错误塞在流里
+        if (j.error) {
+          settle(onError, new Error(j.error.message || String(j.error)));
+          return;
+        }
+        const choice = j.choices && j.choices[0];
+        const got = choice
+          ? extractDelta(choice.delta, choice)
+          : {
+            content: scApiText(typeof j.delta === 'string' ? j.delta : '')
+              || scApiText(j.delta && (j.delta.content ?? j.delta.text))
+              || scApiText(j.content_block && j.content_block.text)
+              || scApiText(j.text),
+            think: scApiText(j.delta && (j.delta.reasoning_content || j.delta.reasoning
+              || j.delta.thinking))
+          };
+        if (got.think && onThink) { try { onThink(got.think); } catch (e) {} }
+        if (got.content) {
+          sawDelta = true;
+          try { onDelta(got.content); } catch (e) {}
+        }
+      }
+      // 收尾：没有换行结尾的最后一帧
+      if (endOfStream && buf.trim()) {
+        const line = buf.trim();
+        if (line.startsWith('data:') && line.slice(5).trim() !== '[DONE]') {
+          try {
+            const j = JSON.parse(line.slice(5).trim());
+            const choice = j.choices && j.choices[0];
+            const got = choice
+              ? extractDelta(choice.delta, choice)
+              : {
+                content: scApiText(typeof j.delta === 'string' ? j.delta : '')
+                  || scApiText(j.delta && (j.delta.content ?? j.delta.text))
+                  || scApiText(j.text),
+                think: scApiText(j.delta && (j.delta.reasoning_content || j.delta.reasoning
+                  || j.delta.thinking))
+              };
+            if (got.think && onThink) onThink(got.think);
+            if (got.content) {
+              sawDelta = true;
+              onDelta(got.content);
+            }
+          } catch (e) {}
+        }
+      }
+      buf = endOfStream ? '' : buf;
+    };
+
+    const payload = {
+      model: cfg.model,
+      messages,
+      stream: true
+    };
+    if (typeof cfg.temperature === 'number') payload.temperature = cfg.temperature;
+    if (typeof cfg.maxTokens === 'number') payload.max_tokens = cfg.maxTokens;
+
+    /* 五档按配置原值发送，同时保留兼容网关的 thinking 和 enable_thinking 开关。 */
+    const effort = scNormalizeEffort(cfg.reasoningEffort, cfg.enabledEfforts);
+    if (effort !== 'default') {
+      const enabled = effort !== 'off';
+      payload.reasoning_effort = effort;
+      payload.thinking = { type: enabled ? 'enabled' : 'disabled' };
+      payload.enable_thinking = enabled;
+    }
+
+    /* 消费一段累计文本（responseText 路）。累计值 → 只取新增部分。 */
+    let drainedAll = '';   // 所有经过 feedCumulative 的原始文本（兜底判断用）
+    let rawAll = '';       // 所有收到的原始文本（流式与累计两条路都记，兜底用）
+    const feedCumulative = (text) => {
+      if (!text) return;
+      drainedAll = text;   // responseText 本身就是累积的，直接覆盖
+      rawAll = text;
+      if (text.length <= lastLen) return;
+      buf += text.slice(lastLen);
+      lastLen = text.length;
+      drain(false);
+    };
+
+    /* 消费一块增量文本（ReadableStream 路）。这块是新的，直接进 buf。 */
+    const feedChunk = (chunk) => {
+      if (!chunk) return;
+      rawAll += chunk;
+      buf += chunk;
+      drain(false);
+    };
+
+    /* 从 GM 返回对象上取流。
+     * Tampermonkey 在 responseType:'stream' 时把数据做成 ReadableStream
+     * （page.js: `"stream"===V && (u = yield ao(...))`，随后 onpartial 往里 enqueue），
+     * 挂在 r.response.stream 上。不同管理器/版本的挂法不一样，这里都试一遍。 */
+    function pickStream(r) {
+      if (!r) return null;
+      const cands = [
+        r.response && r.response.stream,
+        r.response,
+        r.stream
+      ];
+      for (const c of cands) {
+        if (c && typeof c.getReader === 'function') return c;
+      }
+      return null;
+    }
+
+    /* 起一个读取器把流里的块喂给 feedChunk，并返回"读完"的 Promise。
+     *
+     * 为什么要返回 Promise：像本接口这种 1~3 秒就把整段答案发完的服务，
+     * Tampermonkey 往往只有 onload、不触发 onprogress —— 于是流读取器
+     * 从未启动。stream 模式下 responseText 又是空的，收尾时就成了
+     * "200 + 零正文"。所以 onload 里必须补一次启动，并等它读完再收尾。
+     */
+    let reading = null;
+    function startStreamReader(stream) {
+      try {
+        const reader = stream.getReader();
+        /* 极少数沙箱环境没有 TextDecoder：退回按 UTF-8 手工解码，
+         * 总比整段内容读不出来强（ASCII 场景完全等价）。 */
+        const dec = typeof TextDecoder === 'function'
+          ? new TextDecoder('utf-8')
+          : {
+            buf: '',
+            decode(chunk, opt) {
+              let s = '';
+              if (chunk && chunk.length) {
+                const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+                for (const b of bytes) s += String.fromCharCode(b);
+              }
+              s = this.buf + s;
+              if (opt && opt.stream) {
+                // 简化：不拆多字节字符边界，保留尾部交给下一次
+                this.buf = '';
+                return decodeURIComponent(escape(s));
+              }
+              this.buf = '';
+              return decodeURIComponent(escape(s));
+            }
+          };
+        reading = (async () => {
+          try {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (settled) break;
+              if (value) feedChunk(dec.decode(value, { stream: true }));
+            }
+            // 冲掉解码器里残留的多字节
+            if (!settled) feedChunk(dec.decode());
+          } catch (e) {
+            if (!settled) settle(onError, new Error('读取流失败：' + (e && e.message)));
+          }
+        })();
+        return reading;
+      } catch (e) {
+        return null;   // 拿不到读取器就退回 responseText 路
+      }
+    }
+
+    let streamStarted = false;
+
+    try {
+      handle = GM_xmlhttpRequest({
+        method: 'POST',
+        url: String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions',
+        headers: {
+          'Content-Type': 'application/json',
+          // 有些网关按 Accept 决定是否走 SSE；显式声明能少一类歧义
+          Accept: 'text/event-stream',
+          Authorization: 'Bearer ' + cfg.apiKey
+        },
+        data: JSON.stringify(payload),
+        timeout: 180000,
+        /* responseType:'stream' 是流式的**开关**，缺了它一定"一股脑出来"。
+         *
+         * 依据（本机 Tampermonkey 5.5.1 源码，不是猜的）：
+         *   background.js: m = e.responseType ? e.responseType.toLowerCase() : "";
+         *                  if ("stream"==m) { const rd=a.body.getReader(); ...分块... }
+         *                  else { y.responseText = y.response = await a.text() }  ← 整块
+         *   page.js:       "stream"===V && (u = yield ao(...))  // V 就是 responseType
+         * 也就是说：不传 responseType 时 TM 走 await a.text()，只在 onload
+         * 一次性给全文，onprogress 根本不会触发 —— 这就是"回答一股脑出来"的根因。
+         */
+        responseType: 'stream',
+        /* partialSize: Tampermonkey 在非 stream 路径下要靠它才会切块推 onpartial
+         * （extension.js: `if (e.partialSize) { ... v(i, parseInt(e.partialSize)) }`）。
+         * 走 stream 时这个字段不参与，但留着不冲突 ——
+         * 万一某版本不认 stream，还能靠它拿到分块。
+         */
+        partialSize: 4096,
+        /* onprogress 只作为「拿到了新数据」的信号：
+         * stream 模式下正文走 ReadableStream，responseText 在过程中不可靠。 */
+        onprogress: (r) => {
+          if (settled) return;
+          if (!streamStarted) {
+            const st = pickStream(r);
+            if (st) { streamStarted = true; startStreamReader(st); return; }
+          }
+          // 没有流可用时（老版本/其他管理器）退回累计文本路
+          feedCumulative(r && r.responseText);
+        },
+        /* onreadystatechange 也接上：部分版本只在 readyState=3 推数据。
+         * 已有流读取器时不再走 responseText，避免两条路重复喂同一段。 */
+        onreadystatechange: (r) => {
+          if (settled) return;
+          if (!r || r.readyState !== 3) return;
+          if (!streamStarted) {
+            const st = pickStream(r);
+            if (st) { streamStarted = true; startStreamReader(st); return; }
+          }
+          if (!streamStarted) feedCumulative(r.responseText);
+        },
+        onload: (r) => {
+          if (settled) return;
+          // 非 2xx：把服务端的错误正文带出来，比"请求失败"有用得多
+          if (r.status < 200 || r.status >= 300) {
+            let msg = '请求失败 ' + r.status;
+            try {
+              const j = JSON.parse(r.responseText || '');
+              const e = j.error;
+              msg += '：' + (typeof e === 'string' ? e : (e && e.message) || '');
+            } catch (e) {
+              const txt = String(r.responseText || '').trim();
+              if (txt) msg += '：' + txt.slice(0, 240);
+            }
+            settle(onError, new Error(msg));
+            return;
+          }
+          /* 收尾。三条来源都要兼容：
+           *  1) stream 模式：正文已经在 buf 里（流读取器喂进来的）
+           *  2) responseText 模式：把剩余增量补进 buf
+           *  3) 两者都空但 status 200：交给下面的非流式 JSON 兜底 */
+          /* 关键补丁：只有 onload、没有 onprogress 的情况（本接口实测就是这样）。
+           * 此时 stream 模式下沉在 r.response.stream 里的数据一个字节都还没读，
+           * responseText 又是空的。这里补启动读取器，否则必然误判成"没内容"。 */
+          if (!streamStarted) {
+            const lateStream = pickStream(r);
+            if (lateStream) {
+              streamStarted = true;
+              startStreamReader(lateStream);
+            } else {
+              feedCumulative(r && r.responseText);
+            }
+          }
+          /* 兜底判断需要"完整原文"，但 drain 会把 buf 消费掉，
+           * 所以这里单独留一份原始文本，别指望 buf 还在。 */
+          const rawFull = String((r && r.responseText) || '').trim()
+            || String(rawAll || drainedAll || '').trim();
+          // 流可能还没读完就 onload 了，给它一点时间把尾巴吐完
+          const settleDone = () => {
+            if (settled) return;
+            drain(true);
+            /* 兜底：有些网关会忽略 stream:true，直接回一整份 JSON。
+             * 那种响应里没有 data: 前缀，drain 一个字都吐不出来，
+             * 表面上就是"连上了但没有内容"（测试连接会误报）。
+             * 这里识别出非 SSE 的完整响应，按 message.content 取一次全文。 */
+            if (!sawDelta) {
+              const raw = rawFull || String(rawAll || drainedAll || '').trim();
+              if (raw && raw.charAt(0) === '{') {
+                try {
+                  const j = JSON.parse(raw);
+                  const choice = j.choices && j.choices[0];
+                  const got = choice
+                    ? extractDelta(choice.delta, choice)
+                    : { content: scApiText(j.output_text) || scApiText(j.content), think: '' };
+                  if (got.think && onThink) onThink(got.think);
+                  if (got.content && got.content !== '') onDelta(got.content);
+                } catch (e) { /* 不是 JSON：可能真是空响应，交给调用方处理 */ }
+              }
+            }
+            settle(onDone);
+          };
+          /* streamStarted 时可能还有未 flush 的字节：等读取器真正结束。
+           * 加 8 秒上限，防止某个管理器给出永不 close 的流把整次请求吊死。 */
+          if (reading) {
+            let done = false;
+            let guard = 0;
+            const proceed = () => {
+              if (done) return;
+              done = true;
+              // 读取正常结束时别把这个 8 秒兜底计时器留着（页面里会白挂着）
+              if (guard) {
+                try {
+                  if (typeof clearTimeout === 'function') clearTimeout(guard);
+                } catch (e) { /* 沙箱里没有 clearTimeout 时忽略 */ }
+                guard = 0;
+              }
+              settleDone();
+            };
+            Promise.resolve(reading).then(proceed, proceed);
+            guard = setTimeout(proceed, 8000);
+          } else {
+            settleDone();
+          }
+        },
+        onerror: () => settle(onError, new Error('网络错误：连不上接口地址，检查地址与 CORS/网络')),
+        ontimeout: () => settle(onError, new Error('请求超时（180 秒）')),
+        onabort: () => settle(onError, new Error('已停止'))
+      });
+    } catch (e) {
+      // 同步抛错（GM_xmlhttpRequest 不存在、参数非法等）：
+      // 此时 handle 还是 null，调用方拿到的 abort 是空操作，不会卡在"生成中"
+      settle(onError, e instanceof Error ? e : new Error(String(e)));
+    }
+
+    return {
+      get settled() { return settled; },
+      abort() {
+        if (settled) return;
+        settled = true;
+        try { handle && handle.abort(); } catch (e) {}
+      }
+    };
+  }
+
+  /* ---------- 面板 ----------
+   * 单个全局实例：打开是加 class，关闭是移 class（保留 DOM，
+   * 这样滚动位置与草稿都还在）。真正卸载只在开关关掉时发生。
+   */
+  let scEl = null;            // 抽屉根节点
+  let scRefs = null;          // 面板内节点引用
+  let scOpen = false;
+  let scThread = null;        // 当前会话对象
+    let scStreamHandle = null;  // 正在跑的流
+    /* 打字机回放的"立即收尾"钩子。停止/中断时用它把已收到的内容刷完，
+     * 不能直接丢掉缓冲区里还没显示的正文。 */
+    let scTypeFlush = null;
+  let scPendingRender = 0;    // 流式期间的重绘节流句柄
+  let scDraftAttachments = [];
+  const scModelDrafts = new Map();
+  let scReadingAttachments = false;
+  let scPreparingSend = false;
+  const scMenus = new Map();
+
+  function scMenuPosition(anchor, width, height, viewport, align) {
+    const edge = 8;
+    let left = align === 'right' ? anchor.right - width : anchor.left - 5;
+    let top = anchor.top - height - (align === 'right' ? 1 : 3);
+    if (top < edge) top = anchor.bottom + 3;
+    return {
+      left: Math.max(edge, Math.min(left, viewport.width - width - edge)),
+      top: Math.max(edge, Math.min(top, viewport.height - height - edge))
+    };
+  }
+
+  function scCloseMenu(kind, focus) {
+    const entry = scMenus.get(kind);
+    if (!entry) return;
+    const menu = entry.menu;
+    const remove = () => {
+      if (entry.removeTimer) {
+        clearTimeout(entry.removeTimer);
+        entry.removeTimer = null;
+      }
+      menu.classList.remove('craber-open', 'craber-closing');
+      menu.remove();
+    };
+    if (menu.classList.contains('craber-open')) {
+      menuAnimateClose(menu);
+      entry.removeTimer = setTimeout(remove, MENU_CLOSE_MS);
+    } else {
+      remove();
+    }
+    entry.anchor.setAttribute('aria-expanded', 'false');
+    scMenus.delete(kind);
+    if (kind === 'tools') scCloseMenu('scope');
+    if (focus) entry.anchor.focus();
+  }
+
+  function scCloseMenus() {
+    for (const kind of [...scMenus.keys()]) scCloseMenu(kind);
+  }
+
+  function scPositionMenus() {
+    for (const [kind, entry] of scMenus) {
+      const rect = entry.anchor.getBoundingClientRect();
+      const width = entry.menu.offsetWidth;
+      const height = entry.menu.offsetHeight;
+      let pos = scMenuPosition(rect, width, height,
+        { width: window.innerWidth, height: window.innerHeight }, entry.align);
+      if (kind === 'scope') {
+        const parent = scMenus.get('tools');
+        if (!parent) continue;
+        const p = parent.menu.getBoundingClientRect();
+        pos = { left: p.right + 8, top: Math.max(8, Math.min(rect.top, window.innerHeight - height - 8)) };
+        if (pos.left + width > window.innerWidth - 8) {
+          if (p.left - width - 8 >= 8) pos.left = p.left - width - 8;
+          else {
+            pos.left = Math.max(8, Math.min(p.left, window.innerWidth - width - 8));
+            pos.top = Math.max(8, p.top - height - 8);
+          }
+        }
+      }
+      entry.menu.style.left = pos.left + 'px';
+      entry.menu.style.top = pos.top + 'px';
+      const opensBelow = pos.top >= rect.bottom;
+      const originX = kind === 'models' ? '100%' : kind === 'scope' ? '0%' : '0%';
+      entry.menu.style.setProperty('--sc-pop-origin', originX + ' ' + (opensBelow ? '0%' : '100%'));
+    }
+  }
+
+  function scShowMenu(kind, menu, anchor, align) {
+    scCloseMenu(kind);
+    menu.setAttribute('role', 'menu');
+    document.body.append(menu);
+    scMenus.set(kind, { menu, anchor, align });
+    anchor.setAttribute('aria-expanded', 'true');
+    scPositionMenus();
+    menuAnimateOpen(menu);
+  }
+
+  function scRenderAttachments() {
+    if (!scRefs) return;
+    scRefs.attachments.replaceChildren();
+    scDraftAttachments.forEach((file, index) => {
+      const card = folderEl('div', 'craber-sc-file');
+      if (file.kind === 'image') {
+        const img = document.createElement('img');
+        img.src = file.dataUrl;
+        img.alt = file.name;
+        card.append(img);
+      }
+      const name = folderEl('span', null, file.name);
+      name.title = file.name;
+      const remove = folderEl('button');
+      remove.type = 'button';
+      remove.innerHTML = scRefs.ico.close;
+      remove.setAttribute('aria-label', '移除附件 ' + file.name);
+      remove.addEventListener('click', () => {
+        scDraftAttachments.splice(index, 1);
+        scRenderAttachments();
+      });
+      card.append(name, remove);
+      scRefs.attachments.append(card);
+    });
+    scUpdateComposerInset();
+  }
+
+  function scUpdateComposerInset() {
+    if (!scRefs) return;
+    scRefs.body.style.paddingBottom = (scRefs.composer.offsetHeight + 67) + 'px';
+    scPositionMenus();
+  }
+
+  async function scAddAttachments(files) {
+    if (scReadingAttachments || scPreparingSend || !scCfgReady()) return;
+    const profile = scModelConfigFor();
+    scReadingAttachments = true;
+    scRefs.status.textContent = '正在读取附件…';
+    try {
+      const errors = [];
+      for (const file of files) {
+        try {
+          if (scDraftAttachments.length >= 8) throw new Error('每条消息最多添加 8 个附件');
+          const attachment = await scReadAttachment(file);
+          const supported = attachment.kind === 'text' ? profile.textEnabled : profile.imageEnabled;
+          if (!supported) throw new Error('当前模型未启用此附件的输入模态：' + file.name);
+          scDraftAttachments.push(attachment);
+        } catch (e) { errors.push(e.message); }
+      }
+      scRefs.status.textContent = errors.join('；');
+      scRenderAttachments();
+    } finally {
+      scReadingAttachments = false;
+      scRefs.fileInput.value = '';
+      scRefs.ta.focus();
+    }
+  }
+
+  function scWidthLoad() {
+    const n = parseInt(localStorage.getItem(SC_WIDTH_KEY) || '', 10);
+    // 上限按视口算：占位式分栏会把正文挤窄，所以按"给正文留多少"反推。
+    // 用 scMainMinWidth() 统一口径，避免这里、拖拽、resize 三处算法不一致。
+    return Math.min(n >= 280 ? n : 519, scMaxPanelWidth());
+  }
+  function scWidthSave(w) {
+    try { localStorage.setItem(SC_WIDTH_KEY, String(Math.round(w))); } catch (e) {}
+  }
+
+  /* 展开状态记忆。
+   * 只存 true/false 两个值，读的时候任何异常都当"关闭"处理 ——
+   * 记忆坏了最差也就是不自动展开，不该因此让脚本报错。
+   * 用户手动关掉面板、或关掉功能开关时都要写 false，
+   * 否则下次刷新会莫名其妙又弹出来。 */
+  function scOpenStateSave(on) {
+    try {
+      if (on) localStorage.setItem(SC_OPEN_KEY, '1');
+      else localStorage.removeItem(SC_OPEN_KEY);
+    } catch (e) {}
+  }
+  function scOpenStateLoad() {
+    try { return localStorage.getItem(SC_OPEN_KEY) === '1'; } catch (e) { return false; }
+  }
+
+  /* 面板宽度上限。
+   * 占位式分栏是"正文让位给面板"，所以上限由"正文至少要留多宽"反推。
+   * 关键：正文可用宽度 = 视口 - 原生左侧栏 - 面板。
+   * 漏算左侧栏会让 1024 宽下正文只剩 344px（实测），几乎没法读 ——
+   * 所以这里把左侧栏的占用减掉，再算能留给正文多少。
+   */
+  function scMainMinWidth() {
+    const vw = window.innerWidth;
+    if (vw >= 1440) return 560;
+    if (vw >= 1100) return 480;
+    return 360;
+  }
+  function scMaxPanelWidth() {
+    const vw = window.innerWidth;
+    // 原生左侧栏（展开 252、收起 52）；拿不到就按收起态 52 估
+    let aside = 52;
+    const el = document.querySelector('nav[aria-label="聊天记录"]') || document.querySelector('aside');
+    if (el) {
+      const w = el.getBoundingClientRect().width;
+      if (w > 20 && w < vw * 0.5) aside = w;
+    }
+    const avail = vw - aside;
+    return Math.max(280, Math.min(1000, avail - scMainMinWidth()));
+  }
+
+  /* ============================================================
+   * 占位布局：真正的左右分栏（实测驱动）
+   *
+   * 目标：面板占满全高，顶栏与正文一起止于面板左缘 ——「页面 | 面板」并排。
+   *
+   * 为什么不再只赌一种写法：ChatGPT 的应用壳可能是 body 的普通子节点，
+   * 也可能是内部还有固定宽度的壳。当前页面实测里，body padding 会把 #root
+   * 从 2275px 缩到 1815px，但 main 仍保持原宽并横向溢出到面板下面；
+   * 固定顶栏也不吃 main 的 margin。所以不能把"外层变窄"当成成功。
+   * 结构会变，这里仍然采用**试 + 量**：
+   *
+   *   1) 先试给 body 写 padding-right
+   *   2) 量一下正文和顶栏右缘是否都到了面板左边
+   *   3) 没推开就换下一招（壳 width / margin → main + header 组合让位）
+   *   4) 把生效的那一招记在 scHitStrategy 里，之后每秒只维持它
+   *
+   * 这样无论站点用哪种布局都能挤占出来，而不是"看起来设了 padding 其实没效果"。
+   * ========================================================== */
+
+  /* 让位策略，按优先级排列。每种返回被写入的元素（失败返回 null）。 */
+  /* 让位策略，按"覆盖面从大到小"排列。
+   * shell-width 专门对付 position:fixed + width:100vw 的壳 —— 那种结构
+   * margin 完全无效（100vw 是视口宽，与 margin 无关），只能改 width。
+   *
+   * main-header 是当前 ChatGPT 页面壳的有效路径：
+   *   - main 是 aside 后面的 flex 子项，margin-right 能真正缩短正文；
+   *   - header 是 position:fixed，不受 main 的 margin 影响，必须同步改 right。
+   * 两者必须作为一组应用；只做其中一个都不能通过 scIsClear。 */
+  const SC_STRATEGIES = ['body-pad', 'shell-width', 'shell-margin', 'main-header'];
+
+  let scHitStrategy = null;    // 实测生效的那一种
+  const scSavedStyles = [];    // [{ el, prop, value, priority }] 已写过的原值
+
+  // SPA 会将旧会话的 main/header 隐藏后留在 DOM 中。只选当前参与布局的节点，
+  // 否则 querySelector 会一直命中旧会话，把 0 宽度误当成让位成功。
+  function scVisibleElement(selector) {
+    for (const el of document.querySelectorAll(selector)) {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      const visibility = getComputedStyle(el).visibility;
+      if (visibility !== 'hidden' && visibility !== 'collapse') return el;
+    }
+    return null;
+  }
+
+  /* 顶栏元素。ChatGPT 可能改结构，几个选择器都试。 */
+  function scHeaderEl() {
+    return scVisibleElement('header')
+      || scVisibleElement('[role="banner"]')
+      || scVisibleElement('[data-testid*="header"]')
+      || null;
+  }
+
+  function scHeaderHeight() {
+    const hdr = scHeaderEl();
+    let h = 0;
+    if (hdr) h = Math.round(hdr.getBoundingClientRect().height);
+    return h > 20 ? h : 52;
+  }
+
+  /* 找应用壳：占满视口、且高度基本占满的祖**先容器**（可能是 fixed 的）。
+   *
+   * 必须排除 body / html：它们也"占满视口"，但对它们改 width 没意义
+   * （body 的宽度由 html 决定，改 width 只会缩内容盒而非真正让位），
+   * 而且往上报错会让 shell-margin / shell-width 两招变成空操作。 */
+  function scFindShell() {
+    const hdr = scHeaderEl();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const seeds = [];
+    if (hdr) seeds.push(hdr);
+    const main = scContentEl();
+    if (main) seeds.push(main);
+
+    for (const seed of seeds) {
+      let node = seed;
+      for (let i = 0; i < 10 && node; i++) {
+        if (node === document.body || node === document.documentElement) break;
+        const r = node.getBoundingClientRect();
+        if (r.width >= vw - 4 && r.height >= vh * 0.8) return node;
+        node = node.parentElement;
+      }
+    }
+    return null;
+  }
+
+  /* 正文容器（用于测量是否真的被推开）。 */
+  function scContentEl() {
+    return scVisibleElement('main')
+      || scVisibleElement('[role="main"]')
+      || scVisibleElement('[data-turn-key]')
+      || null;
+  }
+
+  /* 量：正文/顶栏的右缘是否已经被推到面板左边。
+   * tolerance 给 4px：亚像素与滚动条误差。 */
+  function scIsClear(panelLeft) {
+    const targets = [];
+    const main = scContentEl();
+    const hdr = scHeaderEl();
+    if (!main) return false; // 新会话尚未挂载时不能确认让位成功。
+    targets.push(main);
+    if (hdr) targets.push(hdr);
+    return targets.every((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      return r.right <= panelLeft + 4;
+    });
+  }
+
+  /* 记录原值（同元素同属性只记一次）。 */
+  function scRememberStyle(el, prop) {
+    if (!el) return;
+    if (scSavedStyles.some((s) => s.el === el && s.prop === prop)) return;
+    scSavedStyles.push({
+      el,
+      prop,
+      value: el.style.getPropertyValue(prop),
+      priority: el.style.getPropertyPriority(prop)
+    });
+  }
+
+  function scRestoreAllStyles() {
+    for (const s of scSavedStyles) {
+      if (!s.el) continue;
+      if (s.value) s.el.style.setProperty(s.prop, s.value, s.priority || '');
+      else s.el.style.removeProperty(s.prop);
+    }
+    scSavedStyles.length = 0;
+  }
+
+  /* 施加某一招。返回是否成功写入。 */
+  function scApplyStrategy(name, w) {
+    const want = w + 'px';
+    if (name === 'body-pad') {
+      const body = document.body;
+      if (!body) return false;
+      scRememberStyle(body, 'padding-right');
+      body.style.setProperty('padding-right', want, 'important');
+      return true;
+    }
+    if (name === 'shell-margin') {
+      const shell = scFindShell();
+      if (!shell || shell === document.body) return false;
+      scRememberStyle(shell, 'margin-right');
+      shell.style.setProperty('margin-right', want, 'important');
+      return true;
+    }
+    if (name === 'shell-width') {
+      /* 对 position:fixed + width:100vw 的壳，margin 完全无效
+       * （100vw 是视口宽度，与 margin 无关，实测写了也不缩）。
+       * 直接改 width 才能真的让开。 */
+      const shell = scFindShell();
+      if (!shell || shell === document.body) return false;
+      scRememberStyle(shell, 'width');
+      shell.style.setProperty('width', 'calc(100vw - ' + want + ')', 'important');
+      return true;
+    }
+    if (name === 'main-header') {
+      const main = scContentEl();
+      const hdr = scHeaderEl();
+      if (!main) return false;
+      scRememberStyle(main, 'margin-right');
+      main.style.setProperty('margin-right', want, 'important');
+      if (hdr) {
+        scRememberStyle(hdr, 'right');
+        hdr.style.setProperty('right', want, 'important');
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function scApplyPlaceholder(on, width) {
+    const body = document.body;
+    if (!body) return;
+
+    if (!on) {
+      body.classList.remove('craber-sc-placeholder');
+      scRestoreAllStyles();
+      scHitStrategy = null;
+      return;
+    }
+
+    const w = Math.round(width || scWidthLoad());
+    body.classList.add('craber-sc-placeholder');
+
+    /* 打开时重新选策略：页面结构可能已经变了（或首次打开时还没渲染完）。
+     * 先清掉旧策略的痕迹，避免多招叠加把页面挤过头。 */
+    scRestoreAllStyles();
+    scHitStrategy = null;
+
+    const panelLeft = scEl ? scEl.getBoundingClientRect().left : window.innerWidth - w;
+
+    // 依次尝试，第一个"写进去且实测生效"的就固定下来
+    for (const name of SC_STRATEGIES) {
+      if (!scApplyStrategy(name, w)) continue;
+      // 让浏览器完成布局后再量
+      if (scIsClear(panelLeft)) {
+        scHitStrategy = name;
+        return;
+      }
+      // 没生效：撤掉这一招的错误痕迹，试下一招
+      scRestoreAllStyles();
+    }
+
+    // 页面还在挂载或所有策略均未生效：暂用 body padding，后续扫描继续校验。
+    scApplyStrategy('body-pad', w);
+    scHitStrategy = 'body-pad';
+  }
+
+  /* 每秒 tick：维持当前策略 + 检查是否失效。
+   *
+   * 为什么每 tick 都要量：React 会重置内联样式（顶栏底色那套教训），
+   * 而且切会话会重建内容区，之前写上的 margin/padding 可能整块丢掉。 */
+  function scPlaceholderTick() {
+    if (!scOpen || !scEl) return;
+    const w = Math.round(scEl.getBoundingClientRect().width) || scWidthLoad();
+
+    // 面板占满全高
+    if (scEl.style.top && scEl.style.top !== '0px') scEl.style.top = '0px';
+
+    const panelLeft = scEl.getBoundingClientRect().left;
+
+    /* 没有生效策略、或者当前策略失效（页面被重建）→ 重选一次。 */
+    if (!scHitStrategy) {
+      scApplyPlaceholder(true, w);
+      return;
+    }
+
+    // 维持：把宽度拉回目标值（可能被 React 冲掉）
+    if (!scApplyStrategy(scHitStrategy, w)) {
+      // 策略需要的元素没了 → 重选
+      scHitStrategy = null;
+      scApplyPlaceholder(true, w);
+      return;
+    }
+
+    // 校验：还让开着吗？没让开就重选
+    if (!scIsClear(panelLeft)) {
+      scApplyPlaceholder(true, w);
+    }
+  }
+
+  function scIcons() {
+    return {
+      close: mi('<path d="M18 6L6 18"/><path d="M6 6l12 12"/>'),
+      plus: mi('<path d="M12 5v14"/><path d="M5 12h14"/>'),
+      hist: mi('<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/>'
+        + '<path d="M3.5 4.5V9H8"/>'
+        + '<path d="M12 8v4.5l3 1.8"/>'),
+      // 设计稿的发送键是细线纸飞机，不是向上箭头
+      send: mi('<path d="M10 14L21 3"/>'
+        + '<path d="M21 3l-6.5 18a.55.55 0 0 1-1 0L10 14l-7-3.5a.55.55 0 0 1 0-1L21 3Z"/>'),
+      stop: mi('<rect x="7" y="7" width="10" height="10" rx="2"/>'),
+      copy: mi('<rect x="9" y="9" width="11" height="11" rx="2.5"/>'
+        + '<path d="M15 9V6.5A2.5 2.5 0 0 0 12.5 4H6.5A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15H9"/>'),
+      retry: mi('<path d="M20 12a8 8 0 1 1-2.4-5.7"/>'
+        + '<path d="M20 4v4.5h-4.5"/>'),
+      trash: mi('<path d="M4 7h16"/><path d="M9.5 7V5.2c0-.7.5-1.2 1.2-1.2h2.6c.7 0 1.2.5 1.2 1.2V7"/>'
+        + '<path d="M6.5 7l.8 11.3c.05.9.8 1.7 1.7 1.7h6c.9 0 1.65-.8 1.7-1.7L17.5 7"/>'),
+      gear: mi('<circle cx="12" cy="12" r="3.2"/>'
+        + '<path d="M12 3.5v2M12 18.5v2M4.9 7.5l1.7 1M17.4 15.5l1.7 1M4.9 16.5l1.7-1M17.4 8.5l1.7-1"/>')
+    };
+  }
+
+  function scEnsureBuilt() {
+    if (scEl) return;
+    const ico = scIcons();
+
+    const root = folderEl('div', 'craber-sc');
+    root.setAttribute('role', 'complementary');
+    root.setAttribute('aria-label', '侧边聊天');
+    root.style.setProperty('--craber-sc-w', scWidthLoad() + 'px');
+
+    // 左边缘拖拽手柄
+    const grip = folderEl('div', 'craber-sc-grip');
+    grip.setAttribute('aria-hidden', 'true');
+
+    const hd = folderEl('div', 'craber-sc-hd');
+    const title = folderEl('div', 'craber-sc-title');
+    const crab = folderEl('span', 'craber-sc-crab');
+    crab.innerHTML = CRAB_SMALL;
+    const titleText = folderEl('span', null, '侧边聊天');
+    title.append(crab, titleText);
+
+    /* 面板内这三个按钮用原生 title，不用全局 bindTooltip。
+     * 全局气泡是挂到 body 上的 fixed 浮层、按视口夹取位置 ——
+     * 面板贴在右边缘时，气泡会被夹到面板外面（截图里"关闭"跑到了面板右侧），
+     * 看着像是从面板里飘出去了。原生 title 虽然朴素，但就在原地，不会跑。 */
+    const histBtn = folderEl('button', 'craber-sc-hbtn');
+    histBtn.type = 'button';
+    histBtn.innerHTML = ico.hist;
+    histBtn.setAttribute('aria-label', '历史对话');
+    histBtn.title = '历史对话';
+
+    const newBtn = folderEl('button', 'craber-sc-hbtn');
+    newBtn.type = 'button';
+    newBtn.innerHTML = ico.plus;
+    newBtn.setAttribute('aria-label', '新建对话');
+    newBtn.title = '新建对话';
+
+    const closeBtn = folderEl('button', 'craber-sc-hbtn');
+    closeBtn.type = 'button';
+    closeBtn.innerHTML = ico.close;
+    closeBtn.setAttribute('aria-label', '关闭侧边聊天');
+    closeBtn.title = '关闭';
+
+    hd.append(title, histBtn, newBtn, closeBtn);
+
+    const hist = folderEl('div', 'craber-sc-hist');
+    hist.hidden = true;
+
+    const body = folderEl('div', 'craber-sc-body');
+    const msgs = folderEl('div', 'craber-sc-msgs');
+    body.append(msgs);
+
+    // 上下文条：说明这次提问会带上主对话的什么，并可当场切换档位
+    const ctx = folderEl('div', 'craber-sc-ctx');
+    const ctxMain = folderEl('div', 'craber-sc-ctx-main');
+    /* 未配置时这一行会变成"去配置"的入口。
+     * 平时是纯文字（不可点），只有加上 warn 类才是按钮样式 ——
+     * 所以点击处理里判断一下类名，避免误触发。 */
+    ctxMain.addEventListener('click', () => {
+      if (!ctxMain.classList.contains('craber-sc-ctx-warn')) return;
+      scClose();
+      craberOpenSettings('side-chat');
+    });
+    const ctxBtns = {};
+    const mkCtxBtn = (mode, text, titleTip) => {
+      const b = folderEl('button', 'craber-sc-ctx-btn', text);
+      b.type = 'button';
+      b.title = titleTip || '';
+      b.addEventListener('click', () => {
+        const c = scCfgLoad();
+        scSetModelConfig(c, c.model, { ctxMode: mode });
+        scCfgSave(c);
+        scSyncCtxBar();
+      });
+      ctxBtns[mode] = b;
+      return b;
+    };
+    /* 档位只有两档：当前轮（选区 + 这一轮问答）与整个对话。 */
+    ctx.append(ctxMain,
+      mkCtxBtn('turn', '当前轮', '选区 + 主对话当前这一轮的问答'),
+      mkCtxBtn('all', '全对话', '整个主对话（较长，费 token）'));
+
+    const inputWrap = folderEl('div', 'craber-sc-in');
+    const box = folderEl('div', 'craber-sc-box');
+    const ta = document.createElement('textarea');
+    ta.className = 'craber-sc-ta';
+    ta.rows = 1;
+    ta.placeholder = '';
+    ta.setAttribute('aria-label', '侧边聊天输入框');
+    const sendBtn = folderEl('button', 'craber-sc-send');
+    sendBtn.type = 'button';
+    sendBtn.innerHTML = ico.send;
+    sendBtn.title = '发送';
+    sendBtn.setAttribute('aria-label', '发送');
+    box.append(ta);
+    const row = folderEl('div', 'craber-sc-row');
+    const hint = folderEl('div', 'craber-sc-hint', '');
+    row.append(hint);
+    inputWrap.append(box, row);
+
+    /* 参考稿的输入卡：上方输入框；下方左侧是「附件」「主会话」两个开关，
+     * 右侧是模型名 · 思考强度 · 发送键。 */
+    const composer = folderEl('div', 'craber-sc-composer');
+    const footrow = folderEl('div', 'craber-sc-footrow');
+    const attachments = folderEl('div', 'craber-sc-attachments');
+    const status = folderEl('div', 'craber-sc-status');
+    status.setAttribute('role', 'status');
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.multiple = true;
+    fileInput.hidden = true;
+    fileInput.accept = 'image/png,image/jpeg,image/webp,image/gif,application/pdf,text/*,.md,.json,.jsonl,.csv,.ts,.tsx,.jsx,.py,.yaml,.yml,.log,.sql,.c,.cpp,.h,.hpp,.java,.go,.rs,.rb,.toml,.ini';
+
+    /* 左下角一个工具按钮，点开才是「附件 / 主会话」菜单（设计稿就是这样） */
+    const toolsBtn = folderEl('button', 'craber-sc-toolsbtn');
+    toolsBtn.type = 'button';
+    toolsBtn.title = '更多输入选项';
+    toolsBtn.setAttribute('aria-label', '更多输入选项');
+    toolsBtn.setAttribute('aria-haspopup', 'menu');
+    toolsBtn.innerHTML = mi('<rect x="4" y="4" width="6" height="6"/>'
+      + '<rect x="14" y="4" width="6" height="6"/>'
+      + '<rect x="4" y="14" width="6" height="6"/>'
+      + '<path d="M14 17h6M17 14v6"/>');
+
+    /* 模型名 + 思考深度合成一个按钮：点开是「模型列表 + 深度调节」的菜单 */
+    const modelBtn = folderEl('button', 'craber-sc-modelbtn');
+    modelBtn.type = 'button';
+    modelBtn.title = '选择模型与思考深度';
+    modelBtn.setAttribute('aria-haspopup', 'menu');
+    const modelLabel = folderEl('span', null, '选择模型');
+    const modelChev = folderEl('span', 'craber-sc-modelchev');
+    modelChev.innerHTML = mi('<path d="M6 15L12 9l6 6"/>');
+    modelBtn.append(modelLabel, modelChev);
+
+    const ctxHidden = folderEl('div', 'craber-sc-ctx-hidden');
+    ctxHidden.append(...Object.values(ctxBtns));
+
+    /* 底部一行：九宫格 · 「模型 · 深度」· 发送箭头（与参考稿一致） */
+    footrow.append(toolsBtn, modelBtn, sendBtn);
+    composer.append(attachments, inputWrap, status, footrow, ctxHidden, fileInput);
+
+    root.append(grip, hd, hist, body, composer);
+    document.body.appendChild(root);
+
+    scEl = root;
+    // 只登记后续真正会用到的节点：hd/title/ctx 这些容器建好就够，不需要句柄
+    scRefs = { root, grip, titleText, histBtn, newBtn, closeBtn, hist, box,
+      body, msgs, composer, ctxMain, ctxBtns, ctxHidden,
+      toolsBtn, modelBtn, modelLabel,
+      ta, hint, sendBtn, ico, attachments, status, fileInput };
+
+    scBindEvents();
+    scSyncCtxBar();
+  }
+
+  function scBindEvents() {
+    const R = scRefs;
+    const events = new AbortController();
+    R.events = events;
+
+    R.closeBtn.addEventListener('click', () => scClose());
+    R.newBtn.addEventListener('click', () => scStartNewThread());
+    R.histBtn.addEventListener('click', () => {
+      R.hist.hidden = !R.hist.hidden;
+      R.histBtn.classList.toggle('on', !R.hist.hidden);
+      if (!R.hist.hidden) scRenderHistory();
+    });
+
+    // 发送 / 停止：同一个按钮两种态
+    R.sendBtn.addEventListener('click', () => {
+      if (scStreamHandle) scStop();
+      else scSend();
+    });
+
+    /* 左下角工具按钮：点开后是「附件 / 主会话上下文」两项。
+     * 主会话 = 把主对话的消息带进侧栏上下文，关掉就是纯独立问答。 */
+    R.toolsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (scMenus.has('tools')) { scCloseMenu('tools'); return; }
+      if (R.root.clientWidth < 400) scCloseMenu('models');
+
+      const profile = scModelConfigFor();
+      const toolMenu = folderEl('div', 'craber-sc-popmenu craber-sc-toolmenu');
+
+      const mkItem = (iconPath, label, onClick) => {
+        const b = folderEl('button', 'craber-sc-popitem craber-sc-toolitem');
+        b.type = 'button';
+        b.setAttribute('role', 'menuitem');
+        const ic = folderEl('span', 'craber-sc-toolitem-ic');
+        ic.innerHTML = mi(iconPath);
+        const tx = folderEl('span', null, label);
+        b.append(ic, tx);
+        b.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          onClick();
+        });
+        return b;
+      };
+
+      toolMenu.append(mkItem(
+        '<path d="m15 7-6.5 6.5a2.12 2.12 0 0 0 3 3L18 10a4.24 4.24 0 0 0-6-6l-6.5 6.5a6.36 6.36 0 0 0 9 9L21 13"/>',
+        '附件',
+        () => {
+          scCloseMenu('tools');
+          R.fileInput.click();
+        }));
+
+      const mainItem = mkItem(
+        '<path d="M8 9h8M8 13h6M12.5 20.5 12 21l-3-3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v5.5"/>'
+        + '<path d="M16 19h6M19 16v6"/>',
+        '主会话', () => {
+          if (scMenus.has('scope')) { scCloseMenu('scope', true); return; }
+          const current = scModelConfigFor();
+          const scopeMenu = folderEl('div', 'craber-sc-popmenu craber-sc-scopemenu');
+          scopeMenu.setAttribute('aria-label', '主会话上下文');
+          const scopeGroup = folderEl('div', 'craber-sc-scope-group');
+          scopeGroup.setAttribute('role', 'group');
+          scopeGroup.setAttribute('aria-label', '附带范围');
+          const scopeLabel = folderEl('div', 'craber-sc-scope-label', '附带范围');
+          scopeLabel.setAttribute('aria-hidden', 'true');
+          scopeGroup.append(scopeLabel);
+          const addOption = (text, role, checked, change) => {
+            const isSwitch = role === 'menuitemcheckbox';
+            const b = folderEl('button', 'craber-sc-popitem' + (checked ? ' on' : ''));
+            b.type = 'button';
+            b.setAttribute('role', role);
+            b.setAttribute('aria-checked', String(checked));
+            const indicator = folderEl('span', isSwitch ? 'craber-sc-scope-switch' : 'craber-sc-tick');
+            indicator.setAttribute('aria-hidden', 'true');
+            if (!isSwitch) indicator.innerHTML = mi('<path d="M5 12l5 5L20 7"/>');
+            b.append(folderEl('span', null, text), indicator);
+            b.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              change();
+              scCloseMenu('scope', true);
+              scSyncCtxBar();
+            });
+            (isSwitch ? scopeMenu : scopeGroup).append(b);
+          };
+          addOption('附带主会话', 'menuitemcheckbox', current.mainContextEnabled, () => {
+            const c = scCfgLoad();
+            const next = !current.mainContextEnabled;
+            scSetModelConfig(c, c.model, { mainContextEnabled: next });
+            scCfgSave(c);
+            mainItem.classList.toggle('on', next);
+          });
+          for (const [val, text] of [['turn', '选中区域的当前轮次'], ['all', '整个对话']]) {
+            addOption(text, 'menuitemradio', current.ctxMode === val, () => {
+              const c = scCfgLoad();
+              scSetModelConfig(c, c.model, { ctxMode: val });
+              scCfgSave(c);
+            });
+          }
+          scopeMenu.append(scopeGroup);
+          scShowMenu('scope', scopeMenu, mainItem);
+          scopeMenu.firstElementChild.focus();
+        });
+      mainItem.classList.add('craber-sc-mainitem');
+      mainItem.classList.toggle('on', profile.textEnabled && profile.mainContextEnabled);
+      mainItem.disabled = !profile.textEnabled;
+      mainItem.setAttribute('aria-haspopup', 'menu');
+      mainItem.setAttribute('aria-expanded', 'false');
+      const chevron = folderEl('span', 'craber-sc-toolchev');
+      chevron.setAttribute('aria-hidden', 'true');
+      chevron.innerHTML = mi('<path d="M9 6l6 6-6 6"/>');
+      mainItem.append(chevron);
+      mainItem.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight' || scMenus.has('scope')) return;
+        e.preventDefault();
+        mainItem.click();
+      });
+      toolMenu.append(mainItem);
+      scShowMenu('tools', toolMenu, R.toolsBtn);
+    });
+
+    R.fileInput.addEventListener('change', () => scAddAttachments([...R.fileInput.files]));
+    R.ta.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData && e.clipboardData.files || [])];
+      if (!files.length) return;
+      e.preventDefault();
+      scAddAttachments(files);
+    });
+    R.composer.addEventListener('dragover', (e) => {
+      if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault();
+    });
+    R.composer.addEventListener('drop', (e) => {
+      const files = [...(e.dataTransfer && e.dataTransfer.files || [])];
+      if (!files.length) return;
+      e.preventDefault();
+      scAddAttachments(files);
+    });
+
+    /* 模型名按钮：同一个菜单里放"模型候选 + 思考深度"，
+     * 对应设计稿里「模型 · 高 ⌃」那一个入口。 */
+    R.modelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (scMenus.has('models')) { scCloseMenu('models'); return; }
+      if (R.root.clientWidth < 400) scCloseMenu('tools');
+      const menu = folderEl('div', 'craber-sc-popmenu craber-sc-modelmenu');
+      const listWrap = folderEl('div', 'craber-sc-poplist');
+      const row = folderEl('div', 'craber-sc-switchrow');
+      const depth = document.createElement('input');
+      depth.type = 'range';
+      depth.className = 'craber-sc-depth';
+      depth.step = 'any';
+      depth.setAttribute('aria-label', '思考深度');
+      depth.min = '0';
+      const paintDepth = (levels, raw, selected) => {
+        const max = Math.max(0, levels.length - 1);
+        const value = Math.max(0, Math.min(max, Number.isFinite(Number(raw)) ? Number(raw) : 0));
+        const nearest = Math.max(0, Math.min(max, Math.round(value)));
+        const label = scEffortLabel(levels[nearest]);
+        depth.title = '思考深度：' + label;
+        depth.setAttribute('aria-valuetext', label);
+        if (selected < 0) depth.setAttribute('aria-description', '松手后吸附到最近档位');
+        else depth.removeAttribute('aria-description');
+        // 刻度和填充边缘都按滑块中心的实际行程定位。
+        const stopAt = (i) => 'calc(var(--sc-depth-thumb-size) / 2 + (100% - var(--sc-depth-thumb-size)) * '
+          + (i / Math.max(1, max)) + ')';
+        depth.style.setProperty('--sc-depth-fill', stopAt(value));
+        depth.style.setProperty('--sc-depth-dots', levels.map((_, i) => {
+          const color = i <= nearest ? 'var(--sc-depth-dot-filled)' : 'var(--sc-depth-dot-empty)';
+          return 'radial-gradient(circle at ' + stopAt(i) + ' 50%, ' + color + ' 1.7px, transparent 2.5px)';
+        }).join(', '));
+      };
+      const syncDepth = () => {
+        const c = scModelConfigFor(scCfgLoad());
+        const levels = c.enabledEfforts;
+        row.hidden = !c.model || !levels.length;
+        depth.disabled = row.hidden;
+        if (row.hidden) return;
+        depth.max = String(levels.length - 1);
+        const selected = levels.indexOf(c.reasoningEffort);
+        // 没有已保存档位时，滑块停在第一颗点，但不会自动写入配置。
+        const index = Math.max(0, selected);
+        depth.value = String(index);
+        paintDepth(levels, index, selected);
+      };
+      const previewDepth = () => {
+        if (depth.disabled) return;
+        const profile = scModelConfigFor(scCfgLoad());
+        paintDepth(profile.enabledEfforts, depth.value, profile.enabledEfforts.indexOf(profile.reasoningEffort));
+      };
+      const snapDepth = () => {
+        if (depth.disabled) return;
+        const c = scCfgLoad();
+        const profile = scModelConfigFor(c);
+        const max = profile.enabledEfforts.length - 1;
+        const index = Math.max(0, Math.min(max, Math.round(Number(depth.value) || 0)));
+        depth.value = String(index);
+        const effort = profile.enabledEfforts[index];
+        if (!effort) return;
+        if (effort === profile.reasoningEffort) {
+          // 即使当前档位没有变化，松手后也要把预览值吸附回整数档位。
+          syncDepth();
+          return;
+        }
+        scSetModelConfig(c, c.model, { reasoningEffort: effort });
+        scCfgSave(c);
+        syncDepth();
+        scSyncCtxBar();
+      };
+      depth.addEventListener('input', previewDepth);
+      depth.addEventListener('change', snapDepth);
+      depth.addEventListener('pointerup', snapDepth);
+      depth.addEventListener('keydown', (e) => {
+        if (e.key !== ' ' && e.key !== 'Enter') return;
+        e.preventDefault();
+        snapDepth();
+      });
+      row.append(depth);
+      const fillList = () => {
+        const cfg = scCfgLoad();
+        const list = scConfiguredModels(cfg);
+        listWrap.replaceChildren();
+        if (!list.length) {
+          listWrap.append(folderEl('div', 'craber-sc-histempty', '请先在设置中添加模型'));
+        }
+        for (const model of list) {
+          const b = folderEl('button', 'craber-sc-popitem craber-sc-modelitem'
+            + (model.id === cfg.model ? ' on' : ''));
+          b.type = 'button';
+          b.setAttribute('role', 'menuitemradio');
+          b.setAttribute('aria-checked', String(model.id === cfg.model));
+          const label = model.label || model.id.split('/').pop();
+          b.title = label === model.id ? label : label + '\n' + model.id;
+          const name = folderEl('span', 'craber-sc-modelname');
+          const nameText = folderEl('span', 'craber-sc-modelname-text', label);
+          name.append(nameText);
+          b.append(name);
+          const syncNameScroll = () => {
+            const distance = Math.max(0, nameText.offsetWidth - name.clientWidth);
+            name.style.setProperty('--sc-name-offset', -distance + 'px');
+            name.style.setProperty('--sc-name-duration', (distance ? Math.max(500, distance * 15) : 0) + 'ms');
+          };
+          b.addEventListener('pointerenter', syncNameScroll);
+          b.addEventListener('focus', syncNameScroll);
+          const tick = folderEl('span', 'craber-sc-tick');
+          tick.innerHTML = mi('<path d="M5 12l5 5L20 7"/>');
+          b.append(tick);
+          b.addEventListener('click', () => {
+            if (!scSwitchModel(model.id)) return;
+            scCloseMenu('tools');
+            fillList();
+            scSyncCtxBar();
+          });
+          listWrap.append(b);
+        }
+        syncDepth();
+        scPositionMenus();
+      };
+      menu.append(listWrap, row);
+      scShowMenu('models', menu, R.modelBtn, 'right');
+      fillList();
+    });
+
+    document.addEventListener('mousedown', (e) => {
+      if (!scOpen || !scMenus.size) return;
+      if (R.toolsBtn.contains(e.target) || R.modelBtn.contains(e.target)) return;
+      if ([...scMenus.values()].some(({ menu, anchor }) =>
+        menu.contains(e.target) || anchor.contains(e.target))) return;
+      scCloseMenus();
+    }, { capture: true, signal: events.signal });
+    for (const [kind, button] of [['tools', R.toolsBtn], ['models', R.modelBtn]]) {
+      button.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        e.preventDefault();
+        if (!scMenus.has(kind)) button.click();
+        const entry = scMenus.get(kind);
+        const items = entry && [...entry.menu.querySelectorAll('button:not(:disabled),input:not(:disabled)')];
+        if (items && items.length) items[e.key === 'ArrowDown' ? 0 : items.length - 1].focus();
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if (!scOpen || !scMenus.size || e.isComposing) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const kind = [...scMenus.keys()].pop();
+        scCloseMenu(kind, true);
+        return;
+      }
+      const entry = [...scMenus.values()].find(({ menu }) => menu.contains(e.target));
+      if (!entry || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)
+        || e.target.matches('input')) return;
+      const items = [...entry.menu.querySelectorAll('button:not(:disabled),input:not(:disabled)')];
+      const index = items.indexOf(document.activeElement);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+        : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      e.preventDefault();
+      items[next]?.focus();
+    }, { capture: true, signal: events.signal });
+    window.addEventListener('resize', scPositionMenus, { signal: events.signal });
+
+    R.ta.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      // 输入法组合期间的回车是"选词"，绝不能当成发送
+      if (e.isComposing || e.keyCode === 229) return;
+      /* 主流聊天软件的约定：Enter 发送、Shift+Enter 换行。
+       * 仍然兼容 Ctrl/Cmd+Enter（老用户习惯），两种都能发。 */
+      if (e.shiftKey) return;
+      e.preventDefault();
+      if (!scStreamHandle) scSend();
+    });
+    // 输入时撑高，但要封顶，否则会把消息区挤没
+    R.ta.addEventListener('input', () => {
+      R.ta.style.height = 'auto';
+      R.ta.style.height = Math.min(R.ta.scrollHeight, 190) + 'px';
+      scUpdateComposerInset();
+    });
+
+    // 拖拽改宽：向左拖变宽，所以用 clientX 到右边缘的距离
+    let dragging = false;
+    const onMove = (e) => {
+      if (!dragging) return;
+      const w = Math.min(Math.max(window.innerWidth - e.clientX, 280), scMaxPanelWidth());
+      R.root.style.setProperty('--craber-sc-w', w + 'px');
+      // 拖动时页面要让位跟着走，否则面板会暂时盖住正文
+      scApplyPlaceholder(true, w);
+      scPositionMenus();
+    };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove('craber-sc-resizing');
+      R.root.classList.remove('craber-sc-resizing');
+      const w = parseInt(getComputedStyle(R.root).width, 10);
+      if (w > 0) {
+        scWidthSave(w);
+        scApplyPlaceholder(true, w);   // 落定一次，确保内联值就是最终值
+      }
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    R.grip.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      dragging = true;
+      document.body.classList.add('craber-sc-resizing');
+      R.root.classList.add('craber-sc-resizing');
+      window.addEventListener('mousemove', onMove, { signal: events.signal });
+      window.addEventListener('mouseup', onUp, { signal: events.signal });
+    });
+
+    /* Esc 关面板。捕获阶段拦，但让输入框里的 Esc（取消输入法）先走完。
+     * 有模态开着时不抢 Esc —— 那时用户想关的是对话框，抽屉只是背景。
+     * 也不 preventDefault：Esc 在页面上还有别的语义，不该被我们吞掉。 */
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !scOpen) return;
+      if (e.isComposing) return;
+      if (craberDialogTop()) return;
+      scClose();
+    }, { capture: true, signal: events.signal });
+  }
+
+  /* 未配置时的引导卡。
+   * 三件事说清楚：缺什么、去哪填、点了就走 —— 一个按钮直达配置页。
+   *
+   * 用面板内的模态？不用：配置项在设置中心里（和 WebDAV 那些放一起），
+   * 直接跳过去更省事，那边的表单本来就能保存。
+   */
+  function scBuildSetupCard() {
+    const card = folderEl('div', 'craber-sc-setup');
+
+    const ico = folderEl('div', 'craber-sc-setup-ico');
+    ico.innerHTML = mi('<circle cx="12" cy="12" r="3.2"/>'
+      + '<path d="M12 3.5v2M12 18.5v2M4.9 7.5l1.7 1M17.4 15.5l1.7 1'
+      + 'M4.9 16.5l1.7-1M17.4 8.5l1.7-1"/>');
+
+    const hd = folderEl('div', 'craber-sc-setup-title', '还没配置模型');
+    const desc = folderEl('div', 'craber-sc-setup-desc');
+    desc.innerHTML = '侧边聊天需要你自己的 OpenAI 兼容接口。'
+      + '填写 <b>API 地址</b> 和所需的 <b>Key</b>，添加至少一个模型即可使用。';
+
+    const btn = folderEl('button', 'craber-sc-setup-btn');
+    btn.type = 'button';
+    btn.innerHTML = '<span>去配置</span>';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // 设置中心是模态（z 900），抽屉只有 40：先关抽屉再开设置，否则设置被压在下面
+      scClose();
+      craberOpenSettings('side-chat');
+    });
+
+    // 常见后端的现成地址，点一下直接抄进剪贴板 —— 省得去别处查
+    const quick = folderEl('div', 'craber-sc-setup-quick');
+    quick.append(folderEl('div', 'craber-sc-setup-quicklabel', '常用地址（点击复制）'));
+    const presets = [
+      ['DeepSeek', 'https://api.deepseek.com/v1'],
+      ['OpenRouter', 'https://openrouter.ai/api/v1'],
+      ['OpenAI', 'https://api.openai.com/v1'],
+      ['Ollama 本地', 'http://127.0.0.1:11434/v1']
+    ];
+    for (const [name, url] of presets) {
+      const b = folderEl('button', 'craber-sc-preset', name);
+      b.type = 'button';
+      b.title = url;
+      b.addEventListener('click', (e) => {
+        e.preventDefault();
+        try {
+          navigator.clipboard.writeText(url).then(
+            () => navToast('已复制 ' + url),
+            () => navToast(url));
+        } catch (err) { navToast(url); }
+      });
+      quick.append(b);
+    }
+
+    card.append(ico, hd, desc, btn, quick);
+    return card;
+  }
+
+  function scSyncCtxBar() {
+    if (!scRefs) return;
+    const activeCfg = scModelConfigFor(scCfgLoad());
+    const mode = activeCfg.ctxMode || 'turn';
+    for (const k of Object.keys(scRefs.ctxBtns)) {
+      // 只有两档：非 all 一律视作当前轮（兼容老配置里的 selection）
+      const active = mode === 'all' ? 'all' : 'turn';
+      scRefs.ctxBtns[k].classList.toggle('on', k === active);
+    }
+    const cfg = activeCfg;
+
+    /* 未配置：上下文条那行文字做成"可点直达配置"的按钮，
+     * 并且把档位开关灰掉 —— 没模型时切档位没有意义，留着只是干扰。 */
+    if (!scCfgReady(cfg)) {
+      scRefs.ctxMain.textContent = '未配置模型';
+      scRefs.ctxMain.classList.add('craber-sc-ctx-warn');
+      scRefs.ctxMain.title = '点击去配置侧边聊天的模型接口';
+      scRefs.hint.textContent = '';
+      for (const k of Object.keys(scRefs.ctxBtns)) {
+        scRefs.ctxBtns[k].disabled = true;
+        scRefs.ctxBtns[k].classList.remove('on');
+      }
+      scRefs.ta.placeholder = '先在上方配置模型接口，配置好即可输入';
+      scRefs.ta.disabled = true;
+      scRefs.sendBtn.disabled = !scStreamHandle;
+      scRefs.sendBtn.disabled = true;
+      if (scRefs.modelBtn) {
+        if (scRefs.modelLabel) scRefs.modelLabel.textContent = '未配置模型';
+        else scRefs.modelBtn.textContent = '未配置模型';
+        scRefs.modelBtn.classList.add('empty');
+      }
+      return;
+    }
+
+    scRefs.ctxMain.classList.remove('craber-sc-ctx-warn');
+    scRefs.ctxMain.removeAttribute('title');
+    scRefs.ta.placeholder = cfg.textEnabled ? '' : '仅图片输入，请通过附件添加图片';
+    scRefs.ta.disabled = !cfg.textEnabled || !!scPreparingSend;
+    if (!scStreamHandle) scRefs.sendBtn.disabled = !scCfgReady(cfg) || !!scPreparingSend;
+    if (!scStreamHandle) scRefs.sendBtn.disabled = !scCfgReady(cfg) || !!scPreparingSend;
+    scRefs.ctxMain.textContent = cfg.textEnabled ? scBuildContext(mode).label : '仅图片输入';
+    for (const k of Object.keys(scRefs.ctxBtns)) scRefs.ctxBtns[k].disabled = !cfg.textEnabled;
+    if (scRefs.modelBtn) {
+      const eff = cfg.reasoningEffort;
+      /* 参考稿写成「模型 · 高」：深度是次要信息，跟在模型名后面 */
+      const text = (cfg.model ? cfg.model.split('/').pop() : '选择模型')
+        + (eff !== 'default' ? ' · ' + scEffortLabel(eff) : '');
+      if (scRefs.modelLabel) {
+        scRefs.modelLabel.textContent = text;
+        scRefs.modelLabel.title = cfg.model || '';
+      } else {
+        scRefs.modelBtn.textContent = text;
+      }
+      scRefs.modelBtn.classList.toggle('empty', !cfg.model);
+    }
+    // 参考稿没有这行键盘提示；保留元素但不占位，供辅助技术读取
+    scRefs.hint.textContent = '';
+    scRefs.hint.setAttribute('aria-label', 'Enter 发送，Shift+Enter 换行');
+
+  }
+
+  /* ---------- 渲染消息 ---------- */
+  function scRenderMessages() {
+    const R = scRefs;
+    if (!R) return;
+    const focusedMessage = document.activeElement?.closest('.craber-sc-think')?.scMessage;
+    const wasAtBottom = R.body.scrollHeight - R.body.scrollTop - R.body.clientHeight < 80;
+    for (const box of R.msgs.querySelectorAll('.craber-sc-think.open')) {
+      if (box.scMessage) box.scMessage.thinkScrollTop = box.querySelector('.craber-sc-think-body').scrollTop;
+    }
+    R.msgs.textContent = '';
+    const msgs = scThread ? scThread.messages : [];
+
+    /* 未配置模型：整个消息区换成一张"去配置"的引导卡。
+     * 比在底部塞一行灰字好得多 —— 那行字又小又点不动，
+     * 用户看完还是不知道去哪配、怎么配。 */
+    if (!scCfgReady()) {
+      R.msgs.append(scBuildSetupCard());
+      return;
+    }
+
+    if (!msgs.length) {
+      const empty = folderEl('div', 'craber-sc-empty');
+      const icon = folderEl('span');
+      icon.innerHTML = mi('<path d="M12 3.5c-4.7 0-8.5 3.1-8.5 7 0 2.2 1.2 4.1 3.1 5.4v3.6c0 .5.6.8 1 .5l3-2.1c.5.1 1 .1 1.4.1 4.7 0 8.5-3.1 8.5-7s-3.8-7-8.5-7z"/>');
+      const tip = folderEl('div');
+      tip.innerHTML = '<b>侧边聊天</b><br>与主对话并行的一条问答线。'
+        + '不会打断你正在看的会话，也不会把内容发进主对话。';
+      const sugs = folderEl('div', 'craber-sc-sugs');
+      const suggestions = scModelConfigFor().textEnabled
+        ? ['总结当前对话', '解释选中的内容', '把这段写得更简洁'] : [];
+      if (!suggestions.length) tip.textContent = '当前模型仅启用了图片输入。请从左下角的「附件」添加图片。';
+      for (const text of suggestions) {
+        const b = folderEl('button', 'craber-sc-sug', text);
+        b.type = 'button';
+        b.addEventListener('click', () => {
+          if (!scRefs) return;
+          scRefs.ta.value = text;
+          scSend();
+        });
+        sugs.append(b);
+      }
+      empty.append(icon, tip, sugs);
+      R.msgs.append(empty);
+      return;
+    }
+
+    // 按轮渲染：一条提问 + 一条回复算一轮，回复的操作条挂在轮上
+    let cur = null;
+    for (const m of msgs) {
+      if (m.role === 'user') {
+        cur = folderEl('div', 'craber-sc-turn');
+        const qWrap = folderEl('div', 'craber-sc-qwrap');
+        const q = folderEl('div', 'craber-sc-q');
+        if (m.ctxLabel) q.title = m.ctxLabel;
+        if (m.attachments && m.attachments.length) {
+          const files = folderEl('div', 'craber-sc-qfiles');
+          for (const file of m.attachments) {
+            if (file.kind === 'image') {
+              const image = document.createElement('img');
+              image.src = file.dataUrl;
+              image.alt = file.name;
+              files.append(image);
+            } else files.append(folderEl('span', null, file.name));
+          }
+          q.append(files);
+        }
+        q.append(document.createTextNode(m.content || ''));
+        qWrap.append(q);
+        if (String(m.content || '').trim()) {
+          const cp = folderEl('button', 'craber-sc-qcopy');
+          cp.type = 'button';
+          cp.innerHTML = R.ico.copy;
+          cp.setAttribute('aria-label', '复制用户消息');
+          cp.title = '复制消息';
+          cp.addEventListener('click', () => {
+            const txt = String(m.content || '');
+            try {
+              navigator.clipboard.writeText(txt).then(
+                () => navToast('已复制'),
+                () => navToast('复制失败'));
+            } catch (e) { navToast('复制失败'); }
+          });
+          qWrap.append(cp);
+        }
+        cur.append(qWrap);
+        R.msgs.append(cur);
+        continue;
+      }
+      if (!cur) {
+        cur = folderEl('div', 'craber-sc-turn');
+        R.msgs.append(cur);
+      }
+
+      /* 思考内容（折叠容器）。
+       * 放在正文上面，因为推理模型是先想后答，视觉顺序也就该这样。
+       * 默认收起；展开选择与独立滚动位置在流式重绘后仍保留。
+       * 纯文本渲染 —— 思考过程里的 markdown 通常很破碎，解析反而更乱。 */
+      if (m.reasoning) {
+        const think = scBuildThinkBox(m);
+        cur.append(think);
+      }
+
+      /* 正文还没到（首个 token 在路上）：给三个跳动的点，
+       * 否则面板看起来像"发了没反应"。 */
+      if (m.streaming && !m.content) {
+        const typing = folderEl('div', 'craber-sc-typing');
+        typing.append(folderEl('i'), folderEl('i'), folderEl('i'));
+        cur.append(typing);
+      } else {
+        const a = folderEl('div', 'craber-sc-a');
+        if (m.streaming) a.classList.add('craber-sc-streaming');
+        // 助手回复走 markdown：模型输出基本都是 md，纯文本显示会很难读。
+        // 解析失败就退回纯文本，不能让渲染异常把内容吞掉。
+        try {
+          a.innerHTML = miniMarkdownToHtml(m.content || '');
+        } catch (e) {
+          a.textContent = m.content || '';
+        }
+        cur.append(a);
+      }
+
+      if (m.error) {
+        const err = folderEl('div', 'craber-sc-err', m.error);
+        cur.append(err);
+      }
+
+      if (!m.streaming) {
+        const acts = folderEl('div', 'craber-sc-acts');
+        const cp = folderEl('button', 'craber-sc-act');
+        cp.type = 'button';
+        cp.innerHTML = R.ico.copy + '<span>复制</span>';
+        cp.addEventListener('click', () => {
+          const txt = m.content || '';
+          if (!txt) return;
+          try {
+            navigator.clipboard.writeText(txt).then(
+              () => navToast('已复制'),
+              () => navToast('复制失败'));
+          } catch (e) { navToast('复制失败'); }
+        });
+        const rt = folderEl('button', 'craber-sc-act');
+        rt.type = 'button';
+        rt.innerHTML = R.ico.retry + '<span>重试</span>';
+        rt.addEventListener('click', () => scRetry(m));
+        acts.append(cp, rt);
+        cur.append(acts);
+      } else {
+        cur = null;
+      }
+    }
+    for (const box of R.msgs.querySelectorAll('.craber-sc-think')) {
+      if (box.classList.contains('open')) {
+        box.querySelector('.craber-sc-think-body').scrollTop = box.scMessage.thinkScrollTop || 0;
+      }
+      if (box.scMessage === focusedMessage) box.querySelector('button').focus({ preventScroll: true });
+    }
+    if (wasAtBottom) scScrollToBottom(true);
+  }
+
+  /* 思考内容的折叠容器。
+   * 交互：点标题栏整行展开/收起；展开状态记在消息对象上（thinkOpen），
+   * 所以流式期间的重绘不会把用户刚点开的状态冲掉。
+   *
+   * 为什么不用 <details>：它的开合状态存在 DOM 上，我们每秒/每帧重绘
+   * 整个消息列表，DOM 会重建，展开态就丢了。自己管状态更可靠。
+   */
+  function scBuildThinkBox(m) {
+    // 参考稿把思考过程收成一行灰字：只有用户手动点开时才渲染正文
+    const open = m.thinkOpen === true;
+    const box = folderEl('div', 'craber-sc-think' + (open ? ' open' : ''));
+    box.scMessage = m;
+    if (m.streaming) box.classList.add('craber-sc-think-live');
+
+    const head = folderEl('button', 'craber-sc-think-hd');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    /* 参考稿是「✳ 思考12s ⌄」：左边一个小图标，中间文字，右边折叠箭头 */
+    const spark = folderEl('span', 'craber-sc-think-ic');
+    spark.innerHTML = mi('<ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(45 12 12)"/>'
+      + '<ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(-45 12 12)"/>'
+      + '<path d="M12 12v.01"/>');
+    const chev = folderEl('span', 'craber-sc-think-chev');
+    // 参考稿是向下的 ⌄；展开后翻转成向上
+    chev.innerHTML = mi('<path d="M9 6l6 6-6 6"/>');
+    const secs = Math.max(1, Math.round((m.thinkMs || 0) / 1000));
+    const label = m.streaming
+      ? '正在思考…'
+      : (m.thinkMs ? '思考' + secs + 's' : '思考过程');
+    const name = folderEl('span', 'craber-sc-think-label', label);
+    head.append(spark, name, chev);
+    head.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      m.thinkOpen = !open;
+      m.thinkUserToggled = true;
+      const oldTop = scRefs.body.scrollTop;
+      scRenderMessages();
+      scRefs.body.scrollTop = oldTop;
+    });
+
+    const body = folderEl('div', 'craber-sc-think-body');
+    body.textContent = m.reasoning || '';
+
+    box.append(head, body);
+    return box;
+  }
+
+  // 滚到底。要不要跟，看调用方：流式追加时只在"用户本来就在底部附近"才跟，
+  // 否则他正往上翻旧内容，每来一段文字就被拽回底部，根本读不了。
+  function scScrollToBottom(force) {
+    const R = scRefs;
+    if (!R) return;
+    const el = R.body;
+    if (!el) return;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (force || gap < 80) el.scrollTop = el.scrollHeight;
+  }
+
+  function scRenderTitle() {
+    if (!scRefs || !scThread) return;
+    scRefs.titleText.textContent = scThread.title || '侧边聊天';
+  }
+
+  function scRenderHistory() {
+    const R = scRefs;
+    if (!R) return;
+    R.hist.textContent = '';
+    const active = scCfgLoad();
+    const list = scThreadsLoad().filter((thread) => scThreadMatches(thread, active));
+    if (!list.length) {
+      R.hist.append(folderEl('div', 'craber-sc-histempty', '当前模型还没有历史对话'));
+      return;
+    }
+    for (const t of list) {
+      const row = folderEl('button', 'craber-sc-histrow');
+      row.type = 'button';
+      if (scThread && t.id === scThread.id) row.classList.add('on');
+      const main = folderEl('div', 'craber-sc-histrow-main');
+      main.append(folderEl('div', 'craber-sc-histrow-t', t.title || '未命名对话'));
+      const n = (t.messages || []).filter((m) => m.role === 'user').length;
+      main.append(folderEl('div', 'craber-sc-histrow-s',
+        n + ' 问 · ' + scTimeText(t.updatedAt)));
+
+      const del = folderEl('span', 'craber-sc-histrow-del');
+      del.setAttribute('role', 'button');
+      del.setAttribute('aria-label', '删除这条对话');
+      del.innerHTML = R.ico.trash;
+      del.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const rest = scThreadsLoad().filter((x) => x.id !== t.id);
+        scThreadsSave(rest);
+        if (scThread && scThread.id === t.id) {
+          scThread = null;
+          scStartNewThread();
+        }
+        scRenderHistory();
+        navToast('已删除');
+      });
+
+      row.append(main, del);
+      row.addEventListener('click', () => {
+        scStop();
+        scCloseMenus();
+        scThread = t;
+        const cfg = scCfgLoad();
+        scSetModelConfig(cfg, active.model, { threadId: t.id });
+        scCfgSave(cfg);
+        R.hist.hidden = true;
+        R.histBtn.classList.remove('on');
+        scRenderTitle();
+        scRenderMessages();
+        scScrollToBottom();
+        scSyncCtxBar();
+      });
+      R.hist.append(row);
+    }
+  }
+
+  function scTimeText(ts) {
+    const d = new Date(ts || Date.now());
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    if (sameDay) return hh + ':' + mm;
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm;
+  }
+
+  /* ---------- 会话操作 ---------- */
+  function scPersist() {
+    if (!scThread || !scThread.messages.length) return;
+    const list = scThreadsLoad();
+    const i = list.findIndex((t) => t.id === scThread.id);
+    scThread.updatedAt = Date.now();
+    if (i >= 0) list[i] = scThread;
+    else list.unshift(scThread);
+    if (!scThreadsSave(list) && scRefs) {
+      scRefs.status.textContent = '本地存储空间不足，本轮消息暂存于当前页面';
+      scUpdateComposerInset();
+    }
+  }
+
+  function scStartNewThread() {
+    scStop();
+    scCloseMenus();
+    scDraftAttachments = [];
+    if (scRefs) {
+      scRefs.ta.value = '';
+      scRefs.ta.style.height = '';
+      scRefs.status.textContent = '';
+      scRenderAttachments();
+    }
+    const cfg = scCfgLoad();
+    scThread = scNewThread(cfg.model, cfg.baseUrl);
+    if (cfg.model) {
+      scSetModelConfig(cfg, cfg.model, { threadId: scThread.id });
+      scCfgSave(cfg);
+    }
+    if (scRefs) {
+      scRefs.hist.hidden = true;
+      scRefs.histBtn.classList.remove('on');
+    }
+    scRenderTitle();
+    scRenderMessages();
+    scSyncCtxBar();
+  }
+
+  // 没有当前会话就造一个；打开面板时也走这里
+  function scEnsureThread() {
+    const cfg = scCfgLoad();
+    if (scThreadMatches(scThread, cfg)) return scThread;
+    const previous = scThread;
+    const profile = scModelConfigFor(cfg);
+    const list = scThreadsLoad().filter((thread) => scThreadMatches(thread, cfg));
+    const saved = list.find((thread) => thread.id === profile.threadId) || list[0];
+    scThread = saved || scNewThread(cfg.model, cfg.baseUrl);
+    if (cfg.model && profile.threadId !== scThread.id) {
+      scSetModelConfig(cfg, cfg.model, { threadId: scThread.id });
+      scCfgSave(cfg);
+    }
+    if (scRefs && previous) {
+      const key = (thread) => JSON.stringify([thread.baseUrl, thread.modelId]);
+      const current = { text: scRefs.ta.value, attachments: scDraftAttachments };
+      if (current.text || current.attachments.length) scModelDrafts.set(key(previous), current);
+      const next = scModelDrafts.get(key(scThread));
+      scModelDrafts.delete(key(scThread));
+      scRefs.ta.value = next?.text || '';
+      scRefs.ta.style.height = '';
+      scRefs.status.textContent = '';
+      scDraftAttachments = next?.attachments || [];
+      scRenderAttachments();
+    }
+    return scThread;
+  }
+
+  function scSwitchModel(modelId) {
+    const nextId = String(modelId || '').trim();
+    if (!nextId || scStreamHandle || scPreparingSend || scReadingAttachments) return false;
+    const cfg = scCfgLoad();
+    if (!(cfg.modelConfigs || []).some((profile) => profile.id === nextId)) return false;
+    if (cfg.model === nextId && scThreadMatches(scThread, cfg)) return true;
+    scPersist();
+    cfg.model = nextId;
+    scCfgSave(cfg);
+    scEnsureThread();
+    if (scRefs) {
+      scRenderTitle();
+      scRenderMessages();
+      if (!scRefs.hist.hidden) scRenderHistory();
+      scSyncCtxBar();
+      scScrollToBottom(true);
+    }
+    return true;
+  }
+
+  function scSetStreamingUI(on) {
+    const R = scRefs;
+    if (!R) return;
+    R.sendBtn.classList.toggle('craber-sc-stop', !!on);
+    R.sendBtn.innerHTML = on ? R.ico.stop : R.ico.send;
+    R.sendBtn.title = on ? '停止生成' : '发送';
+    R.sendBtn.setAttribute('aria-label', on ? '停止生成' : '发送');
+    if (R.hint) {
+      R.hint.textContent = on
+        ? '正在生成…'
+        : (scCfgReady() ? 'Enter 发送 · Shift+Enter 换行' : '');
+    }
+    /* 流式期间也允许继续写下一个问题，所以这里不因 on 而禁用；
+     * 但未配置模型时必须保持禁用 —— 否则会把 scSyncCtxBar 设的
+     * disabled 覆盖掉，出现"没有模型却能打字"的错觉。 */
+    const profile = scModelConfigFor(scCfgLoad());
+    R.ta.disabled = !scCfgReady() || !profile.textEnabled;
+    // 未配置时连"发送"也不该能点（点了只会跳设置页，不如直接给配置入口）
+    R.sendBtn.disabled = on ? false : !scCfgReady();
+  }
+
+  function scStop() {
+    if (!scStreamHandle) return;
+    const h = scStreamHandle;
+    scStreamHandle = null;
+    h.abort();
+    /* 打字机缓冲里可能还有没显示出来的字：停止生成也必须先把它们刷出来，
+     * 否则用户会觉得"我明明看到它已经生成了，怎么一停就少了一截"。 */
+    if (scTypeFlush) {
+      try { scTypeFlush(); } catch (e) {}
+      scTypeFlush = null;
+    }
+    // 把还在流式的那条定稿，否则光标会一直闪
+    if (scThread) {
+      const last = scThread.messages[scThread.messages.length - 1];
+      if (last && last.streaming) {
+        last.streaming = false;
+        if (!last.content) last.content = '（已停止）';
+      }
+      scPersist();
+    }
+    scSetStreamingUI(false);
+    scRenderMessages();
+    scScrollToBottom();
+  }
+
+  function scRetry(msg) {
+    const cfg = scModelConfigFor();
+    if (scStreamHandle || scPreparingSend || !scThreadMatches(scThread, cfg)) return;
+    const msgs = scThread.messages;
+    const i = msgs.indexOf(msg);
+    if (i < 0) return;
+    // 找到这条回复对应的提问，把它之后的内容全丢掉再重发
+    let qi = i - 1;
+    while (qi >= 0 && msgs[qi].role !== 'user') qi--;
+    if (qi < 0) return;
+    const question = msgs[qi];
+    const error = scInputError(question, cfg);
+    if (error) {
+      scRefs.status.textContent = error;
+      scUpdateComposerInset();
+      return;
+    }
+    msgs.length = qi + 1;
+    scRenderMessages();
+    scRunTurn(question, cfg);
+  }
+
+  /* ---------- 打字机回放 ----------
+   * 网络层的"增量"不一定真的增量：不少网关会在几十毫秒内把整段答案推完，
+   * 直接渲染就是"啪"一下全出现。这里把收到的文本先放进缓冲区，再按固定节奏
+   * 逐字交给 UI —— 数据仍然实时到达，显示效果才是真正的打字机。
+   *
+   * 三条约束：
+   *   1) 前端不会比网络慢太多：缓冲越长，单帧吐出的字越多（上限 220 字/帧）。
+   *   2) 停止生成时把已收到的内容立即刷完，不能吞字。
+   *   3) 结束时才把消息标记为非流式，光标和"停止"按钮不会提前消失。
+   */
+  function scTypewriter(ansMsg, onFinish) {
+    let buf = '';
+    let timer = 0;
+    let ended = false;   // 网络流已结束
+    let done = false;
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (timer) {
+        try { clearTimeout(timer); } catch (e) {}
+        timer = 0;
+      }
+      ansMsg.streaming = false;
+      if (!ansMsg.thinkUserToggled) ansMsg.thinkOpen = false;
+      if (!ansMsg.thinkMs) ansMsg.thinkMs = Math.max(1, Date.now() - ansMsg.at);
+      if (!ansMsg.content) ansMsg.content = '（接口没有返回内容）';
+      try { if (onFinish) onFinish(); } catch (e) {}
+      scPersist();
+      scSetStreamingUI(false);
+      scRenderMessages();
+      scScrollToBottom();
+    };
+
+    const tick = () => {
+      timer = 0;
+      if (done) return;
+      if (!buf) {
+        if (ended) finish();
+        return;
+      }
+      const n = buf.length;
+      let step = n > 1200 ? 220 : n > 300 ? 24 : 2;
+      const lastCode = buf.charCodeAt(step - 1);
+      if (lastCode >= 0xd800 && lastCode <= 0xdbff) step++;
+      ansMsg.content += buf.slice(0, step);
+      buf = buf.slice(step);
+      scRenderMessages();
+      scScrollToBottom();
+      if (ended && !buf) { finish(); return; }
+      timer = setTimeout(tick, 16);
+    };
+
+    return {
+      push(text) {
+        if (!text || done) return;
+        buf += text;
+        if (!timer) timer = setTimeout(tick, 0);
+      },
+      end() {
+        if (done) return;
+        ended = true;
+        if (!buf) finish();
+        else if (!timer) timer = setTimeout(tick, 0);
+      },
+      // 停止/异常收尾：把缓冲里还没显示的正文立即补上
+      flushNow() {
+        if (done) return;
+        if (buf) {
+          ansMsg.content += buf;
+          buf = '';
+        }
+        ended = true;
+        finish();
+      },
+      get done() { return done; }
+    };
+  }
+
+  /* ---------- 发送 ---------- */
+  async function scSend() {
+    if (!scRefs || scStreamHandle || scPreparingSend) return;
+    const R = scRefs;
+    const text = (R.ta.value || '').trim();
+    if (!text && !scDraftAttachments.length) { R.ta.focus(); return; }
+    if (scReadingAttachments) { R.status.textContent = '附件仍在读取，请稍候'; return; }
+
+    const baseCfg = scCfgLoad();
+    const cfg = scModelConfigFor(baseCfg);
+    if (!scCfgReady(baseCfg)) {
+      // 未配置时输入框是禁用的，正常走不到这里；留作兜底并直接带路
+      navToast('还没配置模型，正在打开配置页…');
+      scClose();
+      craberOpenSettings('side-chat');
+      return;
+    }
+    const attachments = scDraftAttachments.slice();
+    const error = scInputError({ content: text, attachments }, cfg);
+    if (error) {
+      R.status.textContent = error;
+      scUpdateComposerInset();
+      return;
+    }
+
+    const targetThread = scEnsureThread();
+    scPreparingSend = true;
+    R.ta.disabled = true;
+    R.sendBtn.disabled = true;
+    scCloseMenus();
+    R.status.textContent = '';
+    let ctx;
+    try {
+      if (scSelectionPath && scSelectionPath !== location.pathname) {
+        scPendingSelection = '';
+        scPendingTurn = null;
+      }
+      ctx = await scCollectContext(cfg.ctxMode, cfg);
+    } catch (e) {
+      R.status.textContent = '读取主会话失败：' + e.message;
+      scUpdateComposerInset();
+      scPreparingSend = false;
+      R.ta.disabled = !cfg.textEnabled;
+      R.sendBtn.disabled = false;
+      return;
+    }
+    scPreparingSend = false;
+    R.ta.disabled = !cfg.textEnabled;
+    R.sendBtn.disabled = false;
+    const current = scCfgLoad();
+    if (scThread !== targetThread || !scOpen || !scThreadMatches(targetThread, current)
+      || current.apiKey !== cfg.apiKey) return;
+    if (ctx.label.includes('已截断')) R.status.textContent = '主会话上下文过长，已截断';
+    // 上下文在这里定格一次，存进这条消息里：之后重试、重绘都用当时那份，
+    // 不会因为用户后来在页面上又选了别处而悄悄变化。
+    // 定格完就清掉"选区入口"留下的临时选区，免得下一条消息还捎带着它
+    scPendingSelection = '';
+    scPendingTurn = null;
+
+    const userMsg = { role: 'user', content: text, ctx: ctx.text, ctxLabel: ctx.label,
+      attachments, at: Date.now() };
+    scThread.messages.push(userMsg);
+    if (!scThread.title) {
+      const title = text || attachments[0].name;
+      scThread.title = title.slice(0, 26) + (title.length > 26 ? '…' : '');
+      scRenderTitle();
+    }
+    R.ta.value = '';
+    R.ta.style.height = '';
+    scDraftAttachments = [];
+    scRenderAttachments();
+    scPersist();
+
+    scRunTurn(userMsg, cfg);
+  }
+
+  // 把一条提问跑成一轮问答。retry 也复用这条路径。
+  function scRunTurn(userMsg, cfg) {
+    const thread = scThread;
+    const api = scTurnMessages(thread, userMsg, cfg);
+
+    const ansMsg = { role: 'assistant', content: '', modelId: cfg.model,
+      streaming: true, at: Date.now() };
+    thread.messages.push(ansMsg);
+    scRenderMessages();
+    scScrollToBottom(true);
+    scSetStreamingUI(true);
+
+    // 流式期间的重绘节流：每帧最多一次，避免长回复把主线程拖住
+    let dirty = false;
+    const flush = () => {
+      scPendingRender = 0;
+      if (!dirty) return;
+      dirty = false;
+      scRenderMessages();
+      scScrollToBottom();
+    };
+    const markDirty = () => {
+      dirty = true;
+      if (!scPendingRender) scPendingRender = requestAnimationFrame(flush);
+    };
+
+    /* scStream 在参数不合法之类的极端情况下会同步回调 onError。
+     * 那时 scStreamHandle 还没被赋值，直接写 scStreamHandle = null 会被
+     * 后面的赋值覆盖回"非空"，按钮就永远卡在"停止"。
+     * 用 finished 位把这类同步回调记下来，赋值后立刻补一次收尾。 */
+    let finished = false;
+    // 句柄先声明成 null：同步回调里会引用到它，用 const 的话此刻还在 TDZ
+    let h = null;
+    const clearHandle = () => {
+      // 只在"当前就是这条流"或"还没登记"时才清，避免误清掉后来启动的另一条
+      if (scStreamHandle === h || scStreamHandle === null) scStreamHandle = null;
+    };
+
+    /* 打字机回放：网络块再大，也按字符逐段交给 UI。
+     * 停止时通过 scTypeFlush 把缓冲区立即刷完，保证不吞正文。 */
+    const typer = scTypewriter(ansMsg, () => {
+      finished = true;
+      clearHandle();
+      if (scTypeFlush) scTypeFlush = null;
+    });
+    scTypeFlush = () => typer.flushNow();
+
+    h = scStream(cfg, api,
+      (delta) => {
+        /* 记下首个正文到达的时间：参考稿用「思考 12s」表示这段等待 */
+        if (!ansMsg.thinkMs) {
+          ansMsg.thinkMs = Math.max(1, Date.now() - ansMsg.at);
+        }
+        typer.push(delta);
+        markDirty();
+      },
+      () => {
+        /* 正文交给打字机按节奏播完再收尾；这里只标记"没有更多数据了" */
+        typer.end();
+      },
+      (err) => {
+        ansMsg.error = (err && err.message) || '请求失败';
+        // 已经收到的部分要保住：先刷完缓冲，再展示错误
+        if (!typer.done) typer.flushNow();
+        finished = true;
+        clearHandle();
+        if (scTypeFlush) scTypeFlush = null;
+        ansMsg.streaming = false;
+        scPersist();
+        scSetStreamingUI(false);
+        scRenderMessages();
+        scScrollToBottom(true);
+      },
+      // 思考过程默认折叠，标题在推理增量到达时出现。
+      (thinkDelta) => {
+        ansMsg.reasoning = (ansMsg.reasoning || '') + thinkDelta;
+        if (ansMsg.thinkOpen == null) ansMsg.thinkOpen = false;
+        markDirty();
+      });
+
+    // 同步收尾的情况：不要把这个已经结束的句柄登记成"进行中"
+    scStreamHandle = finished ? null : h;
+  }
+
+  /* ---------- 开关 ---------- */
+
+  function scMount(opts) {
+    if (!uiPrefs.sideChat) return;
+    scCaptureSelection();
+    scEnsureBuilt();
+    if (opts && opts.selection) scPendingSelection = opts.selection;
+    scOpenPanel();
+  }
+
+  function scOpenPanel() {
+    scEnsureBuilt();
+    scOpen = true;
+    // 记住展开状态：刷新、换会话后还能回到这里
+    scOpenStateSave(true);
+    scEl.classList.add('craber-open');
+    // 分栏形态：面板占满全高，清掉可能残留的 top 内联值
+    scEl.style.top = '0px';
+    // 压窄页面壳（顶栏 + 正文一起让位），面板落在空出来的位置
+    scApplyPlaceholder(true, scWidthLoad());
+    scEnsureThread();
+    scRenderTitle();
+    scRenderMessages();
+    scSyncCtxBar();
+    scSetStreamingUI(!!scStreamHandle);
+    scScrollToBottom(true);
+    scRenderAttachments();
+    // 焦点给输入框：打开就是为了打字
+    setTimeout(() => { try { scRefs.ta.focus(); } catch (e) {} }, 60);
+  }
+
+  function scClose() {
+    if (!scEl) return;
+    scCloseMenus();
+    scOpen = false;
+    // 用户主动关掉 → 记住"关"，下次刷新不要自己又弹出来
+    scOpenStateSave(false);
+    scEl.classList.remove('craber-open');
+    // 让出来的空间必须还回去，否则正文右侧会永久空一块
+    scApplyPlaceholder(false);
+    scHideSelBtn();
+  }
+
+  function scToggle() {
+    if (scOpen) scClose();
+    else scMount();
+  }
+
+  function scUnmount() {
+    scStop();
+    scCloseMenus();
+    if (scRefs && scRefs.events) scRefs.events.abort();
+    scOpen = false;
+    // 功能开关被关掉：这不是"临时收起"，清掉记忆，免得下次开开关时莫名展开
+    scOpenStateSave(false);
+    // 必须先还原让位，否则关掉开关后正文右侧会永久空一块
+    scApplyPlaceholder(false);
+    if (scEl) { scEl.remove(); scEl = null; scRefs = null; }
+    if (scMountBtn) { scMountBtn.remove(); scMountBtn = null; }
+    scHideSelBtn();
+    if (scSelBtn) { scSelBtn.remove(); scSelBtn = null; }
+  }
+
+  /* 页面加载后恢复上次的展开状态。
+   *
+   * 只在"当前是会话页"且功能开关开着时恢复 —— 首页/设置页没有正文可让位，
+   * 展开面板只会挡住内容。
+   * 延迟一小段再恢复：等 ChatGPT 自己把顶栏与正文渲染出来，
+   * 否则 body padding 写了但页面壳还没出现，会让首屏闪一下。
+   */
+  function scRestoreOpenState() {
+    if (!uiPrefs.sideChat) return;
+    if (!scOpenStateLoad()) return;
+    if (!isConvPage()) return;
+    // 已经打开了就不重复处理
+    if (scOpen && scEl) return;
+    scOpenPanel();
+  }
+
+  /* ---------- 顶栏入口按钮 ---------- */
+  // scMountBtn 的声明在 fabEl 那边（mountFab 要用，得早于它的定义）
+
+  // 挂在顶栏 🦀 右边。与导出按钮同一套尺寸与描边，视觉上是一家人。
+  //
+  // 注意这里**不要求 isConvPage()**：导出要有内容才有意义，侧边聊天不需要 ——
+  // 在首页新开对话（URL 只有 /，还没有 /c/{id}）时，正是最想顺手问一句的时候。
+  // 只要求"顶栏按钮组找得到"，找不到就等下一轮 tick 补挂。
+  function craberSCMountButton(host) {
+    if (!uiPrefs.sideChat) {
+      if (scMountBtn && scMountBtn.isConnected) scMountBtn.remove();
+      scUnmount();
+      return;
+    }
+    // host 可能还没就绪（顶栏正在重建 / 页面还没渲染完）：
+    // 只保留按钮对象，等下一轮 tick 补挂
+    if (!host) {
+      if (scMountBtn && scMountBtn.isConnected) scMountBtn.remove();
+      return;
+    }
+    if (scMountBtn && scMountBtn.parentElement === host) return;
+    if (!scMountBtn) {
+      scMountBtn = document.createElement('button');
+      scMountBtn.className = 'craber-fab-btn';
+      scMountBtn.type = 'button';
+      scMountBtn.title = '侧边聊天';
+      scMountBtn.setAttribute('aria-label', '侧边聊天');
+      // 对话气泡图标：与 🦀 的实心螃蟹区分开，不抢视觉
+      scMountBtn.innerHTML = mi('<path d="M12 3.5c-4.7 0-8.5 3.1-8.5 7 0 2.2 1.2 4.1 3.1 5.4v3.6c0 .5.6.8 1 .5l3-2.1c.5.1 1 .1 1.4.1 4.7 0 8.5-3.1 8.5-7s-3.8-7-8.5-7z"/>');
+      scMountBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        scToggle();
+      });
+    }
+    // 跟在导出按钮后面（同一组，顺序稳定）；没有导出按钮时就直接追加
+    if (fabEl && fabEl.parentElement === host) {
+      fabEl.insertAdjacentElement('afterend', scMountBtn);
+    } else {
+      host.appendChild(scMountBtn);
+    }
+    applyFabTheme(scMountBtn);
+  }
+
+  /* ---------- 选中文字浮出按钮 ---------- */
+  let scSelBtn = null;
+  let scSelTimer = 0;
+
+  function scHideSelBtn() {
+    if (scSelTimer) { clearTimeout(scSelTimer); scSelTimer = 0; }
+    if (scSelBtn) scSelBtn.classList.remove('show');
+  }
+
+  function scEnsureSelBtn() {
+    if (scSelBtn) return scSelBtn;
+    scSelBtn = folderEl('button', 'craber-sc-sel');
+    scSelBtn.type = 'button';
+    scSelBtn.innerHTML = mi('<path d="M12 3.5c-4.7 0-8.5 3.1-8.5 7 0 2.2 1.2 4.1 3.1 5.4v3.6c0 .5.6.8 1 .5l3-2.1c.5.1 1 .1 1.4.1 4.7 0 8.5-3.1 8.5-7s-3.8-7-8.5-7z"/>')
+      + '<span>在侧边问</span>';
+    // mousedown 就拦：不然点击会先清掉选区，拿不到文字
+    scSelBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    scSelBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const text = scPendingSelection || scCurrentSelection();
+      scHideSelBtn();
+      if (!text) return;
+      /* 不改用户存的上下文档位：那是他自己在面板上选的，不该被一次点击悄悄改掉。
+       * 选区会作为 scPendingSelection 参与拼装，当前档位本就会把它带上。 */
+      scMount({ selection: text });
+    });
+    document.body.appendChild(scSelBtn);
+    return scSelBtn;
+  }
+
+  // 选中正文时浮出按钮。只在正文区、且选区有内容时出现。
+  function scSelectionTick() {
+    scCaptureSelection();
+    if (!uiPrefs.sideChat || !uiPrefs.sideChatSel) { scHideSelBtn(); return; }
+    if (scOpen) { scHideSelBtn(); return; }
+    const sel = document.getSelection();
+    if (!sel || sel.isCollapsed) { scHideSelBtn(); return; }
+    const text = String(sel.toString() || '').trim();
+    if (!text) { scHideSelBtn(); return; }
+    const node = sel.anchorNode;
+    const host = node && (node.nodeType === 1 ? node : node.parentElement);
+    // 只认主对话正文里的选择：面板、对话框、侧栏、输入框都不算
+    if (!host || !host.closest('[data-turn-key]')) { scHideSelBtn(); return; }
+    if (host.closest('.craber-sc,.craber-dlg-mask,.craber-set,[contenteditable="true"]')) {
+      scHideSelBtn(); return;
+    }
+
+    let rect = null;
+    try {
+      const r = sel.getRangeAt(0).getBoundingClientRect();
+      if (r && (r.width || r.height)) rect = r;
+    } catch (e) { /* 跨节点选择偶尔取不到矩形，忽略 */ }
+    if (!rect) { scHideSelBtn(); return; }
+
+    scPendingSelection = text;
+    const btn = scEnsureSelBtn();
+    btn.classList.add('show');
+    // 摆在选区上方；上面放不下就翻到下面
+    const bw = btn.offsetWidth || 96;
+    const bh = btn.offsetHeight || 30;
+    let left = rect.left + rect.width / 2 - bw / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+    let top = rect.top - bh - 8;
+    if (top < 8) top = rect.bottom + 8;
+    btn.style.left = left + 'px';
+    btn.style.top = top + 'px';
+  }
+
+  // 选中变化用 mouseup / keyup 触发，不用 selectionchange ——
+  // 后者在拖动选择过程中会高频触发，每次都要量矩形，很费。
+  document.addEventListener('mouseup', () => {
+    if (scSelTimer) clearTimeout(scSelTimer);
+    scSelTimer = setTimeout(scSelectionTick, 30);
+  }, true);
+  document.addEventListener('keyup', (e) => {
+    if (e.shiftKey || e.key === 'Escape') {
+      if (scSelTimer) clearTimeout(scSelTimer);
+      scSelTimer = setTimeout(scSelectionTick, 30);
+    }
+  }, true);
+  document.addEventListener('mousedown', (e) => {
+    if (scSelBtn && e.target !== scSelBtn && !scSelBtn.contains(e.target)) scHideSelBtn();
+  }, true);
+  window.addEventListener('scroll', scHideSelBtn, true);
+
+  /* 快捷键：Ctrl/Cmd+Shift+K 开合侧栏。
+   * 用 e.code 判字母而不是 e.key —— 中文/俄文等输入法下 key 会变成别的字符，
+   * 按 code 才能做到"不管什么输入法都是这个键"。
+   * 输入框里也要能用：侧栏正是要在写东西的时候随手叫出来，
+   * 所以不排除 contenteditable / input，只排除面板自己的输入框
+   * （那里面 Ctrl+Shift+K 应该是普通输入）。
+   */
+  document.addEventListener('keydown', (e) => {
+    if (!uiPrefs.sideChat) return;
+    if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
+    if (e.code !== 'KeyK') return;
+    if (e.isComposing) return;
+    if (scRefs && scRefs.ta && e.target === scRefs.ta) return;
+    e.preventDefault();
+    scToggle();
+  }, true);
 
   // 统一接管脚本自己节点的 title 提示（原生白框 → 自定义气泡）
   installTitleTooltip();
 
   mountFab();
   injectSingleButtons();
+  craberComposerMount();
   // 等 ChatGPT 自己的首屏请求先跑，避免和它的 paginated_conversation 撞车触发 429
   scheduleNavRender(NAV_SWITCH_DELAY);
   pbarTick();
-  window.addEventListener('resize', () => { pbarCloseMenu(); });
+  /* 恢复上次的面板展开状态。
+   * 延迟到页面壳渲染出来之后再恢复：body padding 写太早会让首屏闪一下，
+   * 而且那时 main/header 可能还不存在，让位目标量不准。 */
+  setTimeout(scRestoreOpenState, 1500);
+  window.addEventListener('resize', () => {
+    pbarCloseMenu();
+    /* 窗口变窄时要重新夹宽度并同步让位宽度。
+     * 上限统一走 scMaxPanelWidth()（按"正文至少留多宽"反推），
+     * 和拖拽、打开时用的是同一口径，避免三处算法各算一遍。 */
+    if (scEl && scOpen) {
+      const max = scMaxPanelWidth();
+      const cur = parseInt(getComputedStyle(scEl).width, 10) || scWidthLoad();
+      const w = Math.min(cur, max);
+      if (w !== cur) scEl.style.setProperty('--craber-sc-w', w + 'px');
+      scApplyPlaceholder(true, w);
+    }
+    scHideSelBtn();
+  });
   console.log('[gpt-craber] 对话导出脚本已加载');
 })();
