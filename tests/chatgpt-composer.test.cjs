@@ -708,7 +708,7 @@ test('偏好开关、启动、扫描与补挂入口已接入主脚本', () => {
  * 侧边聊天
  *
  * 这里只测"不碰 DOM 就能验的纯逻辑"：配置读写与就绪判定、上下文拼装与
- * 截断、消息历史落盘上限。面板装配与流式请求靠真实浏览器验收 ——
+ * 附件、消息历史落盘上限。面板装配与流式请求靠真实浏览器验收 ——
  * 内置浏览器的注入结果不可信，拿它当验收会把状态弄脏。
  * ============================================================ */
 function loadSideChat(overrides = {}) {
@@ -725,6 +725,7 @@ function loadSideChat(overrides = {}) {
     },
     document: { getSelection: () => null, querySelectorAll: () => [] },
     location: { pathname: '/c/test' },
+    TextEncoder, TextDecoder, btoa, atob,
     console: { warn() {}, error() {} },
     ...overrides
   };
@@ -733,7 +734,7 @@ function loadSideChat(overrides = {}) {
     + ' scDomTurn, scVisibleTurns, scCurrentSelection, scThreadsLoad, scThreadsSave,'
     + ' scModelsFromResponse, scFetchModels, scCaptureSelection, scCollectContext,'
     + ' scAttachmentContent, scInputError, scTurnMessages, scReadAttachment, scEffortOptions, scSaveModels, scModelOptions,'
-    + ' scThreadMatches, scConfiguredModels, scNewThread, SC_CTX_MAX_CHARS, SC_THREADS_MAX, SC_CFG_DEFAULT };', context);
+    + ' scThreadMatches, scConfiguredModels, scNewThread, SC_THREADS_MAX, SC_CFG_DEFAULT };', context);
   return { ...context.api, context, store };
 }
 
@@ -1009,7 +1010,7 @@ test('侧边聊天：获取模型失败时保留服务端错误正文', async ()
   await assert.rejects(pending, /HTTP 401.*invalid key/);
 });
 
-test('侧边聊天：上下文按档位拼装，超长砍头保尾', () => {
+test('侧边聊天：上下文按档位拼装，长对话保留完整正文', () => {
   const long = 'x'.repeat(20000);
   const turns = [
     { q: '第一个问题', a: '第一个回答' },
@@ -1039,12 +1040,9 @@ test('侧边聊天：上下文按档位拼装，超长砍头保尾', () => {
   assert.match(all.text, /第一个问题/);
   assert.match(all.text, /最后一个问题/);
 
-  // 超长要截断，且留下标记 —— 不能让用户以为模型看到了全文
-  assert.ok(all.text.length <= env.SC_CTX_MAX_CHARS + 60, '上下文必须被截断');
-  assert.match(all.text, /中间省略/);
-  assert.match(all.label, /已截断/);
-  // 关键：提问不能被截掉。之前"整段砍头保尾"会把问题本身砍没、只留回答尾巴，
-  // 模型拿到的是没有问题的半截回答。
+  assert.ok(all.text.includes(long), '整个对话必须保留全部长正文');
+  assert.ok(turn.text.includes(long), '当前轮也必须保留完整回复');
+  assert.doesNotMatch(all.label, /已截断/);
   assert.match(all.text, /最后一个问题/);
   assert.match(all.text, /最后一个回答/);
 });
@@ -1667,13 +1665,11 @@ test('侧边聊天：思考折叠展示并保留用户选择的展开状态', ()
   assert.match(source, /const label = m\.streaming\s*\?\s*'正在思考…'/);
   const done = source.slice(source.indexOf('h = scStream(cfg, api,'),
     source.indexOf('// 同步收尾的情况'));
-  assert.match(done, /typer\.end\(\)/, '正文流结束要交给打字机按节奏收尾');
+  assert.match(done, /\(\) => finish\(\)/, '正文流结束后立即定稿');
+  assert.doesNotMatch(done, /typer\./, '正文不能进入延时回放');
   assert.match(done, /ansMsg\.reasoning = \(ansMsg\.reasoning \|\| ''\) \+ thinkDelta/,
     '思考增量要累积到消息上');
-  const typer = source.slice(source.indexOf('  function scTypewriter('),
-    source.indexOf('  /* ---------- 发送 ---------- */'));
-  assert.match(typer, /ansMsg\.thinkOpen = false/, '答完要自动收起');
-  assert.match(typer, /if \(!ansMsg\.thinkUserToggled\)/, '手动展开后保持展开');
+  assert.doesNotMatch(source, /function scTypewriter\(/, '必须移除自制打字机回放');
 });
 
 test('侧边聊天：当前轮采集选中区域所属轮次，焦点移走后仍保留', () => {
@@ -1775,7 +1771,7 @@ test('侧边聊天：重新组装请求时遵循模型模态，不发送已关�
     { role:'user', content:'旧问题' }, { role:'assistant', content:'旧回答' }, { role:'user', content:'新问题' }
   ]);
   const withContext = scTurnMessages({ messages:[text] }, text, { ...textMode, mainContextEnabled:true });
-  assert.match(withContext[0].content, /当前主会话/);
+  assert.equal(Buffer.from(withContext[0].content[1].file.file_data.split(',')[1], 'base64').toString('utf8'), '当前主会话');
   const picture = { role:'user', content:'', ctx:'图片模型不发送此文本', attachments:[attachment] };
   const imageMode = { textEnabled:false, imageEnabled:true, mainContextEnabled:true, systemPrompt:'也不发送' };
   assert.equal(scInputError(picture, imageMode), '');
@@ -1880,55 +1876,51 @@ test('侧边聊天：附件菜单和模型卡片使用可逆的展开/收起动�
     '附件菜单和模型卡片挂载后都走统一开场动画');
 });
 
-test('侧边聊天：大段内容也要逐字回放，不能整块跳出', () => {
-  const fn = source.slice(source.indexOf('  function scTypewriter('),
-    source.indexOf('  /* ---------- 发送 ---------- */'));
-  assert.ok(fn, '必须存在独立的打字机回放器');
-  assert.match(fn, /let buf = ''/, '收到的文本先进入缓冲区');
-  assert.match(fn, /ansMsg\.content \+= buf\.slice\(0, step\)/,
-    '要按步长逐段写入，而不是一次性赋值');
-  assert.match(fn, /setTimeout\(tick/, '回放要按节奏持续进行');
-  assert.match(fn, /n > 1200 \? 220 : n > 300 \? 24 : 2/,
-    '积压越多单帧吐字越多，避免长回答播得太慢');
-  assert.match(fn, /flushNow\(\)[\s\S]*?ansMsg\.content \+= buf/,
-    '停止时要先把缓冲刷出来，不能丢正文');
-});
-
-test('侧边聊天：打字机分帧输出完整正文，emoji 不拆开，停止可立即刷完', () => {
-  const begin = source.indexOf('  function scTypewriter(');
-  const end = source.indexOf('  /* ---------- 发送 ---------- */', begin);
+test('侧边聊天：模型正文增量立即写入消息，界面只按绘制帧合并更新', () => {
+  const begin = source.indexOf('  function scRunTurn(userMsg, cfg) {');
+  const end = source.indexOf('  /* ---------- 开关 ---------- */', begin);
   const pending = [];
   const frames = [];
-  let message;
-  let finished = 0;
+  let nextFrame = 0;
+  const thread = { messages:[] };
+  let streamCallbacks;
+  let persisted = 0;
   const ctx = {
-    setTimeout(fn) { pending.push(fn); return pending.length; },
-    clearTimeout() {},
-    scPersist() {},
+    scThread:thread,
+    scStreamHandle:null,
+    scPendingRender:0,
+    scTurnMessages:() => [],
+    scStream(_cfg, _api, onDelta, onDone, onError, onThink) {
+      streamCallbacks = { onDelta, onDone, onError, onThink };
+      return { abort() {} };
+    },
+    scPersist() { persisted++; },
     scSetStreamingUI() {},
     scScrollToBottom() {},
-    scRenderMessages() { frames.push(message.content); }
+    scRenderMessages() { frames.push(thread.messages.at(-1).content); },
+    requestAnimationFrame(fn) { const id = ++nextFrame; pending.push({ id, fn }); return id; },
+    cancelAnimationFrame(id) {
+      const index = pending.findIndex((frame) => frame.id === id);
+      if (index >= 0) pending.splice(index, 1);
+    }
   };
-  vm.runInNewContext(source.slice(begin, end) + '\nthis.make = scTypewriter;', ctx);
-  message = { content:'', streaming:true, at:Date.now() };
-  const text = 'a😀b'.repeat(500);
-  const typer = ctx.make(message, () => finished++);
-  typer.push(text);
-  typer.end();
-  while (pending.length) pending.shift()();
-  assert.equal(message.content, text);
-  assert.equal(finished, 1);
-  assert.ok(frames.length > 5);
-  assert.ok(frames.every((frame) => frame.isWellFormed()), '每一帧都应保留完整 Unicode 字符');
-  message = { content:'', streaming:true, at:Date.now() };
-  const stopped = ctx.make(message);
-  stopped.push(text);
-  pending.shift()();
-  stopped.flushNow();
-  assert.equal(message.content, text);
+  vm.runInNewContext(source.slice(begin, end) + '\nthis.run = scRunTurn;', ctx);
+  ctx.run({ content:'问题' }, { model:'test' });
+  const message = thread.messages.at(-1);
+  const text = 'a😀b'.repeat(5000);
+  streamCallbacks.onDelta(text);
+  assert.equal(message.content, text, '回调完成时完整增量必须已写入消息数据');
+  assert.equal(frames.at(-1), '', 'DOM 允许合并到下一浏览器绘制帧');
+  assert.equal(pending.length, 1);
+  pending.shift().fn();
+  assert.equal(frames.at(-1), text, '下一绘制帧显示本次收到的全部增量');
+  streamCallbacks.onDelta('尾部');
+  streamCallbacks.onDone();
+  assert.equal(message.content, text + '尾部', '流结束时不应丢失末尾增量');
   assert.equal(message.streaming, false);
-  while (pending.length) pending.shift()();
-  assert.equal(message.content, text);
+  assert.equal(persisted, 1);
+  assert.equal(pending.length, 0, '完成时同步刷新最后待绘制的一帧');
+  assert.doesNotMatch(source, /scTypewriter|scTypeFlush/, '不保留定时器回放实现');
 });
 
 test('侧边聊天：模型配置通过对话框应用到设置草稿', () => {

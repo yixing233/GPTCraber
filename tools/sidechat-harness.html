@@ -42,9 +42,15 @@
  * ?autosend=文字  打开面板后自动发送这条消息
  * ?empty=1       不预置会话，展示空状态
  * ?state=setup   展示"未配置模型"引导卡
+ * ?long=1        返回大段正文；?slow=1 分块持续到达；?json=1 返回非流式 JSON
+ * ?mainlong=1    主会话含长正文；?legacy=1 模拟不支持 Responses 的网关
  */
 const Q = new URLSearchParams(location.search);
 const CFG_KEY = 'gpt_craber_sidechat_cfg';
+if (Q.get('mainlong')) {
+  document.querySelector('[data-turn-key="turn-new"] [data-message-author-role="assistant"]').textContent
+    = '主会话开头😀\n' + '这段长会话需要完整传入模型。\n'.repeat(2200) + '主会话结尾';
+}
 
 if (Q.get('theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
 
@@ -102,10 +108,11 @@ if (Q.get('state') === 'setup') localStorage.removeItem(CFG_KEY);
 /* ---------- 油猴 API 替身 ---------- */
 window.GM_info = { script: { version: 'harness' } };
 window.GM_xmlhttpRequest = function (opts) {
-  window.__lastRequest = opts.data ? JSON.parse(opts.data) : null;
   const ctrl = new AbortController();
   const handle = { abort() { try { ctrl.abort(); } catch (e) {} } };
   if (String(opts.url).startsWith('https://sidechat.example.invalid/')) {
+    window.__lastRequest = opts.data ? JSON.parse(opts.data) : null;
+    (window.__requests ||= []).push({ url:opts.url, data:window.__lastRequest });
     if (opts.method === 'GET') {
       setTimeout(() => opts.onload({ status:200, responseText:JSON.stringify({ data:[
         { id:'wb/deepseek-v4.1-flash', display_name:'DeepSeek-V4.1-Flash' },
@@ -113,21 +120,45 @@ window.GM_xmlhttpRequest = function (opts) {
       ] }) }), 100);
       return handle;
     }
+    const responses = opts.url.endsWith('/responses');
+    if (responses && Q.get('legacy')) {
+      setTimeout(() => opts.onload({ status:404, responseText:'Not Found' }), 20);
+      return handle;
+    }
+    const body = Q.get('long') ? (answer + '\n\n').repeat(4) + '\n【流结束标记】' : answer;
+    window.__expectedAnswer = '已收到你的消息。\n\n' + body;
+    const result = responses ? { output:[{ type:'message', content:[{ type:'output_text', text:window.__expectedAnswer }] }] }
+      : { choices:[{ message:{ content:window.__expectedAnswer } }] };
+    if (Q.get('json')) {
+      setTimeout(() => {
+        window.__networkDone = performance.now();
+        opts.onload({ status:200, responseText:JSON.stringify(result) });
+      }, 150);
+      return handle;
+    }
     const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        for (const text of ['已收到你的消息。\n\n', answer]) {
-          if (ctrl.signal.aborted) { controller.close(); return; }
-          controller.enqueue(encoder.encode('data: ' + JSON.stringify({
-            choices:[{ delta:{ content:text } }]
-          }) + '\n\n'));
-          await new Promise((r) => setTimeout(r, 150));
-        }
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-        controller.close();
+    let controller;
+    const stream = new ReadableStream({ start(c) { controller = c; } });
+    const response = { status:200, response:{ stream }, responseText:'' };
+    (async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      if (!Q.get('noprogress') && opts.onloadstart) opts.onloadstart(response);
+      const chunks = Q.get('slow') ? window.__expectedAnswer.match(/[\s\S]{1,30}/g)
+        : ['已收到你的消息。\n\n', body];
+      for (const text of chunks) {
+        if (ctrl.signal.aborted) { controller.close(); return; }
+        const frame = responses ? { type:'response.output_text.delta', delta:text }
+          : { choices:[{ delta:{ content:text } }] };
+        controller.enqueue(encoder.encode('data: ' + JSON.stringify(frame) + '\n\n'));
+        await new Promise((r) => setTimeout(r, 150));
       }
-    });
-    setTimeout(() => opts.onload({ status:200, response:{ stream }, responseText:'' }), 50);
+      controller.enqueue(encoder.encode(responses
+        ? 'data: ' + JSON.stringify({ type:'response.completed', response:result }) + '\n\n'
+        : 'data: [DONE]\n\n'));
+      controller.close();
+      window.__networkDone = performance.now();
+      opts.onload(response);
+    })();
     return handle;
   }
   const url = String(opts.url || '');
@@ -191,12 +222,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     document.querySelector('.craber-sc-modelbtn').click();
   }
 
-  /* 采样正文长度，用来验证"逐字增长"而不是整块跳出。
+  /* 采样正文长度，用来观察模型正文增量和界面刷新的节奏。
    * 结果留在 window.__typeSamples 里，方便无头脚本读取。 */
   window.__typeSamples = [];
   const sample = () => {
-    const a = document.querySelector('.craber-sc-a');
-    window.__typeSamples.push({ t: Math.round(performance.now()), n: a ? a.innerText.length : -1 });
+    const a = [...document.querySelectorAll('.craber-sc-a')].at(-1);
+    const visible = a ? a.innerText : '';
+    window.__typeSamples.push({ t: Math.round(performance.now()), n: visible.length,
+      tail: visible.includes('流结束标记') });
   };
   sample();
   setInterval(sample, 120);

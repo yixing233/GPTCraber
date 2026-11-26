@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.19.0
+// @version      0.20.0
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -16,6 +16,7 @@
 // @connect      oaiusercontent.com
 // @connect      files.oaiusercontent.com
 // @connect      images.openai.com
+// @connect      raw.githubusercontent.com
 // @connect      *
 // @run-at       document-idle
 // ==/UserScript==
@@ -31,9 +32,8 @@
   // （顶栏导出按钮里设为蟹绿），换平台时也统一走这一处。
   const CRAB_SVG = '<svg viewBox="0 0 71.493 71.493" width="26" height="26" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M69.857,43.299l-10.626-5.432c3.038-3.402,4.707-7.433,4.707-11.651 c0-8.227-6.175-15.503-16.114-18.989c-1.109-0.388-2.342-0.096-3.155,0.751c-0.814,0.846-1.06,2.089-0.628,3.182 c0.338,0.857,0.51,1.734,0.51,2.609c0,0.492-0.052,0.688-0.045,0.69c-0.083,0.105-0.393,0.362-0.643,0.569 c-0.422,0.35-0.947,0.785-1.546,1.386c-0.688,0.692-0.996,1.676-0.826,2.637s0.796,1.78,1.68,2.194 c1.956,0.918,8.324,4.331,8.361,9.76c-2.459-1.79-5.451-3.167-8.78-3.981c0.156-0.366,0.242-0.769,0.242-1.193 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.13,0.023,0.255,0.038,0.381 c-0.39-0.015-0.782-0.023-1.176-0.023c-0.394,0-0.787,0.008-1.176,0.023c0.016-0.126,0.038-0.25,0.038-0.381 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.423,0.086,0.826,0.242,1.193 c-3.785,0.925-7.138,2.576-9.763,4.737c0.216-4.082,4.91-8.435,9.345-10.516c0.884-0.415,1.511-1.233,1.68-2.195 c0.17-0.961-0.139-1.945-0.827-2.637c-0.598-0.601-1.124-1.037-1.546-1.386c-0.255-0.211-0.572-0.474-0.622-0.528 c-0.001-0.001-0.065-0.181-0.065-0.73c0-0.873,0.172-1.751,0.511-2.61c0.432-1.092,0.186-2.335-0.628-3.181 c-0.814-0.848-2.05-1.14-3.154-0.751C13.729,10.71,7.554,17.987,7.554,26.215c0,4.218,1.669,8.249,4.707,11.651L1.635,43.299 C0.16,44.053-0.425,45.86,0.33,47.336c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l8.695-4.445 c0.069,0.981,0.255,1.939,0.536,2.869L2.868,52.551c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635 c0.46,0,0.927-0.106,1.363-0.329l10.888-5.566c0.491,0.589,1.027,1.154,1.607,1.692l-9.282,4.745 c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l11.887-6.077 c0.131-0.067,0.253-0.143,0.369-0.226c3.474,1.623,7.568,2.563,11.949,2.563c4.381,0,8.475-0.94,11.949-2.563 c0.116,0.082,0.238,0.159,0.369,0.226l11.887,6.077c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 c0.755-1.476,0.17-3.283-1.306-4.037L53.4,54.02c0.58-0.538,1.116-1.103,1.606-1.692l10.888,5.566 c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635c0.755-1.476,0.17-3.283-1.306-4.037l-10.729-5.485 c0.281-0.931,0.466-1.888,0.536-2.87l8.695,4.445c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 C71.918,45.86,71.333,44.053,69.857,43.299z M50.472,15.06c4.65,2.828,7.466,6.906,7.466,11.155c0,1.07-0.176,2.131-0.516,3.166 c-0.584-4.354-3.438-8.421-8.006-11.487C49.934,17.163,50.316,16.273,50.472,15.06z M21.02,15.06 c0.158,1.229,0.548,2.126,1.076,2.863c-3.65,2.491-6.962,6.022-8.393,10.004c-0.099-0.566-0.149-1.138-0.149-1.711 C13.554,21.966,16.37,17.888,21.02,15.06z M19.027,43.278c0-6.011,7.656-11.089,16.72-11.089c9.063,0,16.719,5.078,16.719,11.089 s-7.656,11.089-16.719,11.089C26.683,54.368,19.027,49.29,19.027,43.278z"/></svg>';
 
-  // 版本号兜底常量：GM_info 不可用时（极少见）菜单脚注还能显示。
-  // 发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.19.0';
+  // 设置页显示与更新检查共用的版本号，发版时与头部 @version 同步改。
+  const CRABER_VERSION = '0.20.0';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -230,6 +230,7 @@
             || Array.isArray(j.linear_conversation) || Array.isArray(j.conversation)
             || Array.isArray(j.turns))) {
             craberNoteAuthMode(auth ? 'bearer' : 'cookie');
+            if (!j.conversation_id) j.conversation_id = convId;
             return j;
           }
           lastStatus = lastStatus || 200;
@@ -246,67 +247,73 @@
       throw err;
     },
 
-    /* 取附件下载信息：{ download_url, mime_type, file_name }
-     * 403 很常见（附件属主不是当前账号、文件已过期、或该文件的下载权限被收紧），
-     * 而它并非"脚本坏了"，所以这里做两件事：
-     *   1) 带 Bearer 失败时再用纯 Cookie 试一次（和 getConversation 同一套兜底逻辑）
-     *   2) 失败结果记进 _fileDenied，同一份导出里不再对同一个 id 反复重试
-     */
+    // 新下载入口可返回签名地址或文件本身；鉴权失败再尝试 Cookie。
     _fileDenied: Object.create(null),
-    async getFileInfo(fileId, opts) {
+    async getFileInfo(fileId, opts = {}) {
       if (!fileId) throw new Error('附件 id 为空');
-      const memo = this._fileDenied[fileId];
-      // 负缓存只活 10 分钟：链接权限可能恢复，没必要一辈子判死
-      if (memo && Date.now() - memo < 10 * 60 * 1000) {
-        throw new Error('文件信息获取失败: ' + memo);
+      const key = JSON.stringify([fileId, opts.projectId || '']);
+      const memo = this._fileDenied[key];
+      if (memo && Date.now() - memo.at < 10 * 60 * 1000) {
+        throw new Error('文件信息获取失败: ' + memo.status);
       }
-      await apiWait();
-      let t = null;
-      try { t = await this.getToken(); } catch (e) { t = null; }
-
-      // 两种鉴权各试一次，顺序按已知有效的方式排前面。注意别放进重复项：
-      // 早先这里用「null 且还没失败过就跳过」来去重，结果当首选就是 cookie 时
-      // 把唯一那次 cookie 请求也跳过了，兜底形同虚设。
-      const bearerHeaders = t ? { Authorization: 'Bearer ' + t } : null;
-      const modes = craberAuthMode === 'cookie'
-        ? [null, bearerHeaders]
-        : [bearerHeaders, null];
-      const tried = [];
-      let lastStatus = 0;
-      let lastErr = null;
-      for (const headers of modes) {
-        // null 表示"纯 Cookie"；重复出现或拿不到 token 时只留一个
-        const key = headers ? 'bearer' : 'cookie';
-        if (tried.indexOf(key) >= 0) continue;
-        tried.push(key);
-        try {
-          const r = await fetch('/backend-api/files/' + fileId + '/download', {
-            headers: headers || {},
-            credentials: 'include'
-          });
-          if (r.status === 429) {
-            noteRateLimit(r);
-            throw new Error('文件信息获取失败: 429（已限流）');
-          }
-          if (r.ok) {
-            const j = await r.json();
-            // 拿到了就记一下哪种鉴权有效，供后续请求优先使用
-            craberNoteAuthMode(headers ? 'bearer' : 'cookie');
-            return j;
-          }
-          lastStatus = r.status;
-          // 只有鉴权类错误才换模式；404 说明文件确实没了，换模式没意义
-          if (r.status !== 401 && r.status !== 403) break;
-        } catch (e) {
-          if (/429/.test(String(e && e.message))) { lastStatus = 429; lastErr = e; break; }
-          lastErr = e;
+      const query = new URLSearchParams({inline:'false'});
+      if (opts.projectId && fileId.startsWith('file-')) query.set('gizmo_id', opts.projectId);
+      const urls = ['/backend-api/files/download/' + encodeURIComponent(fileId) + '?' + query,
+        '/backend-api/files/' + encodeURIComponent(fileId) + '/download'];
+      let lastError;
+      for (const url of urls) {
+        try { return await this.getDownloadInfo(url, opts); }
+        catch (e) {
+          lastError = e;
+          if (![401,403,404,405].includes(e.status)) throw e;
         }
       }
-      if (lastStatus === 401 || lastStatus === 403 || lastStatus === 404) {
-        this._fileDenied[fileId] = lastStatus;
+      if ([401,403,404].includes(lastError.status)) {
+        this._fileDenied[key] = {at:Date.now(), status:lastError.status};
       }
-      if (lastErr) throw lastErr;
-      throw new Error('文件信息获取失败: ' + (lastStatus || '未知'));
+      throw lastError;
+    },
+
+    async getSandboxFileInfo(file) {
+      if (!file.conversationId || !file.messageId) throw new Error('生成文件缺少所属会话或消息 id');
+      const query = new URLSearchParams({
+        message_id:file.messageId, sandbox_path:file.path, download_intent:'true'
+      });
+      return this.getDownloadInfo('/backend-api/conversation/' + encodeURIComponent(file.conversationId)
+        + '/interpreter/download?' + query, file);
+    },
+
+    async getDownloadInfo(url, opts = {}) {
+      await apiWait();
+      let token = null;
+      try { token = await this.getToken(); } catch (e) {}
+      const auths = token ? (craberAuthMode === 'cookie' ? [false,true] : [true,false]) : [false];
+      for (let i = 0; i < auths.length; i++) {
+        const headers = {};
+        if (auths[i]) headers.Authorization = 'Bearer ' + token;
+        if (opts.projectId) headers['chatgpt-project-id'] = opts.projectId;
+        const r = await fetch(url, {headers, credentials:'include'});
+        if (r.ok) {
+          craberNoteAuthMode(auths[i] ? 'bearer' : 'cookie');
+          const mime = (r.headers.get('content-type') || '').toLowerCase();
+          const disposition = r.headers.get('content-disposition') || '';
+          if (/\battachment\b/i.test(disposition)) return {blob:await r.blob(), mime_type:mime};
+          if (mime.includes('text/html') && opts.mime !== 'text/html' && !/\.html?$/i.test(opts.name || '')) {
+            throw new Error('文件下载返回了网页');
+          }
+          if (mime.includes('json')) {
+            const info = await r.json();
+            if (!info.download_url && !info.url) throw new Error('文件下载地址缺失');
+            return {...info, download_url:info.download_url || info.url};
+          }
+          return {blob:await r.blob(), mime_type:mime};
+        }
+        if (r.status === 429) noteRateLimit(r);
+        if ((r.status === 401 || r.status === 403) && i + 1 < auths.length) continue;
+        const error = new Error('文件信息获取失败: ' + r.status);
+        error.status = r.status;
+        throw error;
+      }
     },
 
     // 拉取会话列表的一页：{ items, total, limit, offset }
@@ -412,6 +419,18 @@
     });
   }
 
+  async function craberDownloadFileBlob(url) {
+    const target = new URL(url, location.origin);
+    if (target.protocol !== 'https:') throw new Error('文件下载地址不合法');
+    if (target.origin === location.origin) {
+      // estuary 签名地址依赖当前站点 Cookie，不需要再附带 Bearer。
+      const res = await fetch(target.href, {credentials:'include'});
+      if (!res.ok) throw new Error('文件下载失败: ' + res.status);
+      return res.blob();
+    }
+    return gmFetchBlob(target.href);
+  }
+
   function blobToDataURI(blob) {
     return new Promise((resolve, reject) => {
       const fr = new FileReader();
@@ -432,8 +451,9 @@
   // 拉取 ChatGPT 托管图（先取签名 URL），返回 Blob
   async function downloadImageBlob(fileId) {
     const info = await API.getFileInfo(fileId);
+    if (info.blob) return info.blob;
     if (!info.download_url) throw new Error('无 download_url');
-    return gmFetchBlob(info.download_url);
+    return craberDownloadFileBlob(info.download_url);
   }
 
   /* ============================================================
@@ -613,7 +633,21 @@
     return '';
   }
 
-  function groupTurns(thread) {
+  function craberMessageKind(m) {
+    const role = craberRole(m);
+    const ct = m.content && m.content.content_type;
+    const metadata = m.metadata || {};
+    const channel = m.channel || metadata.channel;
+    const recipient = m.recipient;
+    if (role === 'system' || role === 'developer') return 'hidden';
+    if (role === 'tool' || ct === 'tool_call' || ct === 'function_call'
+      || (role === 'assistant' && recipient && recipient !== 'all')) return 'tool';
+    if (channel === 'analysis' || ['reasoning_recap', 'thoughts', 'reasoning'].includes(ct)) return 'reasoning';
+    if (metadata.is_visually_hidden_from_conversation) return 'hidden';
+    return 'body';
+  }
+
+  function groupTurns(thread, context = {}) {
     const turns = [];
     let cur = null;
     for (const node of thread) {
@@ -626,7 +660,8 @@
       const isUser = role === 'user'
         && (!ct || ct === 'text' || ct === 'multimodal_text');
       if (isUser) {
-        cur = { question: node, answers: [] };
+        cur = { question: node, answers: [], conversationId: context.conversation_id || context.id || '',
+          projectId: context.gizmo_id || '' };
         turns.push(cur);
       } else if (cur) {
         cur.answers.push(node);
@@ -780,7 +815,8 @@
         const mime = a.mime_type || '';
         if (mime.indexOf('image/') === 0) continue; // 图片走图片通路
         seen.add(a.id);
-        list.push({ id: a.id, name: a.name || a.id, mime: mime, size: a.size });
+        list.push({ id: a.id, name: a.name || a.id, mime: mime, size: a.size,
+          conversationId:turn.conversationId, projectId:turn.projectId });
       }
     };
     turn.answers.forEach(scan);
@@ -806,9 +842,9 @@
     const tasks = atts.map((a) => (async () => {
       craberStats.attTotal++;
       try {
-        const info = await API.getFileInfo(a.id);
-        if (info.download_url) {
-          const b = await gmFetchBlob(info.download_url);
+        const info = await API.getFileInfo(a.id, a);
+        if (info.blob || info.download_url) {
+          const b = info.blob || await craberDownloadFileBlob(info.download_url);
           blobs[a.id] = { blob: b, name: a.name, mime: b.type || a.mime || info.mime_type || '' };
         } else {
           craberStats.attFail++;
@@ -841,9 +877,9 @@
       tasks.push((async () => {
         craberStats.imgTotal++;
         try {
-          const info = await API.getFileInfo(fid);
-          if (info.download_url) {
-            const b = await gmFetchBlob(info.download_url);
+          const info = await API.getFileInfo(fid, turn);
+          if (info.blob || info.download_url) {
+            const b = info.blob || await craberDownloadFileBlob(info.download_url);
             blobs[fid] = { blob: b, mime: b.type || info.mime_type || 'image/png' };
           } else {
             craberStats.imgFail++;
@@ -948,208 +984,123 @@
     return cache;
   }
 
-  /* ============ 导出前的 markdown 清理 ============
-   *
-   * ChatGPT 的富内容回复里夹着两类东西，在网页上由前端渲染成卡片/清单，
-   * 但落到纯 markdown 里就是没人看得懂的噪音：
-   *
-   *   1) GenUI / JSX 组件：<box>、<row>、<text>、<icon/>、<divider/>、
-   *      <Cite refs={[...]}/>、{#each ...}、{@body ...}
-   *   2) 被粘坏的代码围栏：复制粘贴或流式拼接会把开围栏和上一行并成一行
-   *      （"打Set-Location ..." 后面直接跟 ```），于是围栏配对从那一处起全部错位。
-   *
-   * 两者都会让导出结果没法直接读，所以渲染完统一过一遍这里。
-   */
-
-  /* 组件标签：只删标签本身，标签之间的文字自然保留。
-   * 属性值里可能有引号、大括号、箭头函数（=>），所以不能用 [^>]* 这种简单写法。 */
-  const GENUI_TAG = /<([A-Za-z][\w.-]*)\b(?:=>|[^<>"']|"[^"]*"|'[^']*')*?\/?>/g;
-  // 行首就是 Svelte 表达式：整行都是模板代码，不是正文
-  const GENUI_EXPR_LINE = /^\s*\{[@#/:]/;
-
-  /* 剥掉 GenUI/JSX 组件。
-   *
-   * 这些组件（<box>/<row>/<text>/<icon/>/<Cite/>/{#each …}）在网页上由前端渲染
-   * 成卡片和清单，落到纯 markdown 里就是纯噪音。规则：
-   *   - 标签本身一律删，标签之间的文字留着（"<text>WebUI</text>" → "WebUI"）
-   *   - 只为排版而存在、删完只剩空白的行整行丢弃
-   *   - 原本用于对齐 JSX 嵌套的缩进一并去掉 —— 留着 4 个空格会被 markdown
-   *     当成代码块，把正常段落显示成灰色等宽字体
-   *   - 代码围栏内部一个字节都不动：那才是用户真正想看的代码
-   */
-  /* 剥掉 GenUI/JSX 组件。
-   *
-   * 这些组件（<box>/<row>/<text>/<icon/>/<Cite/>/{#each …}）在网页上由前端渲染
-   * 成卡片和清单，落到纯 markdown 里就是纯噪音。规则：
-   *   - 标签本身一律删，标签之间的文字留着（"<text>WebUI</text>" → "WebUI"）
-   *   - 只为排版而存在、删完只剩空白的行整行丢弃
-   *   - JSX 内部的缩进是给嵌套对齐用的，落到 markdown 里没有意义；
-   *     留着 4 个空格会被当成代码块，正常段落显示成灰色等宽字体。
-   *     所以按标签深度跟踪：在组件内部、且不是代码块/列表的正文，前导空白一律去掉。
-   *   - 代码围栏内部一个字节都不动：那才是用户真正想看的代码
-   */
-  function craberStripGenui(md) {
-    const BT = String.fromCharCode(96);
-    const OPEN = new RegExp('^\\s*(' + BT + '{3,}|~{3,})');
-    // 开/闭标签分离：用来算嵌套深度。自闭合的不计入深度。
-    const TAG_ANY = new RegExp('<\\/?[A-Za-z][\\w.-]*\\b(?:=>|[^<>"\']|"[^"]*"|\'[^\']*\')*?\\/?>', 'g');
+  /* Markdown 转换只处理正文；围栏、行内代码和缩进代码保持原样。 */
+  function craberMapProse(md, transform, components = false) {
     const out = [];
-    let fence = null;
-    let depth = 0;
-    let blanks = 0;
-    const pushBlank = () => {
-      if (blanks === 0 && out.length) { out.push(''); blanks = 1; }
+    let prose = '', fence = null, componentDepth = 0;
+    const flush = () => {
+      if (!prose) return;
+      let prefix = '\u0000CRABER_CODE_';
+      while (prose.includes(prefix)) prefix += '_';
+      const code = [];
+      const masked = prose.replace(/(\x60+)([\s\S]*?)\1(?!\x60)/g, (raw) => {
+        code.push(raw);
+        return prefix + (code.length - 1) + '\u0000';
+      });
+      let converted = transform(masked);
+      for (let i = 0; i < code.length; i++) {
+        converted = converted.split(prefix + i + '\u0000').join(code[i]);
+      }
+      out.push(converted);
+      prose = '';
     };
-    for (const raw of String(md).split('\n')) {
-      const line = raw.replace(/\r$/, '');
-      const f = line.match(OPEN);
-      if (f) {
-        const ch = f[1].charAt(0);
-        if (!fence) fence = ch; else if (ch === fence) fence = null;
+    for (const line of String(md).split(/(?<=\n)/)) {
+      const mark = line.match(/^ {0,3}(\x60{3,}|~{3,})([^\r\n]*)/);
+      if (fence) {
         out.push(line);
-        // 刚进代码块：下一行即使是空行也要原样保留（那是代码块的第一个空行），
-        // 不能让"压缩连续空行"把它吃掉 —— 否则每个代码块开头都多出一个空行。
-        blanks = -1;
-        continue;
-      }
-      if (fence) { out.push(line); continue; }
-      // 整行就是 Svelte 表达式：模板代码，不是正文
-      if (GENUI_EXPR_LINE.test(line)) continue;
-
-      // 统计这一行的标签，更新深度（自闭合不影响深度）
-      TAG_ANY.lastIndex = 0;
-      const tags = line.match(TAG_ANY) || [];
-      const depthBefore = depth;
-      for (const tag of tags) {
-        if (/^<\//.test(tag)) depth = Math.max(0, depth - 1);
-        else if (!/\/>\s*$/.test(tag)) depth += 1;
-      }
-
-      let t = line.replace(GENUI_TAG, '');
-      // 组件被截断时的残片："</rng={2} minWidth=\"44px\" …>"，标签名后面还挂着属性
-      t = t.replace(/<\/[A-Za-z][^<>]*>/g, '');
-      t = t.replace(/[ \t]+$/, '');
-      if (!t.trim()) { pushBlank(); continue; }
-
-      /* 在组件内部（进这行之前还没闭合）的正文，去掉前导空白。
-       * 列表项与引用除外 —— 它们的缩进在 markdown 里有语义。 */
-      const inJsx = depthBefore > 0 || tags.length > 0;
-      if (inJsx && /^\s+\S/.test(t) && !/^\s*([-*+]|\d+[.)])\s/.test(t) && !/^\s*>/.test(t)) {
-        t = t.replace(/^[ \t]+/, '');
-      }
-      out.push(t);
-      blanks = 0;
-    }
-    return out.join('\n');
-  }
-
-  /* 修围栏。
-   *
-   * 真实回复里最常见的损坏有两类：
-   *   a) 开围栏被粘到上一行末尾（"打Set-Location ..." 直接跟着三个反引号），
-   *      于是语言标识位置吃到的是正文；
-   *   b) 开围栏整个丢了，只剩结尾那一个 —— 配对从此错位，后面正常的代码块
-   *      被当成"代码块内的内容"，整段正文全被渲染成灰色代码。
-   *
-   * 处理原则：**宁可少包一个代码块，也不要把正文关进代码块**。
-   * 所以按内容判据逐对判断，而不是简单成对删除或末尾补齐。
-   */
-  function craberBalanceFences(md) {
-    const BT = String.fromCharCode(96);
-    const FENCE_RE = new RegExp('^(\\s*)(' + BT + '{3,}|~{3,})([^\\s' + BT + '~]*)([\\s\\S]*)$');
-    const OPEN_RE = new RegExp('^(\\s*)(' + BT + '{3,}|~{3,})');
-
-    // a) 拆粘行：围栏那一行后面还挂着内容时，把内容挪到下一行
-    const work = [];
-    for (const line of String(md).split('\n')) {
-      const m = line.match(FENCE_RE);
-      // 只有"围栏后面还挂着东西"才算粘行。语言标识（m[3]）本身是正常内容，
-      // 单看 m[3] 非空会把 "```js" 误判成粘行，凭空插一个空行。
-      if (m && m[4].trim()) {
-        const looksLang = /^[a-z][a-z0-9+#._-]*$/.test(m[3]);
-        if (looksLang) {
-          work.push(m[1] + m[2] + m[3]);
-          work.push(m[4].replace(/^\s+/, ''));
-        } else {
-          // 语言标识位置是正文 → 这行是被粘坏的，围栏单独成行，正文还给正文
-          work.push(m[1] + m[2]);
-          work.push((m[3] + m[4]).trim());
-        }
-        continue;
-      }
-      work.push(line);
-    }
-
-    /* b) 逐对判定。标记按出现顺序两两配对；一对"像不像真正的代码块"看内容：
-     *    真正的代码块里几乎不会有 markdown 标题、也不该有几屏幕的中文段落。
-     * 判为假就**只丢开标记**（正文留下），继续用同一个标记当新的开标记 ——
-     * 这样"少一个开围栏"的错位不会多米诺式地毁掉后面所有代码块。 */
-    const isHeading = (s) => new RegExp('^#{2,6}\\s+\\S').test(s);
-    const out = [];
-    let open = null;
-    for (let i = 0; i < work.length; i++) {
-      const line = work[i];
-      const m = line.match(OPEN_RE);
-      if (!m) { out.push(line); continue; }
-      if (!open) { open = { idx: out.length, ch: m[2].charAt(0) }; out.push(line); continue; }
-      const ch = m[2].charAt(0);
-      if (ch !== open.ch) { out.push(line); continue; }
-      // 检查这一对之间的内容
-      let headings = 0;
-      let cjk = 0;
-      for (let j = open.idx + 1; j < out.length; j++) {
-        if (isHeading(out[j])) headings++;
-        if (/[\u4e00-\u9fa5]/.test(out[j])) cjk++;
-      }
-      const bodyLen = out.length - open.idx - 1;
-      const looksFake = headings > 0 || (bodyLen > 2 && cjk > bodyLen * 0.6);
-      if (looksFake) {
-        // 开标记其实是正文里丢的半截：删掉它，把当前这个当新的开标记
-        out.splice(open.idx, 1);
-        open = { idx: out.length, ch: ch };
+        if (mark && mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = null;
+      } else if (mark && !(mark[1][0] === String.fromCharCode(96) && mark[2].includes(String.fromCharCode(96)))) {
+        flush();
+        fence = mark[1];
+        out.push(line);
+      } else if (/^(?: {4}|\t)/.test(line) && !componentDepth) {
+        flush();
         out.push(line);
       } else {
-        out.push(line);
-        open = null;
+        prose += line;
+        if (components && (componentDepth || /^ {0,3}<(?:box|row|column|stack|grid)\b/.test(line))) {
+          for (const tag of line.match(/<\/?(?:box|row|column|stack|grid)\b[^>]*>/g) || []) {
+            if (tag.startsWith('</')) componentDepth = Math.max(0, componentDepth - 1);
+            else if (!tag.endsWith('/>')) componentDepth++;
+          }
+        }
       }
     }
-    // 收尾仍开着的标记：留着会把后面整段变成代码块，直接删掉
-    if (open) out.splice(open.idx, 1);
-
-    // c) 压掉连续空行（删组件/删标记后常留下成串空行）
-    const tidy = [];
-    for (const line of out) {
-      if (!line.trim() && tidy.length && !tidy[tidy.length - 1].trim()) continue;
-      tidy.push(line);
-    }
-    return tidy.join('\n');
+    flush();
+    return out.join('');
   }
 
-  /* 导出前统一入口。顺序要紧：**先修围栏，再剥组件**。
-   * 原文的围栏本身可能是坏的（奇数配对），先剥组件的话，剥皮函数会把
-   * 大部分正文误判成"在代码块里"从而跳过，组件一个没删掉。
-   * 修好围栏之后，代码块边界才可信，剥皮才能只动正文。 */
+  function craberCloseFence(md) {
+    const text = String(md);
+    let fence = null;
+    for (const line of text.split('\n')) {
+      const mark = line.match(/^ {0,3}(\x60{3,}|~{3,})(.*)$/);
+      if (!mark) continue;
+      if (!fence && !(mark[1][0] === String.fromCharCode(96) && mark[2].includes(String.fromCharCode(96)))) fence = mark[1];
+      else if (fence && mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = null;
+    }
+    return fence ? text.replace(/\n*$/, '') + '\n' + fence : text;
+  }
+
   function craberCleanMarkdown(md) {
-    return craberStripGenui(craberBalanceFences(md));
+    const cleaned = craberMapProse(md, (text) => {
+      const tags = [...text.matchAll(/<\/?(box|row|column|stack|grid|text|badge|icon|divider|Cite)\b(?:=>|[^<>"']|"[^"]*"|'[^']*')*?\/?>/g)];
+      let out = '', pos = 0;
+      for (let i = 0; i < tags.length; i++) {
+        const open = tags[i];
+        if (open.index < pos || open[0].startsWith('</')) continue;
+        const prefix = text.slice(text.lastIndexOf('\n', open.index) + 1, open.index);
+        if (/^\s*#\s*include\b/.test(prefix) || /[\w:>]$/.test(prefix)) continue;
+        if (open[0].endsWith('/>')) {
+          out += text.slice(pos, open.index) + (open[1] === 'divider' ? '\n\n---\n\n' : '');
+          pos = open.index + open[0].length;
+          continue;
+        }
+        let depth = 1, close = null;
+        for (let j = i + 1; j < tags.length; j++) {
+          if (tags[j][1] !== open[1] || tags[j][0].endsWith('/>')) continue;
+          depth += tags[j][0].startsWith('</') ? -1 : 1;
+          if (!depth) { close = tags[j]; break; }
+        }
+        if (!close) continue;
+        const end = close.index + close[0].length;
+        const block = text.slice(open.index, end);
+        let body;
+        if (/\{(?:[#@/:]|[a-zA-Z_$][\w$]*(?:\.[\w$]+)*\s*\})/.test(block)) {
+          const fence = String.fromCharCode(96).repeat(Math.max(3, ...(block.match(/\x60+/g) || []).map((s) => s.length + 1)));
+          body = '\n\n<details><summary>交互卡片原文</summary>\n\n' + fence + 'text\n' + block + '\n' + fence + '\n\n</details>\n\n';
+        } else {
+          body = block.replace(/<\/?(?:box|row|column|stack|grid|text|badge|icon|divider|Cite)\b(?:=>|[^<>"']|"[^"]*"|'[^']*')*?\/?>/g,
+            (tag) => tag.startsWith('</') ? '\n' : '')
+            .split('\n').map((line) => line.trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        }
+        out += text.slice(pos, open.index) + body;
+        pos = end;
+      }
+      return out + text.slice(pos);
+    }, true);
+    return craberCloseFence(cleaned);
   }
-  // 渲染 assistant/text，处理 content_references 引用标记
+
+  // 索引可能属于替换后的文本；只替换能在原文中确认的完整引用标记。
   function renderAssistantText(m, cache) {
-    // 统一取文本：parts 字符串 / 对象式 part / content.text / content 本身是字符串，都能认
-    let text = craberContentText(m && m.content);
+    const text = craberContentText(m && m.content);
     const refs = (m.metadata && m.metadata.content_references) || [];
-
-    // 用 start_idx/end_idx 精确替换，从后往前避免位移
-    const indexed = refs
-      .filter((r) => Number.isInteger(r.start_idx) && Number.isInteger(r.end_idx) && r.end_idx >= r.start_idx)
-      .sort((a, b) => b.start_idx - a.start_idx);
-
-    for (const r of indexed) {
+    const replacements = new Map();
+    const isMarker = (s) => /^(?:\uE200[^\uE200\uE201]*\uE201|〖[^〖〗\n]+〗)$/.test(s);
+    for (const r of refs) {
       const rep = renderRef(r, cache);
-      text = text.slice(0, r.start_idx) + rep + text.slice(r.end_idx);
+      if (rep == null) continue;
+      let token = typeof r.matched_text === 'string' ? r.matched_text : '';
+      if (!isMarker(token) && !token && Number.isInteger(r.start_idx) && Number.isInteger(r.end_idx)
+        && r.start_idx >= 0 && r.end_idx > r.start_idx && r.end_idx <= text.length) {
+        token = text.slice(r.start_idx, r.end_idx);
+      }
+      if (isMarker(token) && text.includes(token) && !replacements.has(token)) replacements.set(token, rep);
     }
-    // 兜底：清掉残留私有区字符
-    text = text.replace(PUA, '');
-    return text;
+    return craberMapProse(text, (part) => part.replace(
+      /\uE200[^\uE200\uE201]*\uE201|〖[^〖〗\n]+〗/g,
+      (token) => replacements.has(token) ? replacements.get(token) : token));
   }
 
   function renderRef(r, cache) {
@@ -1181,8 +1132,9 @@
       }
       case 'sources_footnote':
       case 'hidden':
-      default:
         return '';
+      default:
+        return typeof r.alt === 'string' && r.alt.trim() ? r.alt : null;
     }
   }
 
@@ -1192,7 +1144,7 @@
       if (!p || typeof p !== 'object') {
         // 字符串 part：整段就是正文
         const t = craberPartText(p);
-        if (t && t.trim()) out += t.replace(PUA, '').trim() + '\n\n';
+        if (t && t.trim()) out += t.trim() + '\n\n';
         continue;
       }
       // 图片：老结构用 content_type，新结构可能省掉它、只留 asset_pointer
@@ -1207,7 +1159,7 @@
       }
       // 其余对象 part 里若带文字，按正文输出（早先会被整个忽略）
       const t = craberPartText(p);
-      if (t && t.trim()) out += t.replace(PUA, '').trim() + '\n\n';
+      if (t && t.trim()) out += t.trim() + '\n\n';
     }
     return out;
   }
@@ -1217,7 +1169,8 @@
   }
 
   function encodeMarkdownPath(path) {
-    return String(path || '').split('/').map((part) => encodeURIComponent(part)).join('/');
+    return String(path || '').split('/').map((part) => encodeURIComponent(part)
+      .replace(/[!'()*]/g, (ch) => '%' + ch.charCodeAt(0).toString(16).toUpperCase())).join('/');
   }
 
   // 预览只列出文件名；实际导出时，成功下载的附件会成为 files/ 下的相对链接。
@@ -1241,33 +1194,33 @@
      * 兜底分支认成"未知类型"而丢掉。 */
     const ct = (m.content && m.content.content_type) || (role === 'assistant' ? 'text' : undefined);
 
-    // tool 角色是工具调用结果（如上传文档解析出的全文复述、代码执行等），
-    // 不是模型对用户的回答，默认跳过；开启 includeTools 后折叠输出。
-    if (role === 'tool') {
-      if (!settings.includeTools) return '';
-      const t = craberLooseText(m);
-      if (!t) return '';
-      return '<details><summary>🔧 工具调用结果</summary>' + '\n\n' + t.slice(0, 4000) + '\n\n' + '</details>' + '\n\n';
+    const kind = craberMessageKind(m);
+    if (kind === 'hidden') return '';
+    if (kind === 'reasoning') {
+      if (!settings.includeReasoning) return '';
+      const text = craberLooseText(m);
+      return text ? '<details><summary>💭 思考过程</summary>\n\n' + craberCloseFence(text) + '\n\n</details>\n\n' : '';
+    }
+    if (kind === 'tool') {
+      if (!settings.includeTools || (ct === 'code' && !settings.includeCode)) return '';
+      const text = craberLooseText(m);
+      if (!text) return '';
+      const runs = text.match(/`+/g) || [];
+      const fence = '`'.repeat(Math.max(3, ...runs.map((run) => run.length + 1)));
+      return '<details><summary>🔧 工具调用</summary>\n\n' + fence + '\n' + text + '\n' + fence + '\n\n</details>\n\n';
     }
 
     if (role === 'assistant' && ct === 'text') {
-      const t = renderAssistantText(m, cache).trim();
+      const t = craberCleanMarkdown(renderAssistantText(m, cache)).trim();
       return t ? t + '\n\n' : '';
     }
     if (ct === 'multimodal_text') {
-      return renderMultimodalParts(m.content.parts, cache);
+      const text = renderMultimodalParts(m.content.parts, cache);
+      return craberCleanMarkdown(renderAssistantText({...m, content:{text}}, cache)).trim() + '\n\n';
     }
     if (role === 'assistant' && ct === 'code' && settings.includeCode) {
       const lang = m.content.language && m.content.language !== 'unknown' ? m.content.language : '';
       return '```' + lang + '\n' + (m.content.text || '') + '\n```\n\n';
-    }
-
-    // 思考/推理过程：默认不导出，开启 includeReasoning 后折叠显示
-    if (ct === 'reasoning_recap' || ct === 'thoughts' || ct === 'reasoning') {
-      if (!settings.includeReasoning) return '';
-      const t = craberLooseText(m);
-      if (!t) return '';
-      return '<details><summary>💭 思考过程</summary>' + '\n\n' + t.slice(0, 8000) + '\n\n' + '</details>' + '\n\n';
     }
 
     // 搜索抓到的网页正文（tether_quote）。
@@ -1290,14 +1243,6 @@
       if (!settings.includeTools) return '';
       const t = craberLooseText(m) || (m.content && m.content.summary) || '';
       return t ? '_（浏览过程：' + String(t).slice(0, 200) + '）_' + '\n\n' : '';
-    }
-
-    // 模型侧的工具调用请求
-    if (ct === 'tool_call' || ct === 'function_call') {
-      if (!settings.includeTools) return '';
-      const t = craberLooseText(m);
-      if (!t) return '';
-      return '<details><summary>🔧 工具调用</summary>' + '\n\n' + '```' + '\n' + t.slice(0, 4000) + '\n' + '```' + '\n\n' + '</details>' + '\n\n';
     }
 
     // 兜底：尽力取出文本，取不到就留一行说明
@@ -1354,6 +1299,71 @@
     return list;
   }
 
+  // 生成文件的身份包含消息 id，同路径在后续回复中可能已被重新生成。
+  function craberSandboxLinks(text, replace) {
+    return craberMapProse(text, (part) => part.replace(
+      /(!?)\[((?:\\.|[^\]\\\n])*)\]\(\s*(?:<(sandbox:[^>\n]+)>|(sandbox:(?:\\.|[^\s()\\]|\([^()\n]*\))+))\s*\)/g,
+      (raw, image, label, angled, plain) => replace({raw, image:!!image, label, url:angled || plain})));
+  }
+
+  function collectSandboxFiles(turn) {
+    const files = [];
+    const seen = new Set();
+    for (const node of turn.answers) {
+      const m = node.message;
+      if (craberRole(m) !== 'assistant' || craberMessageKind(m) !== 'body') continue;
+      craberSandboxLinks(renderAssistantText(m, {}), (link) => {
+        const key = JSON.stringify([turn.conversationId, m.id, link.url]);
+        if (!seen.has(key)) {
+          seen.add(key);
+          let path = link.url.replace(/^sandbox:/, '');
+          try { path = decodeURIComponent(path); } catch (e) {}
+          files.push({...link, key, path, name:path.split('/').pop() || 'file',
+            conversationId:turn.conversationId, projectId:turn.projectId, messageId:m.id});
+        }
+        return link.raw;
+      });
+    }
+    return files;
+  }
+
+  async function resolveSandboxFiles(turn, sink, download) {
+    const cache = new Map();
+    if (!download) return cache;
+    for (const file of collectSandboxFiles(turn)) {
+      if (file.image && !settings.embedImages) continue;
+      if (!file.image && typeof sink.addFile !== 'function') continue;
+      const total = file.image ? 'imgTotal' : 'attTotal';
+      const failed = file.image ? 'imgFail' : 'attFail';
+      craberStats[total]++;
+      try {
+        const info = await API.getSandboxFileInfo(file);
+        const blob = info.blob || await craberDownloadFileBlob(info.download_url);
+        const mime = blob.type || info.mime_type || '';
+        const saved = file.image ? await sink.add(file.key, blob, mime)
+          : (await sink.addFile(file.key, blob, info.file_name || file.name)).href;
+        cache.set(file.key, {href:saved});
+      } catch (e) {
+        craberStats[failed]++;
+        cache.set(file.key, {error:String(e.message || e)});
+      }
+    }
+    return cache;
+  }
+
+  function craberRewriteSandbox(text, turn, node, cache) {
+    return craberSandboxLinks(text, (link) => {
+      const entry = cache.get(JSON.stringify([turn.conversationId, node.message.id, link.url]));
+      if (!entry) return link.raw;
+      if (entry.href) {
+        const href = entry.href.startsWith('data:') ? entry.href : encodeMarkdownPath(entry.href);
+        return (link.image ? '!' : '') + '[' + link.label + '](' + href + ')';
+      }
+      const status = (entry.error.match(/\b[45]\d\d\b/) || [])[0];
+      return link.label + '（下载失败' + (status ? '，HTTP ' + status : '') + '）';
+    });
+  }
+
   // 渲染一个回合为 markdown。返回 { title, md }
   // sink：决定图片如何落地（base64 内嵌 / 写入 zip 的 images/）。默认 base64。
   // opts.forceQuestion：无视 settings.mode 强制带上用户提问（单条导出用——
@@ -1369,13 +1379,14 @@
     // 用户上传的文档附件：下载并经 sink 落地（zip 写 files/）。
     const attBlobs = downloadAttachments ? await fetchAttachmentBlobs(attachments) : {};
     const attCache = await resolveAttachmentCache(attBlobs, theSink);
+    const generated = await resolveSandboxFiles(turn, theSink, downloadAttachments);
 
     const title = extractText(turn.question);
     let md = '';
 
     if (withQuestion) {
       md += '## 🧑 问题\n\n';
-      md += (title || '(空)') + '\n\n';
+      md += craberCloseFence(title || '(空)') + '\n\n';
       const qParts = turn.question && turn.question.message.content
         && turn.question.message.content.parts;
       if (Array.isArray(qParts)) {
@@ -1391,7 +1402,7 @@
     }
 
     for (const node of turn.answers) {
-      md += renderAnswerNode(node, cache);
+      md += craberRewriteSandbox(renderAnswerNode(node, cache), turn, node, generated);
     }
 
     if (settings.sourcesFooter) {
@@ -1405,16 +1416,14 @@
       }
     }
 
-    // 统一清理：剥掉 GenUI/JSX 组件、修好被粘坏/落单的代码围栏。
-    // 放在这里而不是各调用方，导出、备份、预览三条路就都过一遍。
-    return { title, md: craberCleanMarkdown(md).trim() + '\n' };
+    return { title, md: md.trim() + '\n' };
   }
 
   // 把整个会话渲染成单个 markdown。sink 决定图片落地方式（多会话时指向该会话子目录）。
   // 复用 renderTurn，逐回合渲染后连结，顶部加会话标题。
   async function renderConversationToMd(conv, sink, onProgress, opts) {
     const thread = buildThread(conv);
-    const turns = groupTurns(thread);
+    const turns = groupTurns(thread, conv);
     let md = '# ' + (conv.title || '未命名会话') + '\n\n';
     let done = 0;
     for (let i = 0; i < turns.length; i++) {
@@ -1441,7 +1450,7 @@
 
     const conv = await API.getConversation(convId);
     const thread = buildThread(conv);
-    const turns = groupTurns(thread);
+    const turns = groupTurns(thread, {...conv, conversation_id:convId});
     const nodeIndex = {};
     turns.forEach((t) => {
       if (t.question) nodeIndex[t.question.message.id] = t;
@@ -1472,7 +1481,8 @@
     // 与 renderTurn 的 forceQuestion 保持一致，避免漏判问题图而退回 base64。
     const hasImages = settings.embedImages &&
       (collectFileIds(turn, true).length > 0 || collectSearchImageUrls(turn).length > 0);
-    const hasAttachments = collectAttachments(turn, true).length > 0;
+    const hasAttachments = collectAttachments(turn, true).length > 0
+      || collectSandboxFiles(turn).some((file) => !file.image || settings.embedImages);
 
     // 文件名统一：<标题>_<时间戳>，与菜单导出保持一致
     const stamp = craberStamp();
@@ -1500,7 +1510,8 @@
     if (selectedTurns.length === 1) {
       const turn = selectedTurns[0];
       const includeQuestion = settings.mode === 'qa';
-      const hasAttachments = includeQuestion && collectAttachments(turn, true).length > 0;
+      const hasAttachments = (includeQuestion && collectAttachments(turn, true).length > 0)
+        || collectSandboxFiles(turn).some((file) => !file.image || settings.embedImages);
       const stamp = craberStamp();
       if (hasAttachments) {
         const zip = createZip();
@@ -1679,6 +1690,8 @@
 
       try {
         if (!conv) throw new Error('会话内容获取失败');
+        if (!conv.conversation_id) conv.conversation_id = meta.id;
+        if (!conv.gizmo_id && meta.gizmo_id) conv.gizmo_id = meta.gizmo_id;
         // 图片写入该会话子文件夹下的 images/
         const sink = makeZipImageSink(zip, dir + '/');
         const { md } = await renderConversationToMd(conv, sink);
@@ -1839,6 +1852,10 @@
     .craber-fab-btn:hover{background:var(--craber-hover)}
     .craber-fab-btn:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
     .craber-fab-btn[aria-expanded="true"]{background:var(--craber-hover)}
+    .craber-fab-btn[data-craber-update]{position:relative}
+    .craber-fab-btn[data-craber-update]::after{content:'';position:absolute;right:2px;top:2px;
+      width:6px;height:6px;border-radius:50%;background:var(--craber-accent);
+      box-shadow:0 0 0 2px var(--craber-bg);pointer-events:none}
     /* 描边色与主题联动同上：data-theme 为主、媒体查询兜底，避免"站点切到深色、
        描边还是黑的"这种半同步状态 */
     html[data-theme="dark"] .craber-fab-btn{--craber-fab-line:rgba(255,255,255,.45)}
@@ -2659,6 +2676,21 @@
     html[data-theme="dark"] .craber-set-nav{background:color-mix(in srgb,var(--craber-hover) 40%,var(--craber-bg))}
     .craber-set-item.on .craber-set-itemico{color:var(--craber-accent)}
     .craber-set-item:focus-visible{outline:2px solid var(--craber-accent);outline-offset:1px}
+    .craber-update{flex:none;margin-top:auto;padding-top:18px;min-width:0}
+    .craber-update-check{color:var(--craber-sub)}
+    .craber-update-check:disabled{cursor:wait;opacity:.6;background:none}
+    .craber-update-status{padding:4px 10px 0;font-size:11px;line-height:1.5;
+      color:var(--craber-sub);overflow-wrap:anywhere}
+    .craber-update-status:empty{display:none}
+    .craber-update[data-state="available"] .craber-update-status{color:var(--craber-accent)}
+    .craber-update-actions{display:flex;flex-wrap:wrap;gap:7px 10px;padding:9px 10px 0;align-items:center}
+    .craber-update-actions[hidden]{display:none}
+    .craber-update-actions a{font-size:11px;line-height:1.5;color:var(--craber-sub);text-decoration:none}
+    .craber-update-actions a:hover{text-decoration:underline}
+    .craber-update-actions .craber-update-install{padding:5px 9px;border-radius:7px;
+      color:var(--craber-accent);background:color-mix(in srgb,var(--craber-accent) 10%,var(--craber-bg));
+      font-weight:600}
+    .craber-update-actions a:focus-visible{outline:2px solid var(--craber-accent);outline-offset:2px}
     .craber-set-body{flex:1;min-width:0;min-height:0;display:flex;
       flex-direction:column;overflow-y:auto;padding:22px 26px 24px;
       scrollbar-width:thin;scrollbar-color:var(--craber-line) transparent}
@@ -2781,6 +2813,7 @@
         overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
       .craber-set-nav::-webkit-scrollbar{display:none}
       .craber-set-navgroup{display:none}
+      .craber-update{margin-top:0;padding-top:0;max-width:176px}
       .craber-set-nav .craber-set-item{padding:7px 10px;font-size:13px}
       .craber-set-item{width:auto;flex:none;padding:7px 11px}
       .craber-set-item.on::before{display:none}
@@ -12345,6 +12378,7 @@
 
     if (!conv) return false;
     if (fabEl && fabEl.parentElement === host) applyFabTheme(fabEl);
+    craberUpdateFab();
 
     // 主题切换联动：data-theme 或 class 一变，所有"JS 算出来的颜色"都要重刷。
     // CSS 变量自己会跟（见样式表里的 html[data-theme] 档），但描边、顶栏底色、
@@ -12426,6 +12460,217 @@
       + '<path d="M6.2 9h5"/><path d="M6.2 12.5h5"/>')
   };
 
+  /* ---------- 检查更新 ---------- */
+  const CRABER_UPDATE_URL = 'https://raw.githubusercontent.com/yixing233/GPTCraber/main/chatgpt-md-exporter.user.js';
+  const CRABER_RELEASE_URL = 'https://github.com/yixing233/GPTCraber/releases/tag/v';
+  const CRABER_UPDATE_KEY = 'gpt_craber_update_check';
+  const CRABER_UPDATE_INTERVAL = 24 * 60 * 60 * 1000;
+  let craberUpdateCache = {};
+  let craberUpdatePending = null;
+  let craberUpdateError = '';
+  let craberAutoUpdateStarted = false;
+
+  function craberCompareVersions(a, b) {
+    const parts = (value) => {
+      const text = String(value || '').trim().replace(/^v/, '');
+      if (!/^\d+(?:\.\d+)*$/.test(text)) throw new Error('版本号格式不正确');
+      const numbers = text.split('.').map(Number);
+      if (numbers.some((n) => !Number.isSafeInteger(n))) throw new Error('版本号格式不正确');
+      return numbers;
+    };
+    const left = parts(a), right = parts(b);
+    for (let i = 0; i < Math.max(left.length, right.length); i++) {
+      const x = left[i] || 0, y = right[i] || 0;
+      if (x !== y) return x > y ? 1 : -1;
+    }
+    return 0;
+  }
+
+  function craberReadUpdateVersion(source) {
+    const header = String(source || '').slice(0, 16384).match(
+      /^\uFEFF?\/\/\s*==UserScript==[^\S\r\n]*\r?\n([\s\S]*?)^\/\/\s*==\/UserScript==[^\S\r\n]*\r?$/m);
+    const version = header && header[1].match(/^\/\/\s*@version[ \t]+(\d+(?:\.\d+)*)[ \t]*\r?$/m);
+    if (!version || !/^\/\/\s*@namespace[ \t]+gpt-craber[ \t]*\r?$/m.test(header[1])) {
+      throw new Error('更新源内容异常，请稍后重试');
+    }
+    return version[1];
+  }
+
+  function craberCheckUpdate() {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        reject(new Error('请在脚本管理器中启用此脚本后重试'));
+        return;
+      }
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: CRABER_UPDATE_URL + '?craber_check=' + Date.now(),
+          anonymous: true,
+          headers: { Accept: 'text/plain', 'Cache-Control': 'no-cache' },
+          timeout: 15000,
+          onload: (r) => {
+            if (r.status !== 200) {
+              reject(new Error('检查失败（HTTP ' + r.status + '），请重试'));
+              return;
+            }
+            try {
+              const latest = craberReadUpdateVersion(r.responseText);
+              resolve({ current: CRABER_VERSION, latest, comparison: craberCompareVersions(latest, CRABER_VERSION) });
+            } catch (e) { reject(e); }
+          },
+          onerror: () => reject(new Error('无法连接更新源，请重试')),
+          ontimeout: () => reject(new Error('检查超时，请重试')),
+          onabort: () => reject(new Error('检查已取消，可重新检查'))
+        });
+      } catch (e) { reject(new Error('无法发起更新检查，请重试')); }
+    });
+  }
+
+  function craberLoadUpdateCache() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CRABER_UPDATE_KEY) || '{}') || {};
+      const stamp = (n) => Number.isFinite(n) && n > 0 ? n : 0;
+      let latest = '';
+      if (/^\d+(?:\.\d+)*$/.test(saved.latest || '')) {
+        craberCompareVersions(saved.latest, CRABER_VERSION);
+        latest = saved.latest;
+      }
+      return { attemptedAt: stamp(saved.attemptedAt), checkedAt: stamp(saved.checkedAt), latest };
+    } catch (e) { return craberUpdateCache; }
+  }
+
+  function craberSaveUpdateCache(cache) {
+    craberUpdateCache = cache;
+    try { localStorage.setItem(CRABER_UPDATE_KEY, JSON.stringify(cache)); } catch (e) {}
+  }
+
+  function craberUpdateResult() {
+    const latest = craberUpdateCache.latest;
+    return latest ? { current: CRABER_VERSION, latest, comparison: craberCompareVersions(latest, CRABER_VERSION) } : null;
+  }
+
+  function craberUpdateFab() {
+    if (!fabEl) return;
+    const result = craberUpdateResult();
+    const version = result && result.comparison > 0 ? result.latest : '';
+    if ((fabEl.getAttribute('data-craber-update') || '') === version) return;
+    if (version) {
+      fabEl.setAttribute('data-craber-update', version);
+      fabEl.setAttribute('aria-description', '发现新版本 v' + version + '，打开设置安装更新');
+    } else {
+      fabEl.removeAttribute('data-craber-update');
+      fabEl.removeAttribute('aria-description');
+    }
+    fabEl.title = version ? '发现新版本 v' + version + ' · 打开设置更新' : '导出';
+  }
+
+  function craberRefreshUpdateViews() {
+    craberUpdateFab();
+    for (const view of document.querySelectorAll('.craber-update')) {
+      if (view._craberRenderUpdate) view._craberRenderUpdate();
+    }
+  }
+
+  function craberRunUpdateCheck({ automatic = false } = {}) {
+    if (craberUpdatePending) return craberUpdatePending;
+    if (automatic && (document.visibilityState === 'hidden' || navigator.onLine === false)) {
+      return Promise.resolve(null);
+    }
+    craberUpdateCache = craberLoadUpdateCache();
+    const now = Date.now();
+    const age = now - (craberUpdateCache.attemptedAt || 0);
+    if (automatic && craberUpdateCache.attemptedAt && age >= 0 && age < CRABER_UPDATE_INTERVAL) {
+      craberRefreshUpdateViews();
+      return Promise.resolve(craberUpdateResult());
+    }
+    // 请求前记录尝试时间，刷新页面与其它标签页复用；失败后也不反复请求。
+    craberSaveUpdateCache({ ...craberUpdateCache, attemptedAt: now });
+    craberUpdateError = '';
+    craberUpdatePending = Promise.resolve().then(craberCheckUpdate).then((result) => {
+      craberSaveUpdateCache({ ...craberUpdateCache, latest: result.latest, checkedAt: Date.now() });
+      return result;
+    }).catch((e) => {
+      craberUpdateError = e.message;
+      if (!automatic) throw e;
+      return null;
+    }).finally(() => {
+      craberUpdatePending = null;
+      craberRefreshUpdateViews();
+    });
+    craberRefreshUpdateViews();
+    return craberUpdatePending;
+  }
+
+  function craberStartAutoUpdate() {
+    if (craberAutoUpdateStarted) return;
+    craberAutoUpdateStarted = true;
+    craberUpdateCache = craberLoadUpdateCache();
+    craberRefreshUpdateViews();
+    const check = () => { void craberRunUpdateCheck({ automatic: true }).catch(() => {}); };
+    // 等首屏加载后检查；长期开着的页面和从后台返回的页面也会按间隔检查。
+    setTimeout(check, 3000);
+    setInterval(check, 60 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') check();
+    });
+    window.addEventListener('online', check);
+    window.addEventListener('storage', (e) => {
+      if (e.key !== CRABER_UPDATE_KEY) return;
+      craberUpdateCache = craberLoadUpdateCache();
+      craberUpdateError = '';
+      craberRefreshUpdateViews();
+    });
+  }
+
+  function craberUpdateControl() {
+    const wrap = folderEl('div', 'craber-update');
+    const check = folderEl('button', 'craber-set-item craber-update-check');
+    check.type = 'button';
+    check.title = '每 24 小时自动检查，也可手动检查';
+    const icon = folderEl('span', 'craber-set-itemico');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = SET_ICON['dav-sync'];
+    const label = folderEl('span', 'craber-set-itemlabel', '检查更新');
+    check.append(icon, label);
+    const status = folderEl('div', 'craber-update-status');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.setAttribute('aria-atomic', 'true');
+    const actions = folderEl('div', 'craber-update-actions');
+    actions.hidden = true;
+    const install = folderEl('a', 'craber-update-install', '安装更新');
+    install.href = CRABER_UPDATE_URL;
+    const notes = folderEl('a', null, '更新说明');
+    for (const link of [install, notes]) {
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    }
+    actions.append(install, notes);
+    wrap._craberRenderUpdate = () => {
+      const result = craberUpdateResult();
+      const available = result && result.comparison > 0;
+      check.disabled = !!craberUpdatePending;
+      wrap.dataset.state = craberUpdatePending ? 'checking' : craberUpdateError ? 'error'
+        : available ? 'available' : result ? 'current' : 'idle';
+      label.textContent = craberUpdatePending ? '正在检查…' : craberUpdateError ? '重新检查' : '检查更新';
+      status.textContent = craberUpdatePending ? '正在连接更新源…' : craberUpdateError
+        || (available ? '发现新版本 v' + result.latest : result
+          ? result.comparison === 0 ? '已是最新版本 v' + result.current : '本地版本较新，线上为 v' + result.latest
+          : '每 24 小时自动检查');
+      actions.hidden = !available;
+      if (available) {
+        notes.href = CRABER_RELEASE_URL + result.latest;
+      }
+    };
+    check.addEventListener('click', () => {
+      if (!check.disabled) void craberRunUpdateCheck().catch(() => {});
+    });
+    wrap.append(check, status, actions);
+    wrap._craberRenderUpdate();
+    return wrap;
+  }
+
   // 打开设置中心。pageId 可指定初始页。
   function craberOpenSettings(pageId) {
     folderClosePjify();
@@ -12455,6 +12700,7 @@
       nav.append(b);
       navBtns[p.id] = b;
     }
+    nav.append(craberUpdateControl());
 
     function go(id) {
       active = id;
@@ -15661,9 +15907,6 @@
   let scPendingSelection = '';
   let scPendingTurn = null;
   let scSelectionPath = '';
-  // 上下文长度上限：按字符粗估（中文约 1 字 1 token，英文约 4 字符 1 token）。
-  // 超了就从最早的内容开始砍，保住最近的对话。
-  const SC_CTX_MAX_CHARS = 12000;
   const SC_EFFORT_LABELS = { off: '关闭', low: '低', medium: '中', high: '高', max: '最高' };
 
   const SC_CFG_DEFAULT = {
@@ -15984,11 +16227,27 @@
         messages.push({ role: 'assistant', content: message.content });
       }
     }
-    // 主会话上下文只附加在当前问题，不重复发送历史轮次的主会话正文。
-    const context = profile.mainContextEnabled && profile.textEnabled ? question.ctx : '';
-    const text = context ? context + '\n\n【我的问题】\n' + (question.content || '') : question.content;
-    messages.push({ role: 'user', content: scAttachmentContent(question, text, profile) });
+    // 主会话快照只随当前问题附加一次；旧历史里的 ctx 也按文件发送。
+    let content = scAttachmentContent(question, undefined, profile);
+    const context = profile.mainContextEnabled && profile.textEnabled
+      ? question.ctxAttachment || scContextAttachment({ text:question.ctx, label:question.ctxLabel }) : null;
+    if (context) {
+      const bytes = new TextEncoder().encode(context.text);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      }
+      content = [...(Array.isArray(content) ? content : content ? [{ type:'text', text:content }] : []),
+        { type:'file', file:{ filename:context.name, file_data:'data:text/plain;base64,' + btoa(binary) } }];
+    }
+    messages.push({ role:'user', content });
     return messages;
+  }
+
+  function scContextAttachment(context) {
+    if (!context?.text) return null;
+    return { kind:'text', name:'主会话-' + (context.label || '上下文') + '.txt', text:context.text,
+      size:new TextEncoder().encode(context.text).length };
   }
 
   async function scReadAttachment(file) {
@@ -16116,8 +16375,7 @@
   }
 
   /* ---------- 主对话上下文采集 ----------
-   * 直接读页面 DOM，不调 /backend-api —— 侧栏是随手问一句的工具，
-   * 不该因为取上下文去碰限流（实测连续取会话很快就 429）。
+   * 当前轮读取选中区域；整个对话读取当前分支，包含虚拟滚动未挂载的消息。
    */
   function scDomTurn(turn) {
     const qEl = turn.querySelector('[data-user-message-bubble]')
@@ -16203,7 +16461,6 @@
     const sel = scPendingSelection || scCurrentSelection();
     const parts = [];
     let label = '';
-    let cut0 = false;   // 逐段预截断时置位（见下面的 per 配额）
 
     /* 只有两档：
      *   turn = 选区 + 主对话当前这一轮（默认）
@@ -16222,55 +16479,16 @@
       label = (last ? '当前轮' : '无对话') + (sel ? ' + 选区' : '');
     } else {
       const turns = completeTurns || scVisibleTurns();
-      // 全对话档的单条更容易超长：先给每段一个上限，再整体兜底，
-      // 否则最后一轮的长回答一进来就把前面全挤掉了。
-      const per = Math.max(400, Math.floor(SC_CTX_MAX_CHARS / Math.max(2, turns.length * 2)));
       for (const t of turns) {
-        if (t.q) parts.push({ k: '问', head: '我问', body: scClipText(t.q, per, () => { cut0 = true; }) });
-        if (t.a) parts.push({ k: '答', head: 'AI 答', body: scClipText(t.a, per, () => { cut0 = true; }) });
+        if (t.q) parts.push({ k: '问', head: '我问', body: t.q });
+        if (t.a) parts.push({ k: '答', head: 'AI 答', body: t.a });
       }
       if (sel) parts.push({ k: '选区', head: '【我选中的内容】', body: sel });
       label = '全对话 ' + turns.length + ' 轮';
     }
 
-    /* 拼接与截断。
-     * 早先是"整段砍头保尾"，结果把问题本身砍掉了、只留一大截回答的尾巴 ——
-     * 模型拿到的是没有问题的半截回答。现在按段处理：
-     * 每段先按配额截，超总量再从**最早**的段开始整段丢弃，
-     * 保证最后一段（也就是提问所在的位置）永远完整保留。 */
-    const total = () => parts.reduce((n, p) => n + p.head.length + p.body.length + 2, 0);
-    let cut = cut0;
-    for (const p of parts) {
-      const quota = Math.max(300, Math.floor(SC_CTX_MAX_CHARS / Math.max(1, parts.length)));
-      if (p.body.length > quota) {
-        p.body = scClipText(p.body, quota);
-        cut = true;
-      }
-    }
-    while (parts.length > 1 && total() > SC_CTX_MAX_CHARS) {
-      parts.shift();   // 从最早的开始丢，保住最近的
-      cut = true;
-    }
-    let text = parts.map((p) => p.head + '\n' + p.body).join('\n\n');
-    if (text.length > SC_CTX_MAX_CHARS) {
-      // 只剩一段还超长（极端情况）：这一段本身再截，但不砍掉开头
-      text = scClipText(text, SC_CTX_MAX_CHARS);
-      cut = true;
-    }
-    if (cut) label += '（已截断）';
+    const text = parts.map((p) => p.head + '\n' + p.body).join('\n\n');
     return { text, label };
-  }
-
-  // 中间省略式截取：保留首尾，比"只留尾巴"更能保住语义。
-  // onCut 用来告诉调用方"这次确实截了"，好让面板上标出"已截断"。
-  function scClipText(s, limit, onCut) {
-    const t = String(s || '');
-    if (t.length <= limit) return t;
-    // 首 2 尾 1：开头通常是结论句，结尾常常是"所以…"，两头都比中间有用
-    const head = Math.floor(limit * 0.66);
-    const tail = Math.max(0, limit - head - 12);
-    if (onCut) onCut();
-    return t.slice(0, head) + '\n…（中间省略）…\n' + t.slice(-tail);
   }
 
   /* ---------- 流式请求 ----------
@@ -16289,12 +16507,56 @@
    * 早先只读 content，思考内容被整段丢掉 —— 表现为"面板先空白好几秒"，
    * 用户会以为卡死。现在分开收，界面才能放进折叠容器里。
    */
-  function scStream(cfg, messages, onDelta, onDone, onError, onThink) {
+  function scStream(cfg, messages, onDelta, onDone, onError, onThink, onNotice) {
+    const isTextFile = (part) => part.type === 'file' && /^data:text\/plain;base64,/.test(part.file?.file_data || '');
+    const hasContext = messages.some((message) => Array.isArray(message.content) && message.content.some(isTextFile));
+    if (!hasContext) return scStreamRequest(cfg, messages, onDelta, onDone, onError, onThink);
+
+    // 文本文件使用 Responses 的 input_file。旧网关明确拒绝该协议时才回退一次。
+    let active = null;
+    let ended = false;
+    let emitted = false;
+    let attempt = 0;
+    const run = (input, responses) => {
+      const id = ++attempt;
+      const h = scStreamRequest(cfg, input,
+        (delta) => { emitted = true; onDelta(delta); },
+        () => { ended = true; onDone(); },
+        (error) => {
+          if (ended) return;
+          const unsupported = [404, 405, 501].includes(error.status)
+            || ([400, 415, 422].includes(error.status)
+              && /unsupported|not supported|does not support|not support|不支持|unknown.*(?:type|field)/i.test(error.message)
+              && /file|responses|input|endpoint|文件|接口/i.test(error.message));
+          if (responses && !emitted && unsupported) {
+            const fallback = messages.map((message) => ({ ...message,
+              content:Array.isArray(message.content) ? message.content.map((part) => {
+                if (!isTextFile(part)) return part;
+                const bytes = Uint8Array.from(atob(part.file.file_data.split(',')[1]), (c) => c.charCodeAt(0));
+                return { type:'text', text:'【附件：' + part.file.filename + '】\n' + new TextDecoder().decode(bytes) };
+              }) : message.content }));
+            if (onNotice) onNotice('接口不支持文本文件附件，已改用完整文本发送');
+            run(fallback, false);
+          } else { ended = true; onError(error); }
+        },
+        (delta) => { emitted = true; if (onThink) onThink(delta); }, responses);
+      // 同步拒绝时可能已经启动回退请求，不可把新句柄覆盖掉。
+      if (id === attempt) active = h;
+    };
+    run(messages, true);
+    return {
+      get settled() { return ended; },
+      abort() { ended = true; if (active) active.abort(); }
+    };
+  }
+
+  function scStreamRequest(cfg, messages, onDelta, onDone, onError, onThink, responses = false) {
     let settled = false;
     let handle = null;
     let lastLen = 0;
     let buf = '';
     let sawDelta = false;   // 是否从流里真的吐过内容（用于识别非流式响应）
+    let sawThink = false;
 
     const settle = (fn, arg) => {
       if (settled) return;
@@ -16329,6 +16591,40 @@
       return { content, think };
     }
 
+    const responseOutput = (response) => {
+      if (!response) return;
+      const content = [];
+      const thinking = [];
+      for (const item of response.output || []) {
+        if (item.type === 'message') {
+          for (const part of item.content || []) {
+            if (part.type === 'output_text') content.push(part.text || '');
+            else if (part.type === 'refusal') content.push(part.refusal || '');
+          }
+        } else if (item.type === 'reasoning') {
+          for (const part of item.summary || []) thinking.push(part.text || '');
+        }
+      }
+      if (!sawThink && thinking.length && onThink) { sawThink = true; onThink(thinking.join('\n')); }
+      const text = content.join('') || scApiText(response.output_text);
+      if (!sawDelta && text) { sawDelta = true; onDelta(text); }
+    };
+    const responseEvent = (j) => {
+      if (!responses || !j.type?.startsWith('response.')) return false;
+      if (j.type === 'response.output_text.delta' || j.type === 'response.refusal.delta') {
+        if (j.delta) { sawDelta = true; onDelta(j.delta); }
+      } else if (j.type === 'response.reasoning_summary_text.delta' || j.type === 'response.reasoning_text.delta') {
+        if (j.delta && onThink) { sawThink = true; onThink(j.delta); }
+      } else if (['response.completed', 'response.incomplete', 'response.failed'].includes(j.type)) {
+        responseOutput(j.response);
+        if (j.type !== 'response.completed') {
+          settle(onError, new Error(j.response?.error?.message
+            || '回复未完成：' + (j.response?.incomplete_details?.reason || '接口生成失败')));
+        }
+      }
+      return true;
+    };
+
     // 逐行解析 SSE。onprogress 给的是累计文本，所以要记 lastLen 取增量 ——
     // 每来一次就重新整体扫描会把同一段文字重复吐给 UI。
     const drain = (endOfStream) => {
@@ -16347,6 +16643,7 @@
           settle(onError, new Error(j.error.message || String(j.error)));
           return;
         }
+        if (responseEvent(j)) { if (settled) return; continue; }
         const choice = j.choices && j.choices[0];
         const got = choice
           ? extractDelta(choice.delta, choice)
@@ -16370,6 +16667,8 @@
         if (line.startsWith('data:') && line.slice(5).trim() !== '[DONE]') {
           try {
             const j = JSON.parse(line.slice(5).trim());
+            if (j.error) { settle(onError, new Error(j.error.message || String(j.error))); return; }
+            if (responseEvent(j)) { buf = ''; return; }
             const choice = j.choices && j.choices[0];
             const got = choice
               ? extractDelta(choice.delta, choice)
@@ -16391,21 +16690,32 @@
       buf = endOfStream ? '' : buf;
     };
 
-    const payload = {
+    const payload = responses ? {
+      model:cfg.model, stream:true, store:false,
+      input:messages.map((message) => ({ role:message.role,
+        content:typeof message.content === 'string' ? message.content : message.content.map((part) => {
+          if (part.type === 'file') return { type:'input_file', ...part.file };
+          if (part.type === 'image_url') return { type:'input_image', image_url:part.image_url.url };
+          return { type:message.role === 'assistant' ? 'output_text' : 'input_text', text:part.text };
+        }) }))
+    } : {
       model: cfg.model,
       messages,
       stream: true
     };
     if (typeof cfg.temperature === 'number') payload.temperature = cfg.temperature;
-    if (typeof cfg.maxTokens === 'number') payload.max_tokens = cfg.maxTokens;
+    if (typeof cfg.maxTokens === 'number') payload[responses ? 'max_output_tokens' : 'max_tokens'] = cfg.maxTokens;
 
     /* 五档按配置原值发送，同时保留兼容网关的 thinking 和 enable_thinking 开关。 */
     const effort = scNormalizeEffort(cfg.reasoningEffort, cfg.enabledEfforts);
     if (effort !== 'default') {
       const enabled = effort !== 'off';
-      payload.reasoning_effort = effort;
-      payload.thinking = { type: enabled ? 'enabled' : 'disabled' };
-      payload.enable_thinking = enabled;
+      if (responses) payload.reasoning = { effort:effort === 'off' ? 'none' : effort === 'max' ? 'xhigh' : effort };
+      else {
+        payload.reasoning_effort = effort;
+        payload.thinking = { type: enabled ? 'enabled' : 'disabled' };
+        payload.enable_thinking = enabled;
+      }
     }
 
     /* 消费一段累计文本（responseText 路）。累计值 → 只取新增部分。 */
@@ -16500,11 +16810,16 @@
     }
 
     let streamStarted = false;
+    const startResponse = (r) => {
+      if (settled || streamStarted || (r?.status && (r.status < 200 || r.status >= 300))) return;
+      const stream = pickStream(r);
+      if (stream) streamStarted = !!startStreamReader(stream);
+    };
 
     try {
       handle = GM_xmlhttpRequest({
         method: 'POST',
-        url: String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions',
+        url: String(cfg.baseUrl).replace(/\/+$/, '') + (responses ? '/responses' : '/chat/completions'),
         headers: {
           'Content-Type': 'application/json',
           // 有些网关按 Accept 决定是否走 SSE；显式声明能少一类歧义
@@ -16530,42 +16845,54 @@
          * 万一某版本不认 stream，还能靠它拿到分块。
          */
         partialSize: 4096,
+        // Tampermonkey 的 stream 在 onloadstart 就已可读，不能等下载完才读取。
+        onloadstart: startResponse,
         /* onprogress 只作为「拿到了新数据」的信号：
          * stream 模式下正文走 ReadableStream，responseText 在过程中不可靠。 */
         onprogress: (r) => {
           if (settled) return;
-          if (!streamStarted) {
-            const st = pickStream(r);
-            if (st) { streamStarted = true; startStreamReader(st); return; }
-          }
+          startResponse(r);
           // 没有流可用时（老版本/其他管理器）退回累计文本路
-          feedCumulative(r && r.responseText);
+          if (!streamStarted && (!r?.status || r.status < 300)) feedCumulative(r && r.responseText);
         },
         /* onreadystatechange 也接上：部分版本只在 readyState=3 推数据。
          * 已有流读取器时不再走 responseText，避免两条路重复喂同一段。 */
         onreadystatechange: (r) => {
           if (settled) return;
           if (!r || r.readyState !== 3) return;
-          if (!streamStarted) {
-            const st = pickStream(r);
-            if (st) { streamStarted = true; startStreamReader(st); return; }
-          }
-          if (!streamStarted) feedCumulative(r.responseText);
+          startResponse(r);
+          if (!streamStarted && (!r.status || r.status < 300)) feedCumulative(r.responseText);
         },
-        onload: (r) => {
+        onload: async (r) => {
           if (settled) return;
           // 非 2xx：把服务端的错误正文带出来，比"请求失败"有用得多
           if (r.status < 200 || r.status >= 300) {
             let msg = '请求失败 ' + r.status;
+            let rawError = r.responseText || '';
+            if (!rawError) {
+              const stream = pickStream(r);
+              if (stream) {
+                try {
+                  const reader = stream.getReader();
+                  const decoder = new TextDecoder();
+                  while (rawError.length < 16384) {
+                    const { value, done } = await reader.read();
+                    if (done) { rawError += decoder.decode(); break; }
+                    rawError += decoder.decode(value, { stream:true });
+                  }
+                  await reader.cancel();
+                } catch (e) {}
+              }
+            }
             try {
-              const j = JSON.parse(r.responseText || '');
+              const j = JSON.parse(rawError);
               const e = j.error;
               msg += '：' + (typeof e === 'string' ? e : (e && e.message) || '');
             } catch (e) {
-              const txt = String(r.responseText || '').trim();
+              const txt = String(rawError).trim();
               if (txt) msg += '：' + txt.slice(0, 240);
             }
-            settle(onError, new Error(msg));
+            settle(onError, Object.assign(new Error(msg), { status:r.status }));
             return;
           }
           /* 收尾。三条来源都要兼容：
@@ -16575,15 +16902,8 @@
           /* 关键补丁：只有 onload、没有 onprogress 的情况（本接口实测就是这样）。
            * 此时 stream 模式下沉在 r.response.stream 里的数据一个字节都还没读，
            * responseText 又是空的。这里补启动读取器，否则必然误判成"没内容"。 */
-          if (!streamStarted) {
-            const lateStream = pickStream(r);
-            if (lateStream) {
-              streamStarted = true;
-              startStreamReader(lateStream);
-            } else {
-              feedCumulative(r && r.responseText);
-            }
-          }
+          startResponse(r);
+          if (!streamStarted) feedCumulative(r && r.responseText);
           /* 兜底判断需要"完整原文"，但 drain 会把 buf 消费掉，
            * 所以这里单独留一份原始文本，别指望 buf 还在。 */
           const rawFull = String((r && r.responseText) || '').trim()
@@ -16592,6 +16912,7 @@
           const settleDone = () => {
             if (settled) return;
             drain(true);
+            if (settled) return;
             /* 兜底：有些网关会忽略 stream:true，直接回一整份 JSON。
              * 那种响应里没有 data: 前缀，drain 一个字都吐不出来，
              * 表面上就是"连上了但没有内容"（测试连接会误报）。
@@ -16601,6 +16922,16 @@
               if (raw && raw.charAt(0) === '{') {
                 try {
                   const j = JSON.parse(raw);
+                  if (j.error) { settle(onError, new Error(j.error.message || String(j.error))); return; }
+                  if (responses) {
+                    responseOutput(j);
+                    if (j.status === 'failed' || j.status === 'incomplete') {
+                      settle(onError, new Error('回复未完成：' + (j.incomplete_details?.reason || j.status)));
+                      return;
+                    }
+                    settle(onDone);
+                    return;
+                  }
                   const choice = j.choices && j.choices[0];
                   const got = choice
                     ? extractDelta(choice.delta, choice)
@@ -16663,10 +16994,7 @@
   let scRefs = null;          // 面板内节点引用
   let scOpen = false;
   let scThread = null;        // 当前会话对象
-    let scStreamHandle = null;  // 正在跑的流
-    /* 打字机回放的"立即收尾"钩子。停止/中断时用它把已收到的内容刷完，
-     * 不能直接丢掉缓冲区里还没显示的正文。 */
-    let scTypeFlush = null;
+  let scStreamHandle = null;  // 正在跑的流
   let scPendingRender = 0;    // 流式期间的重绘节流句柄
   let scDraftAttachments = [];
   const scModelDrafts = new Map();
@@ -17812,9 +18140,10 @@
         const qWrap = folderEl('div', 'craber-sc-qwrap');
         const q = folderEl('div', 'craber-sc-q');
         if (m.ctxLabel) q.title = m.ctxLabel;
-        if (m.attachments && m.attachments.length) {
+        const attachments = [...(m.ctxAttachment ? [m.ctxAttachment] : []), ...(m.attachments || [])];
+        if (attachments.length) {
           const files = folderEl('div', 'craber-sc-qfiles');
-          for (const file of m.attachments) {
+          for (const file of attachments) {
             if (file.kind === 'image') {
               const image = document.createElement('img');
               image.src = file.dataUrl;
@@ -18160,11 +18489,9 @@
     const h = scStreamHandle;
     scStreamHandle = null;
     h.abort();
-    /* 打字机缓冲里可能还有没显示出来的字：停止生成也必须先把它们刷出来，
-     * 否则用户会觉得"我明明看到它已经生成了，怎么一停就少了一截"。 */
-    if (scTypeFlush) {
-      try { scTypeFlush(); } catch (e) {}
-      scTypeFlush = null;
+    if (scPendingRender) {
+      try { cancelAnimationFrame(scPendingRender); } catch (e) {}
+      scPendingRender = 0;
     }
     // 把还在流式的那条定稿，否则光标会一直闪
     if (scThread) {
@@ -18200,85 +18527,6 @@
     msgs.length = qi + 1;
     scRenderMessages();
     scRunTurn(question, cfg);
-  }
-
-  /* ---------- 打字机回放 ----------
-   * 网络层的"增量"不一定真的增量：不少网关会在几十毫秒内把整段答案推完，
-   * 直接渲染就是"啪"一下全出现。这里把收到的文本先放进缓冲区，再按固定节奏
-   * 逐字交给 UI —— 数据仍然实时到达，显示效果才是真正的打字机。
-   *
-   * 三条约束：
-   *   1) 前端不会比网络慢太多：缓冲越长，单帧吐出的字越多（上限 220 字/帧）。
-   *   2) 停止生成时把已收到的内容立即刷完，不能吞字。
-   *   3) 结束时才把消息标记为非流式，光标和"停止"按钮不会提前消失。
-   */
-  function scTypewriter(ansMsg, onFinish) {
-    let buf = '';
-    let timer = 0;
-    let ended = false;   // 网络流已结束
-    let done = false;
-
-    const finish = () => {
-      if (done) return;
-      done = true;
-      if (timer) {
-        try { clearTimeout(timer); } catch (e) {}
-        timer = 0;
-      }
-      ansMsg.streaming = false;
-      if (!ansMsg.thinkUserToggled) ansMsg.thinkOpen = false;
-      if (!ansMsg.thinkMs) ansMsg.thinkMs = Math.max(1, Date.now() - ansMsg.at);
-      if (!ansMsg.content) ansMsg.content = '（接口没有返回内容）';
-      try { if (onFinish) onFinish(); } catch (e) {}
-      scPersist();
-      scSetStreamingUI(false);
-      scRenderMessages();
-      scScrollToBottom();
-    };
-
-    const tick = () => {
-      timer = 0;
-      if (done) return;
-      if (!buf) {
-        if (ended) finish();
-        return;
-      }
-      const n = buf.length;
-      let step = n > 1200 ? 220 : n > 300 ? 24 : 2;
-      const lastCode = buf.charCodeAt(step - 1);
-      if (lastCode >= 0xd800 && lastCode <= 0xdbff) step++;
-      ansMsg.content += buf.slice(0, step);
-      buf = buf.slice(step);
-      scRenderMessages();
-      scScrollToBottom();
-      if (ended && !buf) { finish(); return; }
-      timer = setTimeout(tick, 16);
-    };
-
-    return {
-      push(text) {
-        if (!text || done) return;
-        buf += text;
-        if (!timer) timer = setTimeout(tick, 0);
-      },
-      end() {
-        if (done) return;
-        ended = true;
-        if (!buf) finish();
-        else if (!timer) timer = setTimeout(tick, 0);
-      },
-      // 停止/异常收尾：把缓冲里还没显示的正文立即补上
-      flushNow() {
-        if (done) return;
-        if (buf) {
-          ansMsg.content += buf;
-          buf = '';
-        }
-        ended = true;
-        finish();
-      },
-      get done() { return done; }
-    };
   }
 
   /* ---------- 发送 ---------- */
@@ -18333,14 +18581,13 @@
     const current = scCfgLoad();
     if (scThread !== targetThread || !scOpen || !scThreadMatches(targetThread, current)
       || current.apiKey !== cfg.apiKey) return;
-    if (ctx.label.includes('已截断')) R.status.textContent = '主会话上下文过长，已截断';
     // 上下文在这里定格一次，存进这条消息里：之后重试、重绘都用当时那份，
     // 不会因为用户后来在页面上又选了别处而悄悄变化。
     // 定格完就清掉"选区入口"留下的临时选区，免得下一条消息还捎带着它
     scPendingSelection = '';
     scPendingTurn = null;
 
-    const userMsg = { role: 'user', content: text, ctx: ctx.text, ctxLabel: ctx.label,
+    const userMsg = { role: 'user', content: text, ctxAttachment: scContextAttachment(ctx), ctxLabel: ctx.label,
       attachments, at: Date.now() };
     scThread.messages.push(userMsg);
     if (!scThread.title) {
@@ -18382,6 +18629,12 @@
       dirty = true;
       if (!scPendingRender) scPendingRender = requestAnimationFrame(flush);
     };
+    const renderNow = () => {
+      if (scPendingRender) cancelAnimationFrame(scPendingRender);
+      scPendingRender = 0;
+      dirty = true;
+      flush();
+    };
 
     /* scStream 在参数不合法之类的极端情况下会同步回调 onError。
      * 那时 scStreamHandle 还没被赋值，直接写 scStreamHandle = null 会被
@@ -18395,14 +18648,19 @@
       if (scStreamHandle === h || scStreamHandle === null) scStreamHandle = null;
     };
 
-    /* 打字机回放：网络块再大，也按字符逐段交给 UI。
-     * 停止时通过 scTypeFlush 把缓冲区立即刷完，保证不吞正文。 */
-    const typer = scTypewriter(ansMsg, () => {
+    const finish = (error) => {
+      if (finished) return;
+      if (error) ansMsg.error = (error && error.message) || '请求失败';
+      ansMsg.streaming = false;
+      if (!ansMsg.thinkUserToggled) ansMsg.thinkOpen = false;
+      if (!ansMsg.thinkMs) ansMsg.thinkMs = Math.max(1, Date.now() - ansMsg.at);
+      if (!ansMsg.content) ansMsg.content = error ? '' : '（接口没有返回内容）';
       finished = true;
       clearHandle();
-      if (scTypeFlush) scTypeFlush = null;
-    });
-    scTypeFlush = () => typer.flushNow();
+      scPersist();
+      scSetStreamingUI(false);
+      renderNow();
+    };
 
     h = scStream(cfg, api,
       (delta) => {
@@ -18410,31 +18668,22 @@
         if (!ansMsg.thinkMs) {
           ansMsg.thinkMs = Math.max(1, Date.now() - ansMsg.at);
         }
-        typer.push(delta);
+        ansMsg.content += delta;
         markDirty();
       },
-      () => {
-        /* 正文交给打字机按节奏播完再收尾；这里只标记"没有更多数据了" */
-        typer.end();
-      },
-      (err) => {
-        ansMsg.error = (err && err.message) || '请求失败';
-        // 已经收到的部分要保住：先刷完缓冲，再展示错误
-        if (!typer.done) typer.flushNow();
-        finished = true;
-        clearHandle();
-        if (scTypeFlush) scTypeFlush = null;
-        ansMsg.streaming = false;
-        scPersist();
-        scSetStreamingUI(false);
-        scRenderMessages();
-        scScrollToBottom(true);
-      },
+      () => finish(),
+      (err) => finish(err),
       // 思考过程默认折叠，标题在推理增量到达时出现。
       (thinkDelta) => {
         ansMsg.reasoning = (ansMsg.reasoning || '') + thinkDelta;
         if (ansMsg.thinkOpen == null) ansMsg.thinkOpen = false;
         markDirty();
+      },
+      (notice) => {
+        if (scRefs && scThread === thread) {
+          scRefs.status.textContent = notice;
+          scUpdateComposerInset();
+        }
       });
 
     // 同步收尾的情况：不要把这个已经结束的句柄登记成"进行中"
@@ -18670,6 +18919,7 @@
   installTitleTooltip();
 
   mountFab();
+  craberStartAutoUpdate();
   injectSingleButtons();
   craberComposerMount();
   // 等 ChatGPT 自己的首屏请求先跑，避免和它的 paginated_conversation 撞车触发 429
