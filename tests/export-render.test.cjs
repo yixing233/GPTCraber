@@ -13,7 +13,7 @@ function fixture(overrides = {}) {
     PUA:/[\uE000-\uF8FF]/g, TextEncoder, TextDecoder, Blob, URL, URLSearchParams,
     console:{ warn() {}, debug() {} },
     sanitizeFilePart:name => name.replace(/[\\/:*?"<>|]/g, '_'),
-    extFromMime:mime => mime === 'image/png' ? 'png' : 'bin',
+    extFromMime:mime => mime === 'image/png' ? 'png' : mime === 'image/svg+xml' ? 'svg' : 'bin',
     blobToDataURI:async blob => 'data:' + blob.type + ';base64,' + Buffer.from(await blob.arrayBuffer()).toString('base64'),
     API:{ getFileInfo:async () => { throw new Error('unexpected file download'); } },
     ...overrides
@@ -185,7 +185,7 @@ test('导出：整个会话实际生成 ZIP，正文和资源路径对应，附�
   const conv={conversation_id:'source-c',gizmo_id:'project-source',title:'导出验收',messages:[
     question('#include <iostream>\n`std::vector<text>`',{metadata:{attachments:[{id:'file_html',name:'savedrecs.html',mime_type:'text/html'}]}}).message,
     message('{"path":"/GitHub/example","args":{}}',{recipient:'functions.fetch'}),
-    message('正文😀\n```cpp\n#include <vector>\n```\n'+token+'\n[报告](sandbox:/mnt/data/report.pdf)\n![模型](sandbox:/mnt/data/model.png)',{
+    message('正文😀\n<card>\n```cpp\n#include <vector>\n```\n'+token+'\n    [报告](sandbox:/mnt/data/report.pdf)\n    <AsyncImage src="sandbox:/mnt/data/model.png" alt="模型"/>\n</card>\n<svg viewBox="0 0 100 40"><text x="4" y="20">示意图</text></svg>',{
       metadata:{content_references:[{type:'grouped_webpages',matched_text:token,start_idx:0,end_idx:40,items:[{title:'来源',url:'https://example.com'}]}]}})
   ]};
   const {md}=await env.api.renderConversationToMd(conv,env.api.makeZipImageSink(zip,'导出/'));
@@ -200,14 +200,130 @@ test('导出：整个会话实际生成 ZIP，正文和资源路径对应，附�
     pos=start+size;
   }
   assert.equal(entries.get('导出/files/savedrecs.html').toString(),'<html>论文</html>');
+  assert.ok(entries.has('导出/files/report.pdf'),JSON.stringify({paths:[...entries.keys()],md}));
   assert.equal(entries.get('导出/files/report.pdf').toString(),'PDF fixture');
   assert.deepEqual(entries.get('导出/images/img_1.png'),png);
+  assert.ok(entries.has('导出/images/img_2.svg'),JSON.stringify({paths:[...entries.keys()],md}));
+  assert.match(entries.get('导出/images/img_2.svg').toString(),/<text x="4" y="20">示意图<\/text>/);
   assert.match(md,/#include <iostream>/);
   assert.match(md,/`std::vector<text>`/);
   assert.match(md,/#include <vector>/);
   assert.match(md,/\[来源\]\(https:\/\/example.com\)/);
-  assert.doesNotMatch(md,/sandbox:|GitHub\/example|下载失败/);
+  assert.doesNotMatch(md,/sandbox:|GitHub\/example|下载失败|<card|<AsyncImage|<svg/);
   for(const link of md.matchAll(/\]\((files\/[^)]+|images\/[^)]+)\)/g)) assert.ok(entries.has('导出/'+decodeURIComponent(link[1])));
   assert.ok(requested.filter(r=>r.url.startsWith('/backend-api/')).every(r=>r.opts.headers['chatgpt-project-id']==='project-source'));
   assert.ok(requested.filter(r=>r.url.startsWith('https:')).every(r=>!r.opts.headers?.Authorization));
+});
+
+test('富内容：卡片跨代码围栏保留代码，嵌套列表、标题、链接和写作块转为 Markdown', () => {
+  const f=fixture();
+  const code='  ```cpp\n  #include <iostream>\n  std::vector<text> values;\n  ```';
+  const raw='<WritingBlock id="123" variant="document"># 讲义\n<card gap={3}>\n    <title size="xl">练习</title>\n    <caption>完成以下任务</caption>\n'+code+'\n    <list marker="number"><list-item>读取<list><list-item>检查</list-item></list></list-item><list-item>输出</list-item></list>\n    <Link url="https://example.com/a?x=1&amp;y=2" title="资料"/><spacer/>\n</card>\n</WritingBlock>';
+  const md=f.craberCleanMarkdown(raw);
+  assert.ok(md.includes(code));
+  assert.match(md,/\*\*练习\*\*/);
+  assert.match(md,/1\. 读取\n\s+- 检查\n2\. 输出/);
+  assert.match(md,/\[资料\]\(https:\/\/example.com\/a\?x=1&y=2\)/);
+  assert.doesNotMatch(md,/<\/?(?:WritingBlock|card|title|caption|list|list-item|Link|spacer)\b/);
+});
+
+test('富内容：表格与 Chart JSON 静态数据可读，表达式不能执行', () => {
+  const f=fixture();
+  const raw='<table><table-row><table-cell>统计项</table-cell><table-cell>值</table-cell></table-row><table-row><table-cell>数量</table-cell><table-cell>48</table-cell></table-row></table>';
+  assert.match(f.craberCleanMarkdown(raw),/\| 统计项 \| 值 \|\n\| --- \| --- \|\n\| 数量 \| 48 \|/);
+  const chart='<Chart content={{"xKey":"strategy","series":[{"dataKey":"segments","label":"填充段数量"}],"data":[{"strategy":"固定间距","segments":2774},{"strategy":"自适应","segments":2775}],"meta":{"footer":"报告记录"}}}/>';
+  const md=f.craberCleanMarkdown(chart);
+  assert.match(md,/填充段数量/); assert.match(md,/固定间距 \| 2774/); assert.match(md,/报告记录/);
+  const dynamic='<card><button onClick={()=>{throw new Error("must not run")}}>提交</button></card>';
+  assert.ok(f.craberCleanMarkdown(dynamic).includes(dynamic));
+  assert.match(f.craberCleanMarkdown(dynamic),/<details>/);
+});
+
+test('富内容：卡片内缩进的 sandbox 链接和 Link 组件都下载，真实代码链接不下载', async () => {
+  const calls=[],entries=new Map();
+  const f=fixture({API:{async getSandboxFileInfo(file){calls.push(file.path);return {blob:new Blob(['file'],{type:'application/pdf'})};}}});
+  const raw='<box>\n    [PDF](sandbox:/mnt/data/lesson.pdf)\n    <card>\n        <Link url="sandbox:/mnt/data/other.pdf" title="附件"/>\n    </card>\n    ```text\n    [示例](sandbox:/mnt/data/not-a-file.pdf)\n    ```\n</box>';
+  const turn={conversationId:'c',question:question('下载'),answers:[{message:message(raw)}]};
+  const result=await f.renderTurn(turn,null,f.makeZipImageSink({add(n,b){entries.set(n,b);}}));
+  assert.deepEqual(calls,['/mnt/data/lesson.pdf','/mnt/data/other.pdf']);
+  assert.match(result.md,/\[PDF\]\(files\/lesson.pdf\)/);
+  assert.match(result.md,/\[附件\]\(files\/other.pdf\)/);
+  assert.match(result.md,/sandbox:\/mnt\/data\/not-a-file.pdf/);
+});
+
+test('富内容：图片组件从实际 src 导出，没有源地址的 query/ref 明确说明', async () => {
+  const calls=[],entries=new Map();
+  const f=fixture({gmFetchBlob:async(url)=>{calls.push(url);return new Blob(['png'],{type:'image/png'});}});
+  f.env.settings.embedImages=true;
+  const raw='<card>\n    <AsyncImage src="https://images.example/model.png" alt="模型"/>\n    <AsyncImage query="CAD hole"/>\n    <AsyncImage ref="turn181639image1"/>\n</card>';
+  const result=await f.renderTurn({question:question('配图'),answers:[{message:message(raw)}]},null,f.makeZipImageSink({add(n,b){entries.set(n,b);}}));
+  assert.deepEqual(calls,['https://images.example/model.png']);
+  assert.match(result.md,/!\[模型\]\(images\/img_1.png\)/);
+  assert.match(result.md,/图片未导出.*未提供图片地址/);
+  assert.doesNotMatch(result.md,/<AsyncImage/);
+});
+
+test('富内容：图片关闭、下载失败和预览是不同状态，上传附件保留 HTTP 原因', async () => {
+  const f=fixture({API:{async getFileInfo(){throw new Error('文件信息获取失败: 403');}}});
+  const turn={conversationId:'c',question:question('截图',{metadata:{attachments:[{id:'file_txt',name:'main.cpp'}]}}),answers:[{message:message('![预览](sandbox:/mnt/data/preview.png)')}]};
+  const {md}=await f.renderTurn(turn,null,f.makeZipImageSink({add(){}}));
+  assert.match(md,/已关闭图片导出/); assert.match(md,/main.cpp.*HTTP 403/);
+  assert.doesNotMatch(md,/!\[预览\]\(sandbox:/);
+});
+
+test('富内容：静态 SVG 作为图片保存，标签文字不丢失，不执行脚本和外部资源', async () => {
+  const f=fixture(),entries=new Map(); f.env.settings.embedImages=true;
+  const svg='<svg viewBox="0 0 120 40" width="100%"><rect x="1" y="1" width="118" height="38" fill="white"/><text x="8" y="24" fontSize="12" fill="black">圆柱面</text></svg>';
+  const turn={question:question('示意图'),answers:[{message:message(svg)}]};
+  const {md}=await f.renderTurn(turn,null,f.makeZipImageSink({add(n,b){entries.set(n,b);}}));
+  assert.match(md,/!\[.*\]\(images\/img_1.svg\)/);
+  const saved=new TextDecoder().decode(entries.get('images/img_1.svg'));
+  assert.match(saved,/<text[^>]*font-size="12"[^>]*>圆柱面<\/text>/);
+  assert.match(saved,/xmlns="http:\/\/www.w3.org\/2000\/svg"/);
+  const unsafe='<svg><script>throw new Error("must not run")</script></svg>';
+  assert.match(f.craberCleanMarkdown(unsafe),/<details>/);
+  assert.doesNotMatch(f.craberCleanMarkdown(unsafe),/!\[.*data:/);
+});
+
+test('富内容：下载失败图片不显示远程假成功，重复图片地址只请求一次', async () => {
+  const calls=[];
+  const f=fixture({gmFetchBlob:async(url)=>{calls.push(url);throw new Error('图片请求失败: 403');}});
+  f.env.settings.embedImages=true;
+  const body='<AsyncImage src="https://images.example/a.png"/>\n![同一图片](https://images.example/a.png)';
+  const {md}=await f.renderTurn({question:question('配图'),answers:[{message:message(body)}]},null,f.makeZipImageSink({add(){assert.fail('失败图片不能落盘');}}));
+  assert.equal(calls.length,1);
+  assert.equal(f.craberStats.imgTotal,1);assert.equal(f.craberStats.imgFail,1);
+  assert.match(md,/图片未导出：下载失败，HTTP 403/);
+  assert.doesNotMatch(md,/!\[.*https:\/\/images/);
+});
+
+test('富内容：图片 ref 只能匹配元数据中的同一引用，代码中的组件不下载', async () => {
+  const calls=[],entries=new Map();
+  const f=fixture({gmFetchBlob:async(url)=>{calls.push(url);return new Blob(['image'],{type:'image/png'});}});
+  f.env.settings.embedImages=true;
+  const body='<AsyncImage ref="turn1image2"/>\n`<AsyncImage src="https://images.example/code.png"/>`';
+  const metadata={content_references:[{type:'image_group',images:[{ref_id:'turn1image2',image_result:{content_url:'https://images.example/real.png'}}]}]};
+  const {md}=await f.renderTurn({question:question('配图'),answers:[{message:message(body,{metadata})}]},null,f.makeZipImageSink({add(n,b){entries.set(n,b);}}));
+  assert.deepEqual(calls,['https://images.example/real.png']);
+  assert.match(md,/!\[图片\]\(images\/img_1.png\)/);
+  assert.ok(md.includes('`<AsyncImage src="https://images.example/code.png"/>`'));
+});
+
+test('富内容：多行属性、箭头函数与动态值都完整保留，不调用表达式', () => {
+  const f=fixture();
+  const raw='<card\n  padding={3}\n  title={getTitle()}>\n  <text>内容</text>\n</card>';
+  assert.ok(f.craberCleanMarkdown(raw).includes(raw));
+  const js='<button onClick={() => alert("a > b")} title="a > b">点按</button>';
+  assert.ok(f.craberCleanMarkdown(js).includes(js));
+  assert.equal(f.craberCleanMarkdown('`<Link title="代码"/>`'),'`<Link title="代码"/>`');
+});
+
+test('富内容：合法 SVG 中的 JSX 数字与弧线保留，外部引用和事件保留为原文', () => {
+  const f=fixture();
+  for(const svg of ['<svg><image href="https://example.com/a.png"/></svg>',
+    '<svg onload="alert(1)"><text>文字</text></svg>',
+    '<svg><use href="https://example.com/a.svg#shape"/></svg>',
+    '<svg><rect fill="url(https://example.com/a)"/></svg>']) assert.match(f.craberCleanMarkdown(svg),/<details>/);
+  const svg='<svg viewBox="0 0 100 40"><path strokeWidth={2} d="M1 1 L9 9"/><text x="2" y="20">文字</text></svg>';
+  assert.match(decodeURIComponent(f.craberCleanMarkdown(svg)),/stroke-width="2"/);
 });

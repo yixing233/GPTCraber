@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         craber（ChatGPT导出）
 // @namespace    gpt-craber
-// @version      0.20.0
+// @version      0.20.1
 // @description  gpt-craber：导出 ChatGPT 对话为 Markdown。支持单条导出、批量 zip 导出、多会话导出、导航节点跳转，适配文本/代码/图片/联网引用等多种消息类型。
 // @author       gpt-craber
 // @homepageURL  https://github.com/yixing233/GPTCraber
@@ -33,7 +33,7 @@
   const CRAB_SVG = '<svg viewBox="0 0 71.493 71.493" width="26" height="26" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M69.857,43.299l-10.626-5.432c3.038-3.402,4.707-7.433,4.707-11.651 c0-8.227-6.175-15.503-16.114-18.989c-1.109-0.388-2.342-0.096-3.155,0.751c-0.814,0.846-1.06,2.089-0.628,3.182 c0.338,0.857,0.51,1.734,0.51,2.609c0,0.492-0.052,0.688-0.045,0.69c-0.083,0.105-0.393,0.362-0.643,0.569 c-0.422,0.35-0.947,0.785-1.546,1.386c-0.688,0.692-0.996,1.676-0.826,2.637s0.796,1.78,1.68,2.194 c1.956,0.918,8.324,4.331,8.361,9.76c-2.459-1.79-5.451-3.167-8.78-3.981c0.156-0.366,0.242-0.769,0.242-1.193 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.13,0.023,0.255,0.038,0.381 c-0.39-0.015-0.782-0.023-1.176-0.023c-0.394,0-0.787,0.008-1.176,0.023c0.016-0.126,0.038-0.25,0.038-0.381 c0-1.688-1.369-3.055-3.055-3.055c-1.688,0-3.055,1.367-3.055,3.055c0,0.423,0.086,0.826,0.242,1.193 c-3.785,0.925-7.138,2.576-9.763,4.737c0.216-4.082,4.91-8.435,9.345-10.516c0.884-0.415,1.511-1.233,1.68-2.195 c0.17-0.961-0.139-1.945-0.827-2.637c-0.598-0.601-1.124-1.037-1.546-1.386c-0.255-0.211-0.572-0.474-0.622-0.528 c-0.001-0.001-0.065-0.181-0.065-0.73c0-0.873,0.172-1.751,0.511-2.61c0.432-1.092,0.186-2.335-0.628-3.181 c-0.814-0.848-2.05-1.14-3.154-0.751C13.729,10.71,7.554,17.987,7.554,26.215c0,4.218,1.669,8.249,4.707,11.651L1.635,43.299 C0.16,44.053-0.425,45.86,0.33,47.336c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l8.695-4.445 c0.069,0.981,0.255,1.939,0.536,2.869L2.868,52.551c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635 c0.46,0,0.927-0.106,1.363-0.329l10.888-5.566c0.491,0.589,1.027,1.154,1.607,1.692l-9.282,4.745 c-1.476,0.754-2.061,2.562-1.306,4.037c0.53,1.038,1.582,1.635,2.673,1.635c0.46,0,0.927-0.106,1.363-0.329l11.887-6.077 c0.131-0.067,0.253-0.143,0.369-0.226c3.474,1.623,7.568,2.563,11.949,2.563c4.381,0,8.475-0.94,11.949-2.563 c0.116,0.082,0.238,0.159,0.369,0.226l11.887,6.077c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 c0.755-1.476,0.17-3.283-1.306-4.037L53.4,54.02c0.58-0.538,1.116-1.103,1.606-1.692l10.888,5.566 c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635c0.755-1.476,0.17-3.283-1.306-4.037l-10.729-5.485 c0.281-0.931,0.466-1.888,0.536-2.87l8.695,4.445c0.437,0.223,0.903,0.329,1.363,0.329c1.091,0,2.143-0.597,2.673-1.635 C71.918,45.86,71.333,44.053,69.857,43.299z M50.472,15.06c4.65,2.828,7.466,6.906,7.466,11.155c0,1.07-0.176,2.131-0.516,3.166 c-0.584-4.354-3.438-8.421-8.006-11.487C49.934,17.163,50.316,16.273,50.472,15.06z M21.02,15.06 c0.158,1.229,0.548,2.126,1.076,2.863c-3.65,2.491-6.962,6.022-8.393,10.004c-0.099-0.566-0.149-1.138-0.149-1.711 C13.554,21.966,16.37,17.888,21.02,15.06z M19.027,43.278c0-6.011,7.656-11.089,16.72-11.089c9.063,0,16.719,5.078,16.719,11.089 s-7.656,11.089-16.719,11.089C26.683,54.368,19.027,49.29,19.027,43.278z"/></svg>';
 
   // 设置页显示与更新检查共用的版本号，发版时与头部 @version 同步改。
-  const CRABER_VERSION = '0.20.0';
+  const CRABER_VERSION = '0.20.1';
 
   // 私有区字符范围 U+E000..U+F8FF（ChatGPT 用来标记引用位置）。
   // 用 fromCharCode 构造，避免手写 \uXXXX 转义出错。
@@ -788,14 +788,10 @@
   function collectSearchImageUrls(turn) {
     const urls = new Set();
     for (const node of turn.answers) {
-      const refs = (node.message.metadata && node.message.metadata.content_references) || [];
-      for (const r of refs) {
-        if (r.type !== 'image_group') continue;
-        for (const im of (r.images || [])) {
-          const u = pickImageUrl(im && im.image_result);
-          if (u) urls.add(u);
-        }
-      }
+      craberMarkdownImages(renderAnswerNode(node, {}), (image) => {
+        if (/^https?:\/\//.test(image.url)) urls.add(image.url);
+        return image.raw;
+      });
     }
     return [...urls];
   }
@@ -838,6 +834,7 @@
   // 拉取文档附件，返回 blobs 缓存：id -> { blob, name, mime }
   async function fetchAttachmentBlobs(atts) {
     const blobs = {};
+    Object.defineProperty(blobs, 'errors', {value:{}});
     if (!atts.length) return blobs;
     const tasks = atts.map((a) => (async () => {
       craberStats.attTotal++;
@@ -848,11 +845,13 @@
           blobs[a.id] = { blob: b, name: a.name, mime: b.type || a.mime || info.mime_type || '' };
         } else {
           craberStats.attFail++;
+          blobs.errors[a.id] = '下载地址缺失';
         }
       } catch (e) {
         craberStats.attFail++;
         // 403/404 说明这个文件拿不到，属于预期内的降级，不该刷 warn
         const msg = String(e && e.message || e);
+        blobs.errors[a.id] = msg;
         if (!/40[13]|404/.test(msg)) console.warn('[gpt-craber] 附件下载失败', a.id, a.name, e);
         else console.debug('[gpt-craber] 附件不可下载（已跳过）', a.name, msg);
       }
@@ -865,6 +864,7 @@
   // key：托管图用 fileId，搜索配图用 URL（两类不冲突）
   async function fetchImageBlobs(turn, includeQuestion, onProgress) {
     const blobs = {};
+    Object.defineProperty(blobs, 'errors', {value:{}});
     if (!settings.embedImages) return blobs;
     const ids = collectFileIds(turn, includeQuestion);
     const urls = collectSearchImageUrls(turn);
@@ -883,10 +883,12 @@
             blobs[fid] = { blob: b, mime: b.type || info.mime_type || 'image/png' };
           } else {
             craberStats.imgFail++;
+            blobs.errors[fid] = '下载地址缺失';
           }
         } catch (e) {
           craberStats.imgFail++;
           const msg = String(e && e.message || e);
+          blobs.errors[fid] = msg;
           if (!/40[13]|404/.test(msg)) console.warn('[gpt-craber] 托管图下载失败', fid, e);
         }
         finally { tick(); }
@@ -894,10 +896,14 @@
     }
     for (const url of urls) {
       tasks.push((async () => {
+        craberStats.imgTotal++;
         try {
           const b = await gmFetchBlob(url);
           blobs[url] = { blob: b, mime: b.type || 'image/png' };
-        } catch (e) { console.warn('[gpt-craber] 搜索配图下载失败', url, e); }
+        } catch (e) {
+          craberStats.imgFail++;
+          blobs.errors[url] = String(e.message || e);
+        }
         finally { tick(); }
       })());
     }
@@ -962,11 +968,12 @@
   // 把 blobs 缓存经 sink 解析成 key -> src 字符串，供渲染器直接读取
   async function resolveImageCache(blobs, sink) {
     const cache = {};
+    Object.defineProperty(cache, 'errors', {value:{...blobs.errors}});
     if (!sink) return cache;
     for (const key of Object.keys(blobs)) {
       const { blob, mime } = blobs[key];
       try { cache[key] = await sink.add(key, blob, mime); }
-      catch (e) { console.warn('[gpt-craber] 图片落地失败', key, e); }
+      catch (e) { cache.errors[key] = String(e.message || e); craberStats.imgFail++; }
     }
     return cache;
   }
@@ -975,59 +982,119 @@
   // 没有 addFile 的 sink（例如预览）只保留附件元数据，不触发下载链接。
   async function resolveAttachmentCache(blobs, sink) {
     const cache = {};
+    Object.defineProperty(cache, 'errors', {value:{...blobs.errors}});
     if (!sink || typeof sink.addFile !== 'function') return cache;
     for (const key of Object.keys(blobs)) {
       const { blob, name, mime } = blobs[key];
       try { cache[key] = await sink.addFile(key, blob, name, mime); }
-      catch (e) { console.warn('[gpt-craber] 附件落地失败', key, name, e); }
+      catch (e) { cache.errors[key] = String(e.message || e); craberStats.attFail++; }
     }
     return cache;
   }
 
-  /* Markdown 转换只处理正文；围栏、行内代码和缩进代码保持原样。 */
-  function craberMapProse(md, transform, components = false) {
-    const out = [];
-    let prose = '', fence = null, componentDepth = 0;
-    const flush = () => {
-      if (!prose) return;
-      let prefix = '\u0000CRABER_CODE_';
-      while (prose.includes(prefix)) prefix += '_';
-      const code = [];
-      const masked = prose.replace(/(\x60+)([\s\S]*?)\1(?!\x60)/g, (raw) => {
-        code.push(raw);
-        return prefix + (code.length - 1) + '\u0000';
-      });
-      let converted = transform(masked);
-      for (let i = 0; i < code.length; i++) {
-        converted = converted.split(prefix + i + '\u0000').join(code[i]);
+  const CRABER_COMPONENT_NAMES = new Set(('box row column stack grid card text badge icon divider spacer Cite Link '
+    + 'title caption list list-item table table-row table-cell WritingBlock AsyncImage AsyncImageGroup '
+    + 'FileCite MemoryCite Chart svg button checkbox').split(' '));
+
+  // 读取 JSX 标签边界：属性字符串、JSON 和箭头函数里的 > 不结束标签。
+  function craberComponentTags(text) {
+    const tags = [];
+    const head = /<\/?([A-Za-z][\w.-]*)\b/g;
+    let match;
+    while ((match = head.exec(text))) {
+      let i = head.lastIndex, quote = '', braces = 0;
+      for (; i < text.length; i++) {
+        const ch = text[i];
+        if (quote) {
+          if (ch === '\\') { i++; continue; }
+          if (ch === quote) quote = '';
+        } else if (ch === '"' || ch === "'") quote = ch;
+        else if (ch === '{') braces++;
+        else if (ch === '}') braces = Math.max(0, braces - 1);
+        else if (ch === '>' && !braces) break;
+        else if (ch === '<' && !braces) break;
       }
-      out.push(converted);
-      prose = '';
-    };
-    for (const line of String(md).split(/(?<=\n)/)) {
-      const mark = line.match(/^ {0,3}(\x60{3,}|~{3,})([^\r\n]*)/);
-      if (fence) {
-        out.push(line);
-        if (mark && mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = null;
-      } else if (mark && !(mark[1][0] === String.fromCharCode(96) && mark[2].includes(String.fromCharCode(96)))) {
-        flush();
-        fence = mark[1];
-        out.push(line);
-      } else if (/^(?: {4}|\t)/.test(line) && !componentDepth) {
-        flush();
-        out.push(line);
+      if (text[i] !== '>' || quote || braces) continue;
+      const raw = text.slice(match.index, i + 1);
+      tags.push({name:match[1], start:match.index, end:i+1, raw,
+        close:raw.startsWith('</'), self:/\/>$/.test(raw)});
+      head.lastIndex = i + 1;
+    }
+    return tags;
+  }
+
+  function craberComponentAttrs(tag) {
+    const attrs = Object.create(null);
+    const text = tag.raw.slice(tag.raw.indexOf(tag.name) + tag.name.length).replace(/\/?>$/, '');
+    const name = /([\w:-]+)\s*(?:=\s*)?/g;
+    let match;
+    while ((match = name.exec(text))) {
+      const key = match[1];
+      if (!match[0].includes('=')) { attrs[key] = true; continue; }
+      let i = name.lastIndex, end = i, value;
+      if (text[i] === '"' || text[i] === "'") {
+        const quote = text[i++];
+        end = i;
+        while (end < text.length && text[end] !== quote) { if (text[end] === '\\') end++; end++; }
+        value = text.slice(i, end).replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        end++;
+      } else if (text[i] === '{') {
+        let depth = 1, quote = ''; end = i + 1;
+        for (; end < text.length && depth; end++) {
+          const c = text[end];
+          if (quote) { if (c === '\\') end++; else if (c === quote) quote = ''; }
+          else if (c === '"' || c === "'") quote = c;
+          else if (c === '{') depth++;
+          else if (c === '}') depth--;
+        }
+        try { value = JSON.parse(text.slice(i+1, end-1)); } catch (e) { value = null; }
       } else {
-        prose += line;
-        if (components && (componentDepth || /^ {0,3}<(?:box|row|column|stack|grid)\b/.test(line))) {
-          for (const tag of line.match(/<\/?(?:box|row|column|stack|grid)\b[^>]*>/g) || []) {
-            if (tag.startsWith('</')) componentDepth = Math.max(0, componentDepth - 1);
-            else if (!tag.endsWith('/>')) componentDepth++;
+        while (end < text.length && !/\s/.test(text[end])) end++;
+        value = text.slice(i, end);
+      }
+      attrs[key] = value;
+      name.lastIndex = end;
+    }
+    return attrs;
+  }
+
+  /* 围栏和行内代码先原样保存，组件转换跨越代码块时也不会丢失外层边界。 */
+  function craberMapProse(md, transform, components = false) {
+    const text = String(md);
+    let prefix = '\u0000CRABER_CODE_';
+    while (text.includes(prefix)) prefix += '_';
+    const protectedText = [];
+    const protect = (raw) => prefix + (protectedText.push(raw) - 1) + '\u0000';
+    const restore = (value) => value.replace(new RegExp(prefix + '(\\d+)\\u0000', 'g'),
+      (raw, n) => protectedText[Number(n)]);
+    let masked = '', fence = null, block = '', depth = 0;
+    for (const line of text.split(/(?<=\n)/)) {
+      const mark = line.match(depth && components
+        ? /^[ \t]*(\x60{3,}|~{3,})([^\r\n]*)/ : /^ {0,3}(\x60{3,}|~{3,})([^\r\n]*)/);
+      if (fence) {
+        block += line;
+        if (mark && mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) {
+          masked += protect(block); block = ''; fence = null;
+        }
+      } else if (mark && !(mark[1][0] === String.fromCharCode(96) && mark[2].includes(String.fromCharCode(96)))) {
+        fence = mark[1]; block = line;
+      } else if (/^(?: {4}|\t)/.test(line) && !depth) {
+        masked += protect(line);
+      } else {
+        masked += line;
+        if (components) {
+          for (const tag of craberComponentTags(line.replace(/(\x60+)([\s\S]*?)\1(?!\x60)/g, ''))) {
+            if (!CRABER_COMPONENT_NAMES.has(tag.name) || tag.self) continue;
+            const before = line.slice(0, tag.start);
+            if (!depth && !tag.close && (/\S/.test(before) || !text.includes('</' + tag.name + '>'))) continue;
+            depth = Math.max(0, depth + (tag.close ? -1 : 1));
           }
         }
       }
     }
-    flush();
-    return out.join('');
+    if (block) masked += protect(block);
+    masked = masked.replace(/(\x60+)([\s\S]*?)\1(?!\x60)/g, protect);
+    return restore(transform(masked, restore));
   }
 
   function craberCloseFence(md) {
@@ -1042,42 +1109,160 @@
     return fence ? text.replace(/\n*$/, '') + '\n' + fence : text;
   }
 
-  function craberCleanMarkdown(md) {
-    const cleaned = craberMapProse(md, (text) => {
-      const tags = [...text.matchAll(/<\/?(box|row|column|stack|grid|text|badge|icon|divider|Cite)\b(?:=>|[^<>"']|"[^"]*"|'[^']*')*?\/?>/g)];
-      let out = '', pos = 0;
-      for (let i = 0; i < tags.length; i++) {
-        const open = tags[i];
-        if (open.index < pos || open[0].startsWith('</')) continue;
-        const prefix = text.slice(text.lastIndexOf('\n', open.index) + 1, open.index);
-        if (/^\s*#\s*include\b/.test(prefix) || /[\w:>]$/.test(prefix)) continue;
-        if (open[0].endsWith('/>')) {
-          out += text.slice(pos, open.index) + (open[1] === 'divider' ? '\n\n---\n\n' : '');
-          pos = open.index + open[0].length;
-          continue;
+  function craberRichFallback(raw) {
+    const fence = String.fromCharCode(96).repeat(Math.max(3, ...(raw.match(/\x60+/g) || []).map((s) => s.length+1)));
+    return '\n\n<details><summary>交互卡片原文</summary>\n\n' + fence + 'text\n' + raw + '\n' + fence + '\n\n</details>\n\n';
+  }
+
+  function craberTable(rows) {
+    if (!rows.length) return '';
+    const width = Math.max(...rows.map((r) => r.length));
+    const line = (row) => '| ' + Array.from({length:width}, (_, i) => String(row[i] ?? '')
+      .replace(/\|/g, '\\|').replace(/\n/g, '<br>')).join(' | ') + ' |';
+    return '\n\n' + [line(rows[0]), line(Array(width).fill('---')), ...rows.slice(1).map(line)].join('\n') + '\n\n';
+  }
+
+  // 静态 SVG 只允许绘图元素、本地片段引用和静态属性；未知脚本/组件保留原文。
+  function craberSvgData(raw) {
+    const allowed = new Set('svg g defs linearGradient radialGradient stop path rect circle ellipse line polyline polygon text tspan title desc clipPath mask marker use'.split(' '));
+    const tags = craberComponentTags(raw);
+    if (!tags.length || /<!|<\?/.test(raw)) return null;
+    let pos = 0, out = '';
+    for (const tag of tags) {
+      if (!allowed.has(tag.name)) return null;
+      const body = raw.slice(pos, tag.start);
+      if (/[<>{}]/.test(body)) return null;
+      out += body;
+      if (tag.close) { out += '</'+tag.name+'>'; pos=tag.end; continue; }
+      const attrs = craberComponentAttrs(tag);
+      if (tag.name === 'svg') attrs.xmlns = 'http://www.w3.org/2000/svg';
+      let attrText = '';
+      for (let [name,value] of Object.entries(attrs)) {
+        if (value == null || typeof value === 'object' || typeof value === 'boolean'
+          || /^on/i.test(name) || name === 'style') return null;
+        value = String(value);
+        if (/^(?:href|xlink:href)$/.test(name) && !/^#[\w.-]+$/.test(value)) return null;
+        if (/url\s*\(/i.test(value) && !/^url\(#[\w.-]+\)$/.test(value)) return null;
+        if (!['viewBox','preserveAspectRatio','gradientUnits','gradientTransform','markerWidth','markerHeight','refX','refY'].includes(name)) {
+          name = name.replace(/[A-Z]/g, (c) => '-'+c.toLowerCase());
         }
-        let depth = 1, close = null;
-        for (let j = i + 1; j < tags.length; j++) {
-          if (tags[j][1] !== open[1] || tags[j][0].endsWith('/>')) continue;
-          depth += tags[j][0].startsWith('</') ? -1 : 1;
-          if (!depth) { close = tags[j]; break; }
-        }
-        if (!close) continue;
-        const end = close.index + close[0].length;
-        const block = text.slice(open.index, end);
-        let body;
-        if (/\{(?:[#@/:]|[a-zA-Z_$][\w$]*(?:\.[\w$]+)*\s*\})/.test(block)) {
-          const fence = String.fromCharCode(96).repeat(Math.max(3, ...(block.match(/\x60+/g) || []).map((s) => s.length + 1)));
-          body = '\n\n<details><summary>交互卡片原文</summary>\n\n' + fence + 'text\n' + block + '\n' + fence + '\n\n</details>\n\n';
-        } else {
-          body = block.replace(/<\/?(?:box|row|column|stack|grid|text|badge|icon|divider|Cite)\b(?:=>|[^<>"']|"[^"]*"|'[^']*')*?\/?>/g,
-            (tag) => tag.startsWith('</') ? '\n' : '')
-            .split('\n').map((line) => line.trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
-        }
-        out += text.slice(pos, open.index) + body;
-        pos = end;
+        attrText += ' '+name+'="'+value.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')+'"';
       }
-      return out + text.slice(pos);
+      out += '<'+tag.name+attrText+(tag.self?'/>':'>');
+      pos = tag.end;
+    }
+    const tail = raw.slice(pos);
+    if (/[<>{}]/.test(tail)) return null;
+    return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(out+tail);
+  }
+
+  function craberCleanMarkdown(md, context = {}) {
+    const cleaned = craberMapProse(md, (text, restore) => {
+      const convert = (input) => {
+        const tags = craberComponentTags(input);
+        let out = '', pos = 0;
+        for (let i = 0; i < tags.length; i++) {
+          const open = tags[i];
+          if (open.start < pos || open.close || !CRABER_COMPONENT_NAMES.has(open.name)) continue;
+          const prefix = input.slice(input.lastIndexOf('\n',open.start)+1,open.start);
+          if (/^\s*#\s*include\b/.test(prefix) || /[\w:]$/.test(prefix)) continue;
+          let close = open, depth = 1, j = i;
+          if (!open.self) {
+            for (j=i+1; j<tags.length; j++) {
+              if (tags[j].name !== open.name || tags[j].self) continue;
+              depth += tags[j].close ? -1 : 1;
+              if (!depth) { close=tags[j]; break; }
+            }
+            if (depth) continue;
+          }
+          const raw = input.slice(open.start,close.end);
+          const inner = open.self ? '' : input.slice(open.end,close.start);
+          const a = craberComponentAttrs(open);
+          const original = restore(raw);
+          const fallback = () => craberRichFallback(original);
+          let body;
+          if (open.name === 'svg') {
+            const uri = craberSvgData(original);
+            body = uri ? '\n\n![示意图]('+uri+')\n\n' : fallback();
+          } else if (Object.values(a).some(value=>value===null) || /\{[#@/:]|\b(?:onClick|onChange)\s*=/.test(raw)
+            || /\{[a-zA-Z_$][\w$]*(?:[.[\]][\w$]*)*\s*\}/.test(inner)) {
+            body = fallback();
+          } else if (open.name === 'Chart') {
+            const chart = a.content;
+            if (chart && Array.isArray(chart.data) && Array.isArray(chart.series) && typeof chart.xKey === 'string') {
+              const keys = [chart.xKey,...chart.series.map(s=>s.dataKey)];
+              body = craberTable([[chart.xKey,...chart.series.map(s=>s.label||s.dataKey)],
+                ...chart.data.map(row=>keys.map(key=>row[key]??''))]) + (chart.meta?.footer || '');
+            } else body = fallback();
+          } else if (open.name === 'Link') {
+            const url = a.url || a.href, label = a.title || convert(inner).trim() || url;
+            body = typeof url === 'string' && /^(?:https?:|sandbox:)/.test(url)
+              ? '['+escapeMarkdownLinkText(label)+']('+url.replace(/[\s<>()[\]]/g,encodeURIComponent)+')' : fallback();
+          } else if (open.name === 'AsyncImage' || open.name === 'AsyncImageGroup') {
+            const urls = [];
+            if (typeof a.src === 'string' && /^(https?:|sandbox:)/.test(a.src)) urls.push(a.src);
+            if (!urls.length && a.ref) {
+              for (const ref of context.refs || []) for (const item of ref.images || []) {
+                const ir = item.image_result || {};
+                if ([item.ref_id,ir.ref_id,ref.ref_id].includes(a.ref)) {
+                  const url=pickImageUrl(ir); if(url) urls.push(url);
+                }
+              }
+            }
+            const label = a.alt || '图片';
+            body = urls.length ? urls.map(url=>'!['+escapeMarkdownLinkText(label)+']('+url.replace(/[\s<>()[\]]/g,encodeURIComponent)+')').join('\n\n')
+              : '（图片未导出：原消息未提供图片地址）';
+          } else if (open.name === 'FileCite' || open.name === 'MemoryCite') {
+            body = open.name === 'MemoryCite' ? '〔记忆引用〕'
+              : '〔文件引用'+(a.ref_id?'：'+String(a.ref_id):'')+'〕';
+          } else if (open.name === 'table') {
+            const rows = [];
+            const rowTags=craberComponentTags(inner);
+            for(let ri=0;ri<rowTags.length;ri++) {
+              const row=rowTags[ri];
+              if(row.name!=='table-row'||row.close)continue;
+              const end=rowTags.find((t,k)=>k>ri&&t.name==='table-row'&&t.close);
+              if(!end)continue;
+              const cells=[], contents=inner.slice(row.end,end.start), cellTags=craberComponentTags(contents);
+              for(let ci=0;ci<cellTags.length;ci++) {
+                const cell=cellTags[ci];
+                if(cell.name!=='table-cell'||cell.close)continue;
+                const stop=cellTags.find((t,k)=>k>ci&&t.name==='table-cell'&&t.close);
+                if(stop)cells.push(convert(contents.slice(cell.end,stop.start)).trim());
+              }
+              if(cells.length)rows.push(cells);
+            }
+            body = rows.length ? craberTable(rows) : fallback();
+          } else if (open.name === 'list') {
+            const children=craberComponentTags(inner); const items=[]; let last=0;
+            for(let ci=0;ci<children.length;ci++) {
+              const item=children[ci]; if(item.start<last||item.name!=='list-item'||item.close)continue;
+              let d=1, stop;
+              for(let k=ci+1;k<children.length;k++) if(children[k].name==='list-item') {
+                d+=children[k].close?-1:1; if(!d){stop=children[k];break;}
+              }
+              if(!stop)continue;
+              const value=convert(inner.slice(item.end,stop.start)).trim().replace(/\n{3,}/g,'\n\n');
+              const marker=a.marker==='number'?(items.length+1)+'. ':'- ';
+              items.push(marker+value.replace(/\n+/g,'\n  ')); last=stop.end;
+            }
+            body='\n\n'+items.join('\n')+'\n\n';
+          } else if (open.name === 'icon' || open.name === 'spacer' || open.name === 'Cite') body='';
+          else if (open.name === 'divider') body='\n\n---\n\n';
+          else {
+            const lines=inner.split('\n').map(line => /^\s*(?:[-*+]|\d+[.)])\s|^\s*>/.test(line) ? line : line.trimStart());
+            body=convert(lines.join('\n')).trim();
+            if(open.name==='title') body='\n\n**'+body+'**\n\n';
+            else if(open.name==='caption') body='\n\n'+body+'\n\n';
+            else if(['row','column','stack','grid','card','WritingBlock','list-item'].includes(open.name)) body='\n\n'+body+'\n\n';
+            else if(open.name==='text'||open.name==='badge') body+='\n';
+          }
+          out += input.slice(pos,open.start)+body;
+          pos=close.end; i=j;
+        }
+        return out+input.slice(pos);
+      };
+      return convert(text).replace(/\n{3,}/g,'\n\n');
     }, true);
     return craberCloseFence(cleaned);
   }
@@ -1154,7 +1339,8 @@
         const fid = extractFileId(p.asset_pointer);
         const src = fid && cache[fid];
         if (src) out += '![image](' + src + ')\n\n';
-        else out += '<!-- 图片未能内嵌: ' + (fid || '未知') + ' -->\n\n';
+        else out += '（图片未导出：' + (!settings.embedImages ? '已关闭图片导出'
+          : craberResourceError(cache.errors && cache.errors[fid])) + '）\n\n';
         continue;
       }
       // 其余对象 part 里若带文字，按正文输出（早先会被整个忽略）
@@ -1173,6 +1359,11 @@
       .replace(/[!'()*]/g, (ch) => '%' + ch.charCodeAt(0).toString(16).toUpperCase())).join('/');
   }
 
+  function craberResourceError(error) {
+    const status = String(error || '').match(/\b[45]\d\d\b/);
+    return status ? '下载失败，HTTP ' + status[0] : error === '下载地址缺失' ? error : '下载失败';
+  }
+
   // 预览只列出文件名；实际导出时，成功下载的附件会成为 files/ 下的相对链接。
   function renderAttachments(atts, cache, attemptedDownload) {
     if (!atts.length) return '';
@@ -1181,7 +1372,7 @@
       const label = escapeMarkdownLinkText(att.name);
       const saved = cache[att.id];
       if (saved && saved.href) out += '- [📎 ' + label + '](' + encodeMarkdownPath(saved.href) + ')\n';
-      else out += '- 📎 ' + label + (attemptedDownload ? '（下载失败）' : '') + '\n';
+      else out += '- 📎 ' + label + (attemptedDownload ? '（' + craberResourceError(cache.errors && cache.errors[att.id]) + '）' : '') + '\n';
     }
     return out + '\n';
   }
@@ -1211,12 +1402,12 @@
     }
 
     if (role === 'assistant' && ct === 'text') {
-      const t = craberCleanMarkdown(renderAssistantText(m, cache)).trim();
+      const t = craberCleanMarkdown(renderAssistantText(m, cache), {refs:m.metadata?.content_references}).trim();
       return t ? t + '\n\n' : '';
     }
     if (ct === 'multimodal_text') {
       const text = renderMultimodalParts(m.content.parts, cache);
-      return craberCleanMarkdown(renderAssistantText({...m, content:{text}}, cache)).trim() + '\n\n';
+      return craberCleanMarkdown(renderAssistantText({...m, content:{text}}, cache), {refs:m.metadata?.content_references}).trim() + '\n\n';
     }
     if (role === 'assistant' && ct === 'code' && settings.includeCode) {
       const lang = m.content.language && m.content.language !== 'unknown' ? m.content.language : '';
@@ -1299,6 +1490,39 @@
     return list;
   }
 
+  function craberMarkdownImages(text, replace) {
+    return craberMapProse(text, (part) => part.replace(
+      /!\[((?:\\.|[^\]\\\n])*)\]\(\s*(?:<([^>\n]+)>|((?:\\.|[^\s()\\]|\([^()\n]*\))+))\s*\)/g,
+      (raw,label,angled,plain) => replace({raw,label,url:angled || plain})));
+  }
+
+  async function craberResolveBodyImages(text, cache, sink, download) {
+    if (!download) return text;
+    const embedded = new Map();
+    craberMarkdownImages(text, (image) => {
+      if (settings.embedImages && image.url.startsWith('data:image/svg+xml;charset=utf-8,')) embedded.set(image.url, image);
+      return image.raw;
+    });
+    for (const [uri] of embedded) {
+      craberStats.imgTotal++;
+      try {
+        const xml = decodeURIComponent(uri.slice(uri.indexOf(',')+1));
+        const blob = new Blob([xml], {type:'image/svg+xml'});
+        embedded.set(uri, await sink.add(uri, blob, 'image/svg+xml'));
+      } catch (e) { craberStats.imgFail++; embedded.set(uri, null); }
+    }
+    return craberMarkdownImages(text, (image) => {
+      if (!settings.embedImages) return '（图片未导出：已关闭图片导出）';
+      if (/^(?:images\/|data:)/.test(image.url) && !embedded.has(image.url)) return image.raw;
+      const saved = embedded.has(image.url) ? embedded.get(image.url) : cache[image.url];
+      if (saved) return '![' + image.label + '](' + (saved.startsWith('data:') ? saved : encodeMarkdownPath(saved)) + ')';
+      if (embedded.has(image.url) || cache.errors?.[image.url]) {
+        return '（图片未导出：' + craberResourceError(cache.errors?.[image.url]) + '）';
+      }
+      return image.raw;
+    });
+  }
+
   // 生成文件的身份包含消息 id，同路径在后续回复中可能已被重新生成。
   function craberSandboxLinks(text, replace) {
     return craberMapProse(text, (part) => part.replace(
@@ -1312,7 +1536,7 @@
     for (const node of turn.answers) {
       const m = node.message;
       if (craberRole(m) !== 'assistant' || craberMessageKind(m) !== 'body') continue;
-      craberSandboxLinks(renderAssistantText(m, {}), (link) => {
+      craberSandboxLinks(renderAnswerNode(node, {}), (link) => {
         const key = JSON.stringify([turn.conversationId, m.id, link.url]);
         if (!seen.has(key)) {
           seen.add(key);
@@ -1331,7 +1555,10 @@
     const cache = new Map();
     if (!download) return cache;
     for (const file of collectSandboxFiles(turn)) {
-      if (file.image && !settings.embedImages) continue;
+      if (file.image && !settings.embedImages) {
+        cache.set(file.key, {disabled:true});
+        continue;
+      }
       if (!file.image && typeof sink.addFile !== 'function') continue;
       const total = file.image ? 'imgTotal' : 'attTotal';
       const failed = file.image ? 'imgFail' : 'attFail';
@@ -1355,6 +1582,7 @@
     return craberSandboxLinks(text, (link) => {
       const entry = cache.get(JSON.stringify([turn.conversationId, node.message.id, link.url]));
       if (!entry) return link.raw;
+      if (entry.disabled) return link.label + '（已关闭图片导出）';
       if (entry.href) {
         const href = entry.href.startsWith('data:') ? entry.href : encodeMarkdownPath(entry.href);
         return (link.image ? '!' : '') + '[' + link.label + '](' + href + ')';
@@ -1402,7 +1630,8 @@
     }
 
     for (const node of turn.answers) {
-      md += craberRewriteSandbox(renderAnswerNode(node, cache), turn, node, generated);
+      const body = craberRewriteSandbox(renderAnswerNode(node, cache), turn, node, generated);
+      md += await craberResolveBodyImages(body, cache, theSink, downloadAttachments);
     }
 
     if (settings.sourcesFooter) {
